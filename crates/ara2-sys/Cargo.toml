@@ -1,0 +1,15 @@
+[package]
+name = "ara2-sys"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "FFI bindings to libaraclient for the Kinara ARA-2 neural network accelerator"
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+readme = "README.md"
+keywords = ["ffi", "bindings", "ara2", "accelerator", "edgefirst"]
+categories = ["external-ffi-bindings", "hardware-support"]
+
+[dependencies]
+libloading.workspace = true

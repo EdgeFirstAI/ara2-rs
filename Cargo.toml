@@ -1,0 +1,40 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+default-members = ["crates/ara2"]
+exclude = ["crates/ara2-py"]
+
+[workspace.package]
+description = "Rust client library for the Kinara ARA-2 neural network accelerator on NXP i.MX platforms"
+authors = ["Au-Zone Technologies <support@au-zone.com>"]
+homepage = "https://edgefirst.ai"
+repository = "https://github.com/EdgeFirstAI/ara2-rs"
+readme = "README.md"
+license = "Apache-2.0"
+version = "0.1.0"
+edition = "2024"
+
+[workspace.dependencies]
+ara2 = { version = "0.1.0", path = "crates/ara2" }
+ara2-sys = { version = "0.1.0", path = "crates/ara2-sys" }
+criterion = "0.7.0"
+edgefirst-hal = "0.8.0"
+image = { version = "0.25.8", default-features = false, features = [
+    "jpeg",
+    "png",
+    "rayon",
+] }
+libloading = "0.8.9"
+log = { version = "0.4.28", features = ["release_max_level_debug"] }
+ndarray = { version = "0.16.1", features = ["rayon"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true
+debug = false
+
+[profile.profiling]
+inherits = "release"
+strip = false
+debug = true

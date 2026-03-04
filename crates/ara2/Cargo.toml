@@ -1,0 +1,43 @@
+[package]
+name = "ara2"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+readme.workspace = true
+keywords = ["neural-network", "inference", "accelerator", "ara2", "edgefirst"]
+categories = ["hardware-support", "science", "embedded"]
+exclude = ["target/", "*.dvm", "*.onnx"]
+
+[features]
+default = ["hal"]
+hal = ["edgefirst-hal", "image"]
+
+[dependencies]
+ara2-sys.workspace = true
+edgefirst-hal = { workspace = true, optional = true }
+image = { workspace = true, optional = true }
+libloading.workspace = true
+log.workspace = true
+ndarray.workspace = true
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+zip = { version = "2.2", default-features = false }
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "model_benchmark"
+harness = false
+
+[[example]]
+name = "test_dvm_metadata"
+path = "../../examples/test_dvm_metadata.rs"
+
+[[example]]
+name = "yolov8"
+path = "../../examples/yolov8.rs"

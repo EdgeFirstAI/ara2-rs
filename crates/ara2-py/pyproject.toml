@@ -1,0 +1,40 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "edgefirst-ara2"
+version = "0.1.0"
+description = "Python bindings for the ARA-2 neural accelerator client library"
+authors = [
+    {name = "Au-Zone Technologies", email = "support@au-zone.com"}
+]
+readme = "README.md"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.24",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Rust",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Operating System :: POSIX :: Linux",
+]
+keywords = ["ara2", "neural-network", "accelerator", "inference", "edgefirst"]
+
+[project.urls]
+Homepage = "https://edgefirst.ai"
+Repository = "https://github.com/EdgeFirstAI/ara2-rs"
+Documentation = "https://github.com/EdgeFirstAI/ara2-rs#readme"
+Issues = "https://github.com/EdgeFirstAI/ara2-rs/issues"
+
+[tool.maturin]
+module-name = "edgefirst_ara2"
+features = ["pyo3/extension-module", "pyo3/abi3-py311"]

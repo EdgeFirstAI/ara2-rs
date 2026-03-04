@@ -1,0 +1,184 @@
+# Architecture
+
+This document describes the architecture of the ARA-2 client library workspace.
+
+## Overview
+
+The ARA-2 client library provides Rust interfaces for communicating with
+ARA-2 neural network accelerator devices via the ARA-2 proxy service.
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                      User Applications                           │
+│                                                                  │
+│  use ara2::Session;                                              │
+│  use edgefirst_hal::{tensor, image, decoder};                    │
+└──────────────────────────────────────────────────────────────────┘
+                │                           │
+                ▼                           ▼
+┌───────────────────────────┐   ┌──────────────────────────────────┐
+│          ara2             │   │       edgefirst-hal              │
+│     (Core Library)        │   │  (Tensor, Image, Decoder)        │
+│                           │   │                                  │
+│  • Session management     │──▶│  • DMA/SHM tensor allocation     │
+│  • Endpoint enumeration   │   │  • G2D/OpenGL image processing   │
+│  • Model loading/infer    │   │  • YOLO decode + overlay render  │
+│  • DVM metadata parsing   │   │                                  │
+└─────────────┬─────────────┘   └──────────────────────────────────┘
+              │
+              ▼
+┌───────────────────────────┐
+│         ara2-sys          │
+│      (FFI Bindings)       │
+│                           │
+│  • C type definitions     │
+│  • Dynamic lib loading    │
+│  • Symbol resolution      │
+└─────────────┬─────────────┘
+              │
+              ▼
+┌───────────────────────────┐
+│     libaraclient.so.1     │
+│   (Kinara Runtime Lib)    │
+└─────────────┬─────────────┘
+              │
+              ▼
+┌───────────────────────────┐
+│       ARA-2 Proxy         │
+│    (System Service)       │
+└─────────────┬─────────────┘
+              │
+              ▼
+┌───────────────────────────┐
+│     ARA-2 Hardware        │
+│  (Neural Accelerator)     │
+└───────────────────────────┘
+```
+
+## Workspace Structure
+
+```
+ara2-rs/
+├── Cargo.toml              # Workspace configuration
+├── crates/
+│   ├── ara2/               # Core Rust library
+│   │   ├── Cargo.toml
+│   │   └── src/
+│   │       ├── lib.rs          # Public API and re-exports
+│   │       ├── session.rs      # Session management
+│   │       ├── endpoint.rs     # Endpoint operations
+│   │       ├── model.rs        # Model loading/inference
+│   │       ├── error.rs        # Error types
+│   │       └── dvm_metadata.rs # DVM metadata parsing
+│   │
+│   └── ara2-sys/           # FFI bindings
+│       ├── Cargo.toml
+│       └── src/
+│           ├── lib.rs      # Lint configuration
+│           └── ffi.rs      # Generated C bindings (bindgen)
+│
+└── examples/               # Example applications
+    ├── yolov8.rs           # YOLOv8 detection/segmentation
+    └── test_dvm_metadata.rs
+```
+
+## Core Library (ara2)
+
+### Ownership Model
+
+All major types use `Arc<SessionInner>` for shared ownership instead of
+lifetimes. This enables cross-thread usage and simplifies the API:
+
+```
+Session ──Arc──▶ SessionInner (lib handle + session ptr)
+    │                  ▲
+    │                  │
+    └─ list_endpoints()│
+           │           │
+           ▼           │
+       Endpoint ──Arc──┘
+           │       │
+           │       └──Arc──▶ EndpointList (C-allocated buffer, freed on Drop)
+           │
+           └─ load_model_from_file()
+                   │
+                   ▼
+               Model ──Arc──▶ SessionInner
+```
+
+- **Session**: Cheaply cloneable (reference counted). Multiple handles share
+  the same underlying connection. Freed via `dv_session_close` on last drop.
+- **Endpoint**: Holds shared references to both the session and the C-allocated
+  endpoint list buffer. The list is freed via `dv_endpoint_free_group` when all
+  endpoints from the list are dropped.
+- **Model**: NOT cloneable. Owns its loaded NPU resources. Automatically
+  unloaded via `dv_model_unload` on drop.
+
+### Thread Safety
+
+- `Session` is `Send + Sync` — can be shared across threads
+- `Endpoint` is `Send + Sync` — can be shared across threads
+- `Model` is `Send` but NOT `Sync` — can be moved between threads but
+  inference operations must not be called concurrently
+
+For multi-model parallelism, load separate `Model` instances per thread.
+
+### Feature Flags
+
+| Feature | Default | Description |
+|---------|---------|-------------|
+| `hal` | yes | Enables `edgefirst-hal` for tensor and image operations |
+
+Without `hal`, only session/endpoint/metadata operations are available.
+Model tensor allocation and inference require the HAL tensor types.
+
+## FFI Layer (ara2-sys)
+
+The `ara2-sys` crate provides low-level FFI bindings to `libaraclient.so`:
+
+- Generated by `bindgen` from `dvapi.h`
+- Uses `libloading` for runtime dynamic library loading
+- All symbols resolved lazily at first use
+- Type aliases map C types to Rust equivalents
+
+## Error Handling
+
+A unified `Error` enum covers all failure modes:
+
+```rust
+pub enum Error {
+    Io(std::io::Error),         // File I/O errors
+    Library(libloading::Error), // Library loading failures
+    Ara2(dv_status_code),       // NPU/proxy error codes
+    NullPointer(String),        // Null pointer from FFI
+    // ... HAL-gated variants for tensor/image errors
+}
+```
+
+All error variants implement `std::error::Error` with proper `source()`
+chaining for integration with `anyhow` and `eyre`.
+
+## Inference Pipeline
+
+```
+1. Session::create_via_unix_socket()
+   └─▶ Connect to ara2-proxy via UNIX socket
+
+2. session.list_endpoints()
+   └─▶ Query proxy for available NPU devices
+
+3. endpoint.load_model_from_file("model.dvm")
+   └─▶ Upload compiled model to NPU DRAM
+
+4. model.allocate_tensors(Some(TensorMemory::Dma))
+   └─▶ Allocate DMA-backed input/output buffers
+
+5. Write input data to model.input_tensor(0)
+   └─▶ Zero-copy via DMA file descriptor
+
+6. model.run()
+   └─▶ Synchronous inference on ARA-2 hardware
+
+7. Read output data from model.output_tensor(i)
+   └─▶ Dequantize and decode results
+```
