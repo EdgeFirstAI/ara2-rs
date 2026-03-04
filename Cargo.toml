@@ -11,12 +11,12 @@ homepage = "https://edgefirst.ai"
 repository = "https://github.com/EdgeFirstAI/ara2-rs"
 readme = "README.md"
 license = "Apache-2.0"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 
 [workspace.dependencies]
-ara2 = { version = "0.1.0", path = "crates/ara2" }
-ara2-sys = { version = "0.1.0", path = "crates/ara2-sys" }
+ara2 = { version = "0.1.1", path = "crates/ara2" }
+ara2-sys = { version = "0.1.1", path = "crates/ara2-sys" }
 criterion = "0.7.0"
 edgefirst-hal = "0.8.0"
 image = { version = "0.25.8", default-features = false, features = [

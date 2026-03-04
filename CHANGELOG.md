@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-03-03
+
+### Fixed
+
+- CString null-termination for UNIX and TCP socket FFI calls
+- Endpoint list memory leak (added `EndpointList` with proper `Drop`)
+- `output_info()` and `output_quants()` now return `Result` instead of panicking
+- Feature-gate `image` dependency behind `hal` feature
+- Error source chaining via `std::error::Error::source()`
+
+### Added
+
+- GitHub Actions CI/CD workflows (test, build, SBOM, release)
+- Trusted publishing to crates.io via OIDC
+- Configurable inference timeout (`set_timeout_ms()`, `DEFAULT_TIMEOUT_MS`)
+- `Debug` impls for `Session`, `Endpoint`, and `Model`
+- `DEFAULT_SOCKET` public constant
+- Public `input_info()` and `output_info()` methods on `Model`
+- Re-exports for `DvmMetadata` sub-types and `InputTensor`/`OutputTensor`
+- Rustdoc for `DramStatistics`, `InputTensor`, and `OutputTensor` fields
+- YOLOv8 detection/segmentation example with edgefirst-hal integration
+- `ara2-sys` README and crates.io metadata (keywords, categories)
+
+### Changed
+
+- Switched from nightly to stable Rust toolchain (edition 2024)
+- Cross-compilation uses zigbuild instead of `.cargo/config.toml`
+
 ## [0.1.0] - 2025-02-02
 
 ### Added
@@ -33,5 +61,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Requires `edgefirst-hal` for HAL integration
 - Requires `libaraclient.so` runtime library
 
-[Unreleased]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/EdgeFirstAI/ara2-rs/releases/tag/v0.1.0
