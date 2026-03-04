@@ -46,14 +46,8 @@ cargo build --release
 ### Cross-Compile for aarch64 (NXP i.MX)
 
 ```bash
-# Install cross-compilation toolchain
-sudo apt install gcc-aarch64-linux-gnu
-
-# Build
-cargo build --release --target aarch64-unknown-linux-gnu
+cargo zigbuild --release --target aarch64-unknown-linux-gnu
 ```
-
-The cross-linker is configured in `.cargo/config.toml`.
 
 ### Feature Flags
 

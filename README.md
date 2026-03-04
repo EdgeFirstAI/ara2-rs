@@ -12,8 +12,10 @@ NXP i.MX platforms equipped with ARA-2 PCIe hardware.
 
 | Platform | SoC | Status |
 |----------|-----|--------|
-| EdgeFirst FRDM | NXP i.MX 8M Plus | Tested |
-| EdgeFirst FRDM | NXP i.MX 95 | Tested |
+| [NXP FRDM i.MX 8M Plus](https://www.nxp.com/design/design-center/development-boards-and-designs/i-mx-evaluation-and-development-boards/freedom-development-platform-for-i-mx-8m-plus:FRDM-IMX8MP) | i.MX 8M Plus | Tested |
+| [NXP FRDM i.MX 95](https://www.nxp.com/design/design-center/development-boards-and-designs/i-mx-evaluation-and-development-boards/freedom-development-platform-for-i-mx-95:FRDM-IMX95) | i.MX 95 | Tested |
+
+Requires [EdgeFirst Yocto Images](https://github.com/EdgeFirstAI/yocto) with ARA-2 SDK support.
 
 ## Workspace
 
@@ -90,10 +92,8 @@ cargo build --release
 ### Cross-compile for aarch64 (NXP i.MX)
 
 ```bash
-cargo build --release --target aarch64-unknown-linux-gnu
+cargo zigbuild --release --target aarch64-unknown-linux-gnu
 ```
-
-The cross-linker is configured in `.cargo/config.toml`.
 
 ## Examples
 
