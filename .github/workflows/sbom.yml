@@ -8,18 +8,8 @@ on:
     branches: [main]
     tags:
       - 'v*'
-    paths:
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'crates/**/Cargo.toml'
-      - '.github/workflows/sbom.yml'
   pull_request:
     branches: [main]
-    paths:
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'crates/**/Cargo.toml'
-      - '.github/workflows/sbom.yml'
   workflow_call:
 
 env:
