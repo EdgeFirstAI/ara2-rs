@@ -12,7 +12,7 @@ NXP i.MX platforms equipped with ARA-2 PCIe hardware.
 
 | Platform | SoC | Status |
 |----------|-----|--------|
-| [NXP FRDM i.MX 8M Plus](https://www.nxp.com/design/design-center/development-boards-and-designs/i-mx-evaluation-and-development-boards/freedom-development-platform-for-i-mx-8m-plus:FRDM-IMX8MP) | i.MX 8M Plus | Tested |
+| [NXP FRDM i.MX 8M Plus](https://www.nxp.com/design/design-center/development-boards-and-designs/FRDM-IMX8MPLUS) | i.MX 8M Plus | Tested |
 | [NXP FRDM i.MX 95](https://www.nxp.com/design/design-center/development-boards-and-designs/i-mx-evaluation-and-development-boards/freedom-development-platform-for-i-mx-95:FRDM-IMX95) | i.MX 95 | Tested |
 
 Requires [EdgeFirst Yocto Images](https://github.com/EdgeFirstAI/yocto) with ARA-2 SDK support.
