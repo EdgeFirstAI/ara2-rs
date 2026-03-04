@@ -6,6 +6,8 @@ name: SBOM
 on:
   push:
     branches: [main]
+    tags:
+      - 'v*'
     paths:
       - 'Cargo.toml'
       - 'Cargo.lock'
@@ -18,6 +20,7 @@ on:
       - 'Cargo.lock'
       - 'crates/**/Cargo.toml'
       - '.github/workflows/sbom.yml'
+  workflow_call:
 
 env:
   CARGO_TERM_COLOR: always
@@ -45,7 +48,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: sbom
-          path: bom.json
+          path: crates/*/bom.json
 
   license-check:
     name: License Compliance
