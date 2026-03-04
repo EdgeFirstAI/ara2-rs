@@ -2,7 +2,6 @@
 resolver = "3"
 members = ["crates/*"]
 default-members = ["crates/ara2"]
-exclude = ["crates/ara2-py"]
 
 [workspace.package]
 description = "Rust client library for the Kinara ARA-2 neural network accelerator on NXP i.MX platforms"
