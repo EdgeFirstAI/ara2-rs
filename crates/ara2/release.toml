@@ -1,2 +1,0 @@
-# Disable per-crate replacements — handled at workspace level
-pre-release-replacements = []

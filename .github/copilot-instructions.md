@@ -12,7 +12,7 @@ bindings to `libaraclient.so.1`.
 |-------|---------|---------------|
 | `ara2` | Core client library (Session, Endpoint, Model) | crates.io |
 | `ara2-sys` | FFI bindings to libaraclient.so via libloading | crates.io |
-| `ara2-py` | Python bindings via PyO3 (excluded from workspace) | PyPI |
+| `ara2-py` | Python bindings via PyO3 | PyPI |
 
 ### Key Types
 
@@ -219,10 +219,34 @@ with ARA-2 hardware. Only `dvm_metadata` tests run in CI.
 
 ## Publishing
 
-### crates.io (ara2, ara2-sys)
+### Release Checklist
 
-Releases are published automatically via trusted publishing when a `v*` tag is pushed.
-The release workflow publishes `ara2-sys` first, then `ara2`.
+All workspace crates share a single version. When releasing:
+
+1. **Update version** in `Cargo.toml` (root):
+   - `workspace.package.version`
+   - `workspace.dependencies.ara2.version`
+   - `workspace.dependencies.ara2-sys.version`
+2. **Update `CHANGELOG.md`**:
+   - Add new `## [x.y.z] - YYYY-MM-DD` section under `[Unreleased]`
+   - Add comparison link at the bottom
+   - Update `[Unreleased]` comparison link to new version
+3. **Commit, tag, push**:
+   ```bash
+   git add -A && git commit -s -m "chore: release vX.Y.Z"
+   git tag -s vX.Y.Z -m "vX.Y.Z"
+   git push && git push --tags
+   ```
+4. The `release.yml` workflow handles the rest:
+   - Waits for lint + build checks
+   - Generates SBOM via `sbom.yml`
+   - Publishes `ara2-sys` then `ara2` to crates.io (trusted publishing)
+   - Creates GitHub Release with SBOM and changelog
+
+### crates.io Trusted Publishing
+
+Releases are published automatically via OIDC trusted publishing when a `v*` tag is pushed.
+No API tokens needed — authentication uses the `crates-io` GitHub environment.
 
 For manual publishing (e.g., initial release):
 

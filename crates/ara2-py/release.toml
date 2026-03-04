@@ -1,4 +1,0 @@
-# Include in release process for version bumping despite publish = false
-release = true
-# Disable per-crate replacements — handled at workspace level
-pre-release-replacements = []
