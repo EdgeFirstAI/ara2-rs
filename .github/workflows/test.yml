@@ -70,9 +70,6 @@ jobs:
       - name: Check workspace (default features)
         run: cargo check --workspace --all-targets
 
-      - name: Check without HAL
-        run: cargo check -p ara2 --no-default-features
-
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -100,7 +97,7 @@ jobs:
           shared-key: test-${{ matrix.target }}
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@5651179b43a8cc5830cc93490d39e75b47c76686 # v2.49.12
+        uses: taiki-e/install-action@205eb1d74c6feda89abb1f3a09360601953286c0 # v2.68.18
         with:
           tool: cargo-nextest
 

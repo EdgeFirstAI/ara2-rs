@@ -39,7 +39,7 @@ jobs:
         run: cargo install cargo-cyclonedx
 
       - name: Generate CycloneDX SBOM
-        run: cargo cyclonedx --format json --output-pattern bom
+        run: cargo cyclonedx --format json --override-filename bom
 
       - name: Upload SBOM
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -60,7 +60,7 @@ jobs:
           toolchain: stable
 
       - name: Install cargo-deny
-        uses: taiki-e/install-action@5651179b43a8cc5830cc93490d39e75b47c76686 # v2.49.12
+        uses: taiki-e/install-action@205eb1d74c6feda89abb1f3a09360601953286c0 # v2.68.18
         with:
           tool: cargo-deny
 
