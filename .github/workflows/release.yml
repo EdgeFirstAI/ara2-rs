@@ -32,10 +32,13 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           wait-interval: 10
 
-  generate-sbom:
-    name: Generate SBOM
-    needs: wait-for-checks
-    uses: ./.github/workflows/sbom.yml
+      - name: Wait for SBOM
+        uses: lewagon/wait-on-check-action@ccfb013c15c8afb7bf2b7c028fb74dc5a068cccc # v1.3.4
+        with:
+          ref: ${{ github.ref }}
+          check-name: 'Generate SBOM'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          wait-interval: 10
 
   publish-crates:
     name: Publish to crates.io
@@ -73,7 +76,7 @@ jobs:
 
   create-release:
     name: Create Release
-    needs: [generate-sbom, publish-crates]
+    needs: [wait-for-checks, publish-crates]
     runs-on: ubuntu-22.04
     permissions:
       contents: write
@@ -83,11 +86,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-      - name: Download SBOM
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - name: Download SBOM from sbom.yml workflow
+        uses: dawidd6/action-download-artifact@bf251b5aa9c2f7eeb574a96ee720e24f801b7c11 # v6
         with:
+          workflow: sbom.yml
+          commit: ${{ github.sha }}
           name: sbom
           path: release/
+
+      - name: Validate SBOM
+        run: |
+          if [ -z "$(find release/ -name 'bom.json' -print -quit)" ]; then
+            echo "ERROR: sbom not found in release artifacts"
+            exit 1
+          fi
 
       - name: Extract changelog
         id: changelog
