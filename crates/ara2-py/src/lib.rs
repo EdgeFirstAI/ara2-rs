@@ -161,7 +161,12 @@ impl DramStatistics {
     fn __repr__(&self) -> String {
         format!(
             "DramStatistics(dram_size={}, dram_occupancy_size={}, free_size={}, reserved_occupancy_size={}, model_occupancy_size={}, tensor_occupancy_size={})",
-            self.dram_size, self.dram_occupancy_size, self.free_size, self.reserved_occupancy_size, self.model_occupancy_size, self.tensor_occupancy_size
+            self.dram_size,
+            self.dram_occupancy_size,
+            self.free_size,
+            self.reserved_occupancy_size,
+            self.model_occupancy_size,
+            self.tensor_occupancy_size
         )
     }
 }
@@ -238,7 +243,7 @@ impl OutputQuantization {
 // ============================================================================
 
 /// Neural network model loaded on an endpoint
-/// 
+///
 /// The Model class provides methods to run inference on a loaded neural network.
 /// Input and output tensors are accessed via zero-based indices.
 #[pyclass(module = "edgefirst_ara2")]
@@ -252,7 +257,7 @@ pub struct Model {
 #[pymethods]
 impl Model {
     /// Run inference on the model
-    /// 
+    ///
     /// Returns:
     ///     ModelTiming: Timing information for the inference run
     fn run(&mut self) -> Result<ModelTiming, Error> {
@@ -286,7 +291,7 @@ impl Model {
 // ============================================================================
 
 /// ARA-2 accelerator endpoint
-/// 
+///
 /// An endpoint represents a single ARA-2 accelerator device that can load
 /// and execute neural network models.
 #[pyclass(module = "edgefirst_ara2")]
@@ -297,7 +302,7 @@ pub struct Endpoint {
 #[pymethods]
 impl Endpoint {
     /// Check the current status/state of the endpoint
-    /// 
+    ///
     /// Returns:
     ///     State: Current endpoint state
     fn check_status(&self) -> Result<State, Error> {
@@ -307,7 +312,7 @@ impl Endpoint {
     }
 
     /// Get DRAM statistics for the endpoint
-    /// 
+    ///
     /// Returns:
     ///     DramStatistics: Memory usage information
     fn dram_statistics(&self) -> Result<DramStatistics, Error> {
@@ -317,11 +322,11 @@ impl Endpoint {
     }
 
     /// Load a neural network model from a file
-    /// 
+    ///
     /// Args:
     ///     model_path: Path to the model file
     ///     output_quantization: Optional output quantization type
-    /// 
+    ///
     /// Returns:
     ///     Model: Loaded model ready for inference
     #[pyo3(signature = (model_path, output_quantization = None))]
@@ -345,11 +350,11 @@ impl Endpoint {
 // ============================================================================
 
 /// ARA-2 session for communicating with the proxy
-/// 
+///
 /// A Session represents a connection to the ARA-2 proxy service, which can
 /// be established via either a UNIX socket or TCP socket. The session is used
 /// to enumerate endpoints and retrieve version information.
-/// 
+///
 /// Example:
 ///     >>> import ara2
 ///     >>> session = ara2.Session.create_via_unix_socket("/var/run/ara2.sock")
@@ -367,31 +372,29 @@ impl Display for Session {
 #[pymethods]
 impl Session {
     /// Create a session connected via UNIX domain socket
-    /// 
+    ///
     /// Args:
     ///     socket_path: Path to the UNIX socket (e.g., "/var/run/ara2.sock")
-    /// 
+    ///
     /// Returns:
     ///     Session: A new session connected to the proxy
-    /// 
+    ///
     /// Example:
     ///     >>> session = Session.create_via_unix_socket("/var/run/ara2.sock")
     #[staticmethod]
     fn create_via_unix_socket(socket_path: &str) -> Result<Self, Error> {
-        Ok(Session(ara2::Session::create_via_unix_socket(
-            socket_path,
-        )?))
+        Ok(Session(ara2::Session::create_via_unix_socket(socket_path)?))
     }
 
     /// Create a session connected via TCP/IPv4 socket
-    /// 
+    ///
     /// Args:
     ///     ip: IPv4 address as a string (e.g., "127.0.0.1")
     ///     port: Port number
-    /// 
+    ///
     /// Returns:
     ///     Session: A new session connected to the proxy
-    /// 
+    ///
     /// Example:
     ///     >>> session = Session.create_via_tcp_ipv4_socket("127.0.0.1", 5555)
     #[staticmethod]
@@ -404,10 +407,10 @@ impl Session {
     }
 
     /// Get version information for all components
-    /// 
+    ///
     /// Returns:
     ///     dict: Dictionary mapping component names to version strings
-    /// 
+    ///
     /// Example:
     ///     >>> versions = session.versions()
     ///     >>> print(versions["proxy"])
@@ -417,10 +420,10 @@ impl Session {
     }
 
     /// List all available endpoints
-    /// 
+    ///
     /// Returns:
     ///     list[Endpoint]: List of available ARA-2 endpoints
-    /// 
+    ///
     /// Example:
     ///     >>> endpoints = session.list_endpoints()
     ///     >>> print(f"Found {len(endpoints)} endpoints")
