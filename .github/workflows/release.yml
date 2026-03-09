@@ -65,10 +65,18 @@ jobs:
           name: sbom
           path: release/
 
-      - name: Validate SBOM
+      - name: Prepare SBOM artifacts
         run: |
-          if [ -z "$(find release/ -name 'bom.json' -print -quit)" ]; then
-            echo "ERROR: sbom not found in release artifacts"
+          mkdir -p assets
+          for dir in release/*/; do
+            crate="$(basename "$dir")"
+            if [ -f "$dir/bom.json" ]; then
+              cp "$dir/bom.json" "assets/${crate}-bom.json"
+            fi
+          done
+          ls -la assets/
+          if [ -z "$(ls -A assets/)" ]; then
+            echo "ERROR: no SBOM files found"
             exit 1
           fi
 
@@ -84,5 +92,5 @@ jobs:
         with:
           name: v${{ steps.changelog.outputs.version }}
           body_path: release_notes.md
-          files: release/*
+          files: assets/*
           generate_release_notes: true
