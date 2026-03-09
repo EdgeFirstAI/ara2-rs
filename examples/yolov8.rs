@@ -525,8 +525,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut overlay = TensorImage::load(&image_bytes, Some(RGBA), None)?;
 
         match proto_data {
-            Some(pd) => processor.render_from_protos(&mut overlay, &detections, &pd)?,
-            None => processor.render_to_image(&mut overlay, &detections, &[])?,
+            Some(pd) => processor.draw_masks_proto(&mut overlay, &detections, &pd)?,
+            None => processor.draw_masks(&mut overlay, &detections, &[])?,
         }
 
         let stem = args.image.file_stem().unwrap_or_default().to_string_lossy();

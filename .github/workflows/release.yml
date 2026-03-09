@@ -12,37 +12,8 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  wait-for-checks:
-    name: Wait for Checks
-    runs-on: ubuntu-22.04
-    steps:
-      - name: Wait for lint
-        uses: lewagon/wait-on-check-action@ccfb013c15c8afb7bf2b7c028fb74dc5a068cccc # v1.3.4
-        with:
-          ref: ${{ github.ref }}
-          check-name: 'Lint'
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          wait-interval: 10
-
-      - name: Wait for build
-        uses: lewagon/wait-on-check-action@ccfb013c15c8afb7bf2b7c028fb74dc5a068cccc # v1.3.4
-        with:
-          ref: ${{ github.ref }}
-          check-name: 'Build (ubuntu-22.04)'
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          wait-interval: 10
-
-      - name: Wait for SBOM
-        uses: lewagon/wait-on-check-action@ccfb013c15c8afb7bf2b7c028fb74dc5a068cccc # v1.3.4
-        with:
-          ref: ${{ github.ref }}
-          check-name: 'Generate SBOM'
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          wait-interval: 10
-
   publish-crates:
     name: Publish to crates.io
-    needs: wait-for-checks
     runs-on: ubuntu-22.04
     environment: crates-io
     permissions:
@@ -76,7 +47,7 @@ jobs:
 
   create-release:
     name: Create Release
-    needs: [wait-for-checks, publish-crates]
+    needs: publish-crates
     runs-on: ubuntu-22.04
     permissions:
       contents: write
