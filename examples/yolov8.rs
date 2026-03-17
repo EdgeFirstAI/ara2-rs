@@ -6,6 +6,9 @@
 //! Demonstrates detection and segmentation inference using ARA-2 with EdgeFirst
 //! HAL for preprocessing, decoding, and overlay rendering.
 //!
+//! Uses the HAL `Decoder` API which handles dequantization and NMS internally,
+//! matching the pattern used by the Maivin `model` crate.
+//!
 //! ## Usage
 //!
 //! ```text
@@ -16,20 +19,24 @@
 //!
 //! - Automatic detection vs segmentation from DVM metadata or output shapes
 //! - DMA-backed tensors for zero-copy preprocessing
+//! - HAL Decoder with automatic dequantization of quantized outputs
 //! - Complete timing breakdown (preprocess, inference, postprocess, render)
 //! - Overlay rendering with HAL (bounding boxes + segmentation masks)
 //! - COCO class labels as fallback when DVM metadata has no labels
 
 use ara2::{Session, dvm_metadata};
 use edgefirst_hal::{
-    decoder::{self, DetectBox, Nms, XYWH},
+    decoder::{
+        ArrayViewDQuantized, DecoderBuilder, DetectBox, ProtoData,
+        configs::{self, DecoderType, QuantTuple},
+    },
     image::{
         Crop, Flip, ImageProcessor, ImageProcessorTrait as _, PLANAR_RGB, RGBA, Rotation,
         TensorImage, TensorImageRef,
     },
     tensor::{TensorMapTrait as _, TensorMemory, TensorTrait as _},
 };
-use ndarray::{Array2, Array3};
+use ndarray::IxDyn;
 use std::{path::PathBuf, time::Instant};
 
 // ── Arguments ────────────────────────────────────────────────────────────────
@@ -173,167 +180,67 @@ enum Task {
     Segment,
 }
 
-/// Identified output tensor indices for split-output YOLOv8 DVM models.
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+/// Normalize an ARA-2 output shape for the HAL decoder.
 ///
-/// DVM models compiled with `dvconvert` split YOLO outputs into separate
-/// tensors. Detection models have 2 outputs; segmentation models have 4.
-#[derive(Debug)]
-struct Outputs {
-    scores: usize,
-    boxes: usize,
-    masks: Option<usize>,
-    protos: Option<usize>,
-    num_classes: usize,
-    num_boxes: usize,
+/// ARA-2's FFI struct always reports 3 dimensions `[nch, height, width]`.
+/// For logically 2D outputs (e.g. scores `[80, 8400]`), the struct pads
+/// width=1, producing `[80, 8400, 1]`. We strip that trailing 1 to recover
+/// the true rank.
+///
+/// The HAL decoder expects an ONNX-style leading batch dimension (it slices
+/// `[0, .., ..]` internally to remove it), so we prepend batch=1.
+///
+/// Examples:
+///   `[80, 8400, 1]` → `[1, 80, 8400]`  (scores)
+///   `[4, 8400, 1]`  → `[1, 4, 8400]`   (boxes)
+///   `[32, 160, 160]` → `[1, 32, 160, 160]` (protos — no trailing 1 to strip)
+fn normalize_shape(raw: [usize; 3]) -> Vec<usize> {
+    let mut shape: Vec<usize> = raw.to_vec();
+    while shape.len() > 1 && shape.last() == Some(&1) {
+        shape.pop();
+    }
+    shape.insert(0, 1);
+    shape
 }
 
-impl Outputs {
-    /// Identify output tensors from model shapes. Detection: 2 outputs (scores
-    /// + boxes). Segmentation: 4 outputs (scores + boxes + mask_coeff +
-    ///   protos).
-    fn identify(model: &ara2::Model, task: Task) -> Result<Self, String> {
-        let shapes: Vec<Vec<usize>> = (0..model.n_outputs())
-            .map(|i| model.output_shape(i).to_vec())
-            .collect();
-
-        for (i, s) in shapes.iter().enumerate() {
-            println!("  output[{i}] shape={s:?}");
+/// Build an `ArrayViewDQuantized` from a raw output tensor, using bpp and
+/// signedness to select the correct integer type.
+fn output_to_quantized_view<'a>(
+    bytes: &'a [u8],
+    shape: &[usize],
+    bpp: usize,
+    is_signed: bool,
+) -> Result<ArrayViewDQuantized<'a>, Box<dyn std::error::Error>> {
+    let ix = IxDyn(shape);
+    match (bpp, is_signed) {
+        (1, true) => {
+            let data: &[i8] =
+                unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const i8, bytes.len()) };
+            Ok(ndarray::ArrayView::from_shape(ix, data)?.into())
         }
-
-        match task {
-            Task::Detect => Self::detect_heuristic(&shapes),
-            Task::Segment => Self::segment_heuristic(&shapes),
-        }
-    }
-
-    fn detect_heuristic(shapes: &[Vec<usize>]) -> Result<Self, String> {
-        if shapes.len() < 2 {
-            return Err(format!(
-                "detection needs >= 2 outputs, got {}",
-                shapes.len()
-            ));
-        }
-        let (mut scores, mut boxes) = (None, None);
-        for (i, s) in shapes.iter().enumerate() {
-            if s[0] == 4 {
-                boxes = Some(i);
-            } else if scores.is_none() {
-                scores = Some(i);
-            }
-        }
-        let si = scores.ok_or("cannot identify scores output")?;
-        let bi = boxes.ok_or("cannot identify boxes output (shape[0]==4)")?;
-        Ok(Self {
-            scores: si,
-            boxes: bi,
-            masks: None,
-            protos: None,
-            num_classes: shapes[si][0],
-            num_boxes: shapes[si][1],
-        })
-    }
-
-    fn segment_heuristic(shapes: &[Vec<usize>]) -> Result<Self, String> {
-        if shapes.len() < 4 {
-            return Err(format!(
-                "segmentation needs 4 outputs, got {}",
-                shapes.len()
-            ));
-        }
-        let (mut scores, mut boxes, mut masks, mut protos) = (None, None, None, None);
-        for (i, s) in shapes.iter().enumerate() {
-            if s.len() == 3 && s[0] == 32 && s[2] != 1 {
-                protos = Some(i); // [32, H, W] spatial
-            } else if s[0] == 4 {
-                boxes = Some(i);
-            } else if s[0] == 32 {
-                masks = Some(i); // [32, num_boxes]
-            } else {
-                scores = Some(i);
-            }
-        }
-        let si = scores.ok_or("cannot identify scores")?;
-        Ok(Self {
-            scores: si,
-            boxes: boxes.ok_or("cannot identify boxes")?,
-            masks: Some(masks.ok_or("cannot identify mask_coeff")?),
-            protos: Some(protos.ok_or("cannot identify protos")?),
-            num_classes: shapes[si][0],
-            num_boxes: shapes[si][1],
-        })
-    }
-}
-
-// ── Dequantization helpers ───────────────────────────────────────────────────
-
-/// Dequantize an output tensor to f32 using the model's quantization params.
-/// Handles both 1-byte (i8/u8) and 2-byte (i16) output tensor types.
-fn dequantize_output(model: &ara2::Model, idx: usize) -> Vec<f32> {
-    let map = model
-        .output_tensor(idx)
-        .map()
-        .expect("failed to map output");
-    let quant = model
-        .output_quants(idx)
-        .expect("failed to get output quants");
-    let bpp = model.output_bpp(idx);
-    let slice = map.as_slice();
-
-    if bpp == 2 {
-        let i16_slice: &[i16] =
-            unsafe { std::slice::from_raw_parts(slice.as_ptr() as *const i16, slice.len() / 2) };
-        i16_slice
-            .iter()
-            .map(|&v| (v as f32 - quant.offset as f32) * quant.qn)
-            .collect()
-    } else if quant.is_signed {
-        let i8_slice: &[i8] =
-            unsafe { std::slice::from_raw_parts(slice.as_ptr() as *const i8, slice.len()) };
-        i8_slice
-            .iter()
-            .map(|&v| (v as f32 - quant.offset as f32) * quant.qn)
-            .collect()
-    } else {
-        slice
-            .iter()
-            .map(|&v| (v as f32 - quant.offset as f32) * quant.qn)
-            .collect()
-    }
-}
-
-/// Dequantize boxes with per-axis normalization to [0,1] range.
-/// XYWH rows: x,w are normalized by width; y,h by height.
-fn dequantize_boxes(model: &ara2::Model, idx: usize, input_w: f32, input_h: f32) -> Vec<f32> {
-    let map = model.output_tensor(idx).map().expect("failed to map boxes");
-    let quant = model
-        .output_quants(idx)
-        .expect("failed to get output quants");
-    let bpp = model.output_bpp(idx);
-    let slice = map.as_slice();
-    let shape = model.output_shape(idx);
-    let num_boxes = shape[1];
-
-    let mut out = Vec::with_capacity(4 * num_boxes);
-    for row in 0..4 {
-        let scale = if row == 0 || row == 2 {
-            quant.qn / input_w
-        } else {
-            quant.qn / input_h
-        };
-        for col in 0..num_boxes {
-            let raw = if bpp == 2 {
-                let p = unsafe { *(slice.as_ptr().add((row * num_boxes + col) * 2) as *const i16) };
-                p as f32
-            } else if quant.is_signed {
-                let p = slice[row * num_boxes + col] as i8;
-                p as f32
-            } else {
-                slice[row * num_boxes + col] as f32
+        (1, false) => Ok(ndarray::ArrayView::from_shape(ix, bytes)?.into()),
+        (2, true) => {
+            let data: &[i16] = unsafe {
+                std::slice::from_raw_parts(
+                    bytes.as_ptr() as *const i16,
+                    bytes.len() / 2,
+                )
             };
-            out.push(raw * scale);
+            Ok(ndarray::ArrayView::from_shape(ix, data)?.into())
         }
+        (2, false) => {
+            let data: &[u16] = unsafe {
+                std::slice::from_raw_parts(
+                    bytes.as_ptr() as *const u16,
+                    bytes.len() / 2,
+                )
+            };
+            Ok(ndarray::ArrayView::from_shape(ix, data)?.into())
+        }
+        _ => Err(format!("unsupported bpp={bpp} signed={is_signed}").into()),
     }
-    out
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────────
@@ -383,13 +290,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (in_c, in_h, in_w) = (input_shape[0], input_shape[1], input_shape[2]);
     println!("Input: {in_c}x{in_h}x{in_w} (CHW)");
 
-    let outputs = Outputs::identify(&model, task)?;
-    println!(
-        "Identified: scores={}, boxes={}, classes={}, anchors={}",
-        outputs.scores, outputs.boxes, outputs.num_classes, outputs.num_boxes
-    );
+    // ── 3. Build HAL Decoder from output tensor metadata ─────────────────
+    //
+    // Collect normalized shapes and quantization for each output. For box
+    // outputs (shape contains 4), divide the quantization scale by input_dim
+    // so the decoder produces normalized [0,1] coordinates.
+    let input_dim = in_w.max(in_h) as f32;
+    let n_outputs = model.n_outputs();
 
-    // ── 3. Load and preprocess image ─────────────────────────────────────
+    let mut shapes = Vec::with_capacity(n_outputs);
+    let mut quants = Vec::with_capacity(n_outputs);
+
+    for i in 0..n_outputs {
+        let raw_shape = model.output_shape(i);
+        let shape = normalize_shape(raw_shape);
+        let info = model.output_info(i)?;
+        let is_box_output = shape.contains(&4);
+        let scale = if is_box_output && input_dim > 1.0 {
+            info.quant.qn / input_dim
+        } else {
+            info.quant.qn
+        };
+        println!(
+            "  output[{i}] raw_shape={raw_shape:?} shape={shape:?} bpp={} signed={} qn={} offset={} (adj_scale={scale})",
+            info.bpp, info.quant.is_signed, info.quant.qn, info.quant.offset
+        );
+        quants.push((scale, info.quant.offset, info.bpp, info.quant.is_signed));
+        shapes.push(shape);
+    }
+
+    // ── 3a. Load and preprocess image (before decoder build for diagnostics) ──
     let image_bytes = std::fs::read(&args.image)?;
     let src = TensorImage::load(&image_bytes, Some(RGBA), Some(TensorMemory::Dma))?;
     let (img_w, img_h) = (src.width(), src.height());
@@ -416,76 +346,242 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let preprocess_time = t_pre.elapsed();
 
-    // ── 4. Inference ─────────────────────────────────────────────────────
+    // ── 3b. Inference (run before decoder build so we can analyze raw buffers) ──
     let t_inf = Instant::now();
     let timing = model.run()?;
     let inference_time = t_inf.elapsed();
 
-    // ── 5. Post-process ──────────────────────────────────────────────────
-    let t_post = Instant::now();
-    let mut detections: Vec<DetectBox> = Vec::with_capacity(100);
+    // ── 3c. Post-inference buffer analysis ──
+    {
+        let maps_post: Vec<_> = (0..n_outputs)
+            .map(|i| model.output_tensor(i).map().expect("failed to map output"))
+            .collect();
+        println!("\n--- Post-Inference Buffer Analysis ---");
+        for i in 0..n_outputs {
+            let bytes = maps_post[i].as_slice();
+            let (bpp, is_signed) = (quants[i].2, quants[i].3);
+            if bpp == 1 && is_signed {
+                let data: &[i8] = unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const i8, bytes.len()) };
+                let mut hist = std::collections::HashMap::new();
+                for &v in data.iter() { *hist.entry(v).or_insert(0u64) += 1; }
+                println!("  output[{i}]: shape={:?} unique_values={} total={}", shapes[i], hist.len(), data.len());
+                if hist.len() <= 10 {
+                    let mut sorted: Vec<_> = hist.iter().collect();
+                    sorted.sort_by_key(|&(&v, _)| v);
+                    for &(&v, &c) in &sorted { println!("    q={v}: {c} ({:.1}%)", 100.0 * c as f64 / data.len() as f64); }
+                }
+            } else if bpp == 1 && !is_signed {
+                let mut hist = std::collections::HashMap::new();
+                for &v in bytes.iter() { *hist.entry(v).or_insert(0u64) += 1; }
+                println!("  output[{i}]: shape={:?} unique_values={} total={}", shapes[i], hist.len(), bytes.len());
+            } else if bpp == 2 && is_signed {
+                let data: &[i16] = unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const i16, bytes.len()/2) };
+                let mut hist = std::collections::HashMap::new();
+                for &v in data.iter() { *hist.entry(v).or_insert(0u64) += 1; }
+                println!("  output[{i}]: shape={:?} unique_values={} total={}", shapes[i], hist.len(), data.len());
+            }
+        }
+    }
 
-    // Dequantize boxes with per-axis normalization to [0,1]
-    let boxes_f32 = dequantize_boxes(&model, outputs.boxes, in_w as f32, in_h as f32);
-    let boxes_arr = Array2::from_shape_vec((4, outputs.num_boxes), boxes_f32)?;
-
-    // Dequantize scores
-    let scores_f32 = dequantize_output(&model, outputs.scores);
-    let scores_arr = Array2::from_shape_vec(
-        (outputs.num_classes, outputs.num_boxes),
-        scores_f32[..outputs.num_classes * outputs.num_boxes].to_vec(),
-    )?;
-
-    let proto_data = match task {
+    // ── 3d. Build HAL Decoder from output tensor metadata ────────────────
+    let decoder = match task {
         Task::Detect => {
-            decoder::yolo::decode_yolo_split_det_float(
-                boxes_arr.view(),
-                scores_arr.view(),
-                args.threshold,
-                args.iou,
-                Some(Nms::ClassAgnostic),
-                &mut detections,
-            );
-            None
+            let (bi, si) = identify_det_outputs(&shapes)?;
+            DecoderBuilder::new()
+                .with_config_yolo_split_det(
+                    configs::Boxes {
+                        decoder: DecoderType::Ultralytics,
+                        quantization: Some(QuantTuple(quants[bi].0, quants[bi].1)),
+                        shape: shapes[bi].clone(),
+                        normalized: Some(true),
+                        ..Default::default()
+                    },
+                    configs::Scores {
+                        decoder: DecoderType::Ultralytics,
+                        quantization: Some(QuantTuple(quants[si].0, quants[si].1)),
+                        shape: shapes[si].clone(),
+                        ..Default::default()
+                    },
+                )
+                .with_score_threshold(args.threshold)
+                .with_iou_threshold(args.iou)
+                .build()?
         }
         Task::Segment => {
-            let mi = outputs.masks.unwrap();
-            let pi = outputs.protos.unwrap();
-
-            // Dequantize mask coefficients
-            let mask_f32 = dequantize_output(&model, mi);
-            let mask_shape = model.output_shape(mi);
-            let mask_arr = Array2::from_shape_vec(
-                (mask_shape[0], outputs.num_boxes),
-                mask_f32[..mask_shape[0] * outputs.num_boxes].to_vec(),
-            )?;
-
-            // Dequantize protos and permute from (C,H,W) to (H,W,C)
-            let proto_f32 = dequantize_output(&model, pi);
-            let proto_shape = model.output_shape(pi);
-            let protos_chw = Array3::from_shape_vec(
-                (proto_shape[0], proto_shape[1], proto_shape[2]),
-                proto_f32[..proto_shape[0] * proto_shape[1] * proto_shape[2]].to_vec(),
-            )?;
-            let protos_hwc = protos_chw.permuted_axes([1, 2, 0]);
-
-            // Decode with proto extraction (returns ProtoData for HAL rendering)
-            let pd = decoder::yolo::impl_yolo_split_segdet_float_proto::<XYWH, _, _, _, _>(
-                boxes_arr.view(),
-                scores_arr.view(),
-                mask_arr.view(),
-                protos_hwc.view(),
-                args.threshold,
-                args.iou,
-                Some(Nms::ClassAgnostic),
-                &mut detections,
-            );
-            Some(pd)
+            let (bi, si, mi, pi) = identify_seg_outputs(&shapes)?;
+            DecoderBuilder::new()
+                .with_config_yolo_split_segdet(
+                    configs::Boxes {
+                        decoder: DecoderType::Ultralytics,
+                        quantization: Some(QuantTuple(quants[bi].0, quants[bi].1)),
+                        shape: shapes[bi].clone(),
+                        normalized: Some(true),
+                        ..Default::default()
+                    },
+                    configs::Scores {
+                        decoder: DecoderType::Ultralytics,
+                        quantization: Some(QuantTuple(quants[si].0, quants[si].1)),
+                        shape: shapes[si].clone(),
+                        ..Default::default()
+                    },
+                    configs::MaskCoefficients {
+                        decoder: DecoderType::Ultralytics,
+                        quantization: Some(QuantTuple(quants[mi].0, quants[mi].1)),
+                        shape: shapes[mi].clone(),
+                        ..Default::default()
+                    },
+                    configs::Protos {
+                        decoder: DecoderType::Ultralytics,
+                        quantization: Some(QuantTuple(quants[pi].0, quants[pi].1)),
+                        shape: shapes[pi].clone(),
+                        ..Default::default()
+                    },
+                )
+                .with_score_threshold(args.threshold)
+                .with_iou_threshold(args.iou)
+                .build()?
         }
     };
+
+    println!("Decoder: {:?}", decoder.model_type());
+
+    // ── 6. Post-process via HAL Decoder ──────────────────────────────────
+    let t_post = Instant::now();
+
+    // Map all output tensors and build quantized array views
+    let maps: Vec<_> = (0..n_outputs)
+        .map(|i| model.output_tensor(i).map().expect("failed to map output"))
+        .collect();
+
+    let views: Vec<ArrayViewDQuantized> = (0..n_outputs)
+        .map(|i| {
+            output_to_quantized_view(
+                maps[i].as_slice(),
+                &shapes[i],
+                quants[i].2,  // bpp
+                quants[i].3,  // is_signed
+            )
+            .expect("failed to create quantized view")
+        })
+        .collect();
+
+    // Decode with both paths for comparison
+    let mut detections: Vec<DetectBox> = Vec::with_capacity(100);
+    let mut masks: Vec<edgefirst_hal::decoder::Segmentation> = Vec::with_capacity(100);
+    decoder.decode_quantized(&views, &mut detections, &mut masks)?;
     let postprocess_time = t_post.elapsed();
 
-    // ── 6. Print results ─────────────────────────────────────────────────
+    // Also get ProtoData for draw_masks_proto path
+    let mut det2: Vec<DetectBox> = Vec::with_capacity(100);
+    let proto_data: Option<ProtoData> = decoder.decode_quantized_proto(&views, &mut det2)?;
+
+    // Debug: inspect quantization parameters for mask/proto outputs
+    println!("\n--- Quantization Debug ---");
+    {
+        let (_, _, mi, pi) = identify_seg_outputs(&shapes).unwrap();
+        println!("  mask_coeff output[{mi}]: scale={}, offset={}, bpp={}, signed={}",
+            quants[mi].0, quants[mi].1, quants[mi].2, quants[mi].3);
+        println!("  protos output[{pi}]: scale={}, offset={}, bpp={}, signed={}",
+            quants[pi].0, quants[pi].1, quants[pi].2, quants[pi].3);
+        let combined_scale = quants[mi].0 * quants[pi].0;
+        println!("  combined_scale = {} * {} = {}", quants[mi].0, quants[pi].0, combined_scale);
+
+        // Sample raw data from mask coefficient and proto tensors
+        let mask_bytes = maps[mi].as_slice();
+        let proto_bytes = maps[pi].as_slice();
+        print!("  mask_coeff first 32 values: [");
+        if quants[mi].3 { // signed
+            let data: &[i8] = unsafe { std::slice::from_raw_parts(mask_bytes.as_ptr() as *const i8, mask_bytes.len()) };
+            for v in data.iter().take(32) { print!("{v}, "); }
+        } else {
+            for v in mask_bytes.iter().take(32) { print!("{v}, "); }
+        }
+        println!("]");
+
+        // Comprehensive proto buffer analysis
+        println!("  proto buffer: {} bytes, bpp={}", proto_bytes.len(), quants[pi].2);
+        if quants[pi].3 { // signed
+            let data: &[i8] = unsafe { std::slice::from_raw_parts(proto_bytes.as_ptr() as *const i8, proto_bytes.len()) };
+            // Unique value histogram
+            let mut hist = std::collections::HashMap::new();
+            for &v in data.iter() { *hist.entry(v).or_insert(0u64) += 1; }
+            let mut sorted_vals: Vec<_> = hist.iter().collect();
+            sorted_vals.sort_by_key(|&(&v, _)| v);
+            println!("  proto unique values: {} (total elements: {})", hist.len(), data.len());
+            for &(&val, &count) in sorted_vals.iter().take(20) {
+                let pct = 100.0 * count as f64 / data.len() as f64;
+                let dequant = (val as f64 - quants[pi].1 as f64) * quants[pi].0 as f64;
+                println!("    q={val:>5}: {count:>8} ({pct:>5.1}%)  dequant={dequant:.4}");
+            }
+            if sorted_vals.len() > 20 { println!("    ... and {} more unique values", sorted_vals.len() - 20); }
+            // Sample from different regions
+            let n = data.len();
+            let proto_shape = &shapes[pi]; // [1, 32, 160, 160]
+            let ch = proto_shape.get(1).copied().unwrap_or(32);
+            let hw = proto_shape.get(2).copied().unwrap_or(160) * proto_shape.get(3).copied().unwrap_or(160);
+            println!("  proto layout: channels={ch} spatial={hw}");
+            // Print channel 0 row 0, channel 0 middle row, channel 16 row 0
+            let offsets = [
+                ("ch0 row0", 0usize),
+                ("ch0 mid", hw / 2),
+                ("ch16 row0", 16 * hw),
+                ("ch31 last", n.saturating_sub(160)),
+            ];
+            for (label, off) in offsets {
+                if off + 16 <= n {
+                    print!("  {label} @{off}: [");
+                    for v in data[off..off+16].iter() { print!("{v}, "); }
+                    println!("]");
+                }
+            }
+        } else {
+            println!("  (unsigned proto analysis - not expected)");
+        }
+
+        // Simulate one dot product for first detection's mask coeff
+        // to see what the matmul result looks like
+        if !detections.is_empty() {
+            // The mask coeff tensor shape is [1, 32, 8400] in our normalized shape
+            // After find_outputs_with_shape_quantized and swap_axes, it becomes [32, 8400]
+            // Then reversed_axes makes it [8400, 32]. masks.row(box_idx) gives [32].
+            println!("  (Manual matmul simulation would require box indices - see decoder internals)");
+        }
+    }
+
+    // Debug: inspect masks
+    println!("\n--- Masks ---");
+    println!("  detections: {}, masks: {}", detections.len(), masks.len());
+    for (i, mask) in masks.iter().enumerate() {
+        let seg = &mask.segmentation;
+        let nonzero = seg.iter().filter(|&&v| v > 0).count();
+        // Also show value distribution
+        let min = seg.iter().min().copied().unwrap_or(0);
+        let max = seg.iter().max().copied().unwrap_or(0);
+        let sum: u64 = seg.iter().map(|&v| v as u64).sum();
+        let mean = if !seg.is_empty() { sum as f64 / seg.len() as f64 } else { 0.0 };
+        println!(
+            "  mask[{i}]: shape={:?} bbox=[{:.3},{:.3},{:.3},{:.3}] nonzero={}/{} min={} max={} mean={:.1}",
+            seg.shape(), mask.xmin, mask.ymin, mask.xmax, mask.ymax, nonzero, seg.len(), min, max, mean
+        );
+    }
+    if let Some(ref pd) = proto_data {
+        let n_coeffs = pd.mask_coefficients.len();
+        let protos_info = match &pd.protos {
+            edgefirst_hal::decoder::ProtoTensor::Quantized { protos, quantization } =>
+                format!("Quantized {:?} scale={} zp={}", protos.shape(), quantization.scale, quantization.zero_point),
+            edgefirst_hal::decoder::ProtoTensor::Float(arr) =>
+                format!("Float {:?}", arr.shape()),
+        };
+        println!("  proto: {protos_info}, coefficients: {n_coeffs}");
+        // Print first detection's mask coefficients (dequantized)
+        if let Some(coeffs) = pd.mask_coefficients.first() {
+            print!("  det[0] coeffs (dequant): [");
+            for v in coeffs.iter().take(8) { print!("{v:.4}, "); }
+            println!("...]");
+        }
+    }
+
+    // ── 7. Print results ─────────────────────────────────────────────────
     println!("\n--- Timing ---");
     println!("  Preprocess:  {:?}", preprocess_time);
     println!(
@@ -517,25 +613,84 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
-    // ── 7. Save overlay ──────────────────────────────────────────────────
+    // ── 8. Save overlays ─────────────────────────────────────────────────
     if args.save {
-        let t_render = Instant::now();
+        let stem = args.image.file_stem().unwrap_or_default().to_string_lossy();
 
-        // Load original image as RGBA for overlay rendering
-        let mut overlay = TensorImage::load(&image_bytes, Some(RGBA), None)?;
-
-        match proto_data {
-            Some(pd) => processor.draw_masks_proto(&mut overlay, &detections, &pd)?,
-            None => processor.draw_masks(&mut overlay, &detections, &[])?,
+        // Save with materialized masks (decode_quantized path)
+        {
+            let t_render = Instant::now();
+            let mut overlay = TensorImage::load(&image_bytes, Some(RGBA), None)?;
+            processor.draw_masks(&mut overlay, &detections, &masks)?;
+            let out_path = args.image.with_file_name(format!("{stem}_masks.jpg"));
+            overlay.save_jpeg(out_path.to_str().unwrap(), 95)?;
+            println!("\n  Render (masks):  {:?}", t_render.elapsed());
+            println!("  Saved:           {}", out_path.display());
         }
 
-        let stem = args.image.file_stem().unwrap_or_default().to_string_lossy();
-        let out_path = args.image.with_file_name(format!("{stem}_overlay.jpg"));
-        overlay.save_jpeg(out_path.to_str().unwrap(), 95)?;
-
-        println!("\n  Render:      {:?}", t_render.elapsed());
-        println!("  Saved:       {}", out_path.display());
+        // Save with proto path (decode_quantized_proto path)
+        if let Some(pd) = proto_data {
+            let t_render = Instant::now();
+            let mut overlay = TensorImage::load(&image_bytes, Some(RGBA), None)?;
+            processor.draw_masks_proto(&mut overlay, &detections, &pd)?;
+            let out_path = args.image.with_file_name(format!("{stem}_proto.jpg"));
+            overlay.save_jpeg(out_path.to_str().unwrap(), 95)?;
+            println!("  Render (proto):  {:?}", t_render.elapsed());
+            println!("  Saved:           {}", out_path.display());
+        }
     }
 
     Ok(())
+}
+
+// ── Output identification helpers ────────────────────────────────────────────
+
+/// Identify detection output indices: boxes [1,4,N] and scores [1,C,N].
+fn identify_det_outputs(shapes: &[Vec<usize>]) -> Result<(usize, usize), String> {
+    if shapes.len() < 2 {
+        return Err(format!(
+            "detection needs >= 2 outputs, got {}",
+            shapes.len()
+        ));
+    }
+    let (mut boxes, mut scores) = (None, None);
+    for (i, s) in shapes.iter().enumerate() {
+        if s.contains(&4) {
+            boxes = Some(i);
+        } else if scores.is_none() {
+            scores = Some(i);
+        }
+    }
+    Ok((
+        boxes.ok_or("cannot identify boxes output (shape contains 4)")?,
+        scores.ok_or("cannot identify scores output")?,
+    ))
+}
+
+/// Identify segmentation output indices: boxes, scores, mask_coeff, protos.
+fn identify_seg_outputs(shapes: &[Vec<usize>]) -> Result<(usize, usize, usize, usize), String> {
+    if shapes.len() < 4 {
+        return Err(format!(
+            "segmentation needs 4 outputs, got {}",
+            shapes.len()
+        ));
+    }
+    let (mut scores, mut boxes, mut masks, mut protos) = (None, None, None, None);
+    for (i, s) in shapes.iter().enumerate() {
+        if s.len() == 4 && s.contains(&32) {
+            protos = Some(i); // [1, 32, H, W] or [1, H, W, 32]
+        } else if s.contains(&4) {
+            boxes = Some(i);
+        } else if s.contains(&32) {
+            masks = Some(i); // [1, 32, num_boxes]
+        } else {
+            scores = Some(i);
+        }
+    }
+    Ok((
+        boxes.ok_or("cannot identify boxes")?,
+        scores.ok_or("cannot identify scores")?,
+        masks.ok_or("cannot identify mask_coeff")?,
+        protos.ok_or("cannot identify protos")?,
+    ))
 }
