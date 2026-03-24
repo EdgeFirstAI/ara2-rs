@@ -261,20 +261,22 @@ impl Model {
     /// transfers.
     fn shmfd_register(&self, tensor: &Tensor<u8>) -> Result<*mut dv_shm_descriptor, Error> {
         let mut desc: *mut dv_shm_descriptor = std::ptr::null_mut();
-        let fd = match tensor {
-            Tensor::Shm(t) => t.as_raw_fd(),
-            Tensor::Dma(t) => t.as_raw_fd(),
-            _ => {
-                return Err(Error::UnsupportedLayout(
-                    "shmfd_register only supports Shm or Dma memory".to_string(),
-                ));
+        match tensor.memory() {
+            TensorMemory::Shm | TensorMemory::Dma => {}
+            other => {
+                return Err(Error::UnsupportedLayout(format!(
+                    "shmfd_register only supports Shm or Dma memory, got {other:?}"
+                )));
             }
-        };
+        }
+        let fd = tensor
+            .clone_fd()
+            .map_err(|e| Error::UnsupportedLayout(format!("clone_fd failed: {e}")))?;
 
         let result = unsafe {
             self.session.lib.dv_shmfd_register(
                 self.session.ptr,
-                fd,
+                fd.as_raw_fd(),
                 tensor.size() as u32,
                 0,
                 0,

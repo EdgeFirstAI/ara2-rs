@@ -1,8 +1,8 @@
 use ara2::Session;
 use criterion::{Criterion, criterion_group, criterion_main};
 use edgefirst_hal::{
-    image::{Crop, Flip, G2DProcessor, ImageProcessorTrait as _, RGBA, Rotation, TensorImage},
-    tensor::{Tensor, TensorMemory, TensorTrait as _},
+    image::{Crop, Flip, G2DProcessor, ImageProcessorTrait as _, Rotation, load_image},
+    tensor::{PixelFormat, Tensor, TensorDyn, TensorMemory, TensorTrait as _},
 };
 use std::{env, path::Path};
 
@@ -20,13 +20,13 @@ fn model_benchmark(c: &mut Criterion) {
     c.bench_function("load_image", |b| {
         b.iter(|| {
             let file = std::fs::read(&image).expect("Failed to read image file");
-            TensorImage::load(&file, Some(RGBA), Some(TensorMemory::Dma))
+            load_image(&file, Some(PixelFormat::Rgba), Some(TensorMemory::Dma))
                 .expect("Failed to load image");
         });
     });
 
     let file = std::fs::read(&image).expect("Failed to read image file");
-    let tensor = TensorImage::load(&file, Some(RGBA), Some(TensorMemory::Dma))
+    let tensor = load_image(&file, Some(PixelFormat::Rgba), Some(TensorMemory::Dma))
         .expect("Failed to load image");
     let mut converter = G2DProcessor::new().expect("Failed to create G2DProcessor");
 
@@ -38,7 +38,8 @@ fn model_benchmark(c: &mut Criterion) {
                 None,
             )
             .expect("Failed to create input tensor from file descriptor");
-            let mut dst = TensorImage::from_tensor(input_tensor, RGBA)
+            let mut dst = TensorDyn::from(input_tensor)
+                .with_format(PixelFormat::Rgba)
                 .expect("Failed to create destination tensor image");
             converter
                 .convert(

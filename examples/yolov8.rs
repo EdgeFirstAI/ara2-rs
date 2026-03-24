@@ -31,11 +31,11 @@ use edgefirst_hal::{
         configs::{self, DecoderType, QuantTuple},
     },
     image::{
-        Crop, Flip, ImageProcessor, ImageProcessorTrait as _, PLANAR_RGB, RGBA, Rotation,
-        TensorImage, TensorImageRef,
+        Crop, Flip, ImageProcessor, ImageProcessorTrait as _, Rotation, load_image, save_jpeg,
     },
-    tensor::{TensorMapTrait as _, TensorMemory, TensorTrait as _},
+    tensor::{DType, PixelFormat, TensorMapTrait as _, TensorMemory, TensorTrait as _},
 };
+use std::os::fd::AsFd as _;
 use ndarray::IxDyn;
 use std::{path::PathBuf, time::Instant};
 
@@ -321,16 +321,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // ── 3a. Load and preprocess image (before decoder build for diagnostics) ──
     let image_bytes = std::fs::read(&args.image)?;
-    let src = TensorImage::load(&image_bytes, Some(RGBA), Some(TensorMemory::Dma))?;
-    let (img_w, img_h) = (src.width(), src.height());
+    let src = load_image(&image_bytes, Some(PixelFormat::Rgba), Some(TensorMemory::Dma))?;
+    let (img_w, img_h) = (src.width().unwrap(), src.height().unwrap());
     println!("Image: {img_w}x{img_h}");
 
     let mut processor = ImageProcessor::new()?;
 
     let t_pre = Instant::now();
     {
-        let mut dst = TensorImageRef::from_borrowed_tensor(model.input_tensor(0), PLANAR_RGB)?;
-        processor.convert_ref(&src, &mut dst, Rotation::None, Flip::None, Crop::default())?;
+        let input = model.input_tensor(0);
+        let input_fd = input.clone_fd()?;
+        let mut dst = processor.create_image_from_fd(
+            input_fd.as_fd(),
+            in_w,
+            in_h,
+            PixelFormat::PlanarRgb,
+            DType::U8,
+        )?;
+        processor.convert(&src, &mut dst, Rotation::None, Flip::None, Crop::default())?;
     }
 
     // Apply quantization shift if the model expects signed input
@@ -476,6 +484,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let proto_data: Option<ProtoData> = decoder.decode_quantized_proto(&views, &mut det2)?;
 
     // Debug: inspect quantization parameters for mask/proto outputs
+    if task == Task::Segment {
     println!("\n--- Quantization Debug ---");
     {
         let (_, _, mi, pi) = identify_seg_outputs(&shapes).unwrap();
@@ -580,6 +589,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("...]");
         }
     }
+    } // task == Task::Segment
 
     // ── 7. Print results ─────────────────────────────────────────────────
     println!("\n--- Timing ---");
@@ -620,10 +630,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Save with materialized masks (decode_quantized path)
         {
             let t_render = Instant::now();
-            let mut overlay = TensorImage::load(&image_bytes, Some(RGBA), None)?;
+            let mut overlay = load_image(&image_bytes, Some(PixelFormat::Rgba), None)?;
             processor.draw_masks(&mut overlay, &detections, &masks)?;
             let out_path = args.image.with_file_name(format!("{stem}_masks.jpg"));
-            overlay.save_jpeg(out_path.to_str().unwrap(), 95)?;
+            save_jpeg(&overlay, out_path.to_str().unwrap(), 95)?;
             println!("\n  Render (masks):  {:?}", t_render.elapsed());
             println!("  Saved:           {}", out_path.display());
         }
@@ -631,10 +641,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Save with proto path (decode_quantized_proto path)
         if let Some(pd) = proto_data {
             let t_render = Instant::now();
-            let mut overlay = TensorImage::load(&image_bytes, Some(RGBA), None)?;
+            let mut overlay = load_image(&image_bytes, Some(PixelFormat::Rgba), None)?;
             processor.draw_masks_proto(&mut overlay, &detections, &pd)?;
             let out_path = args.image.with_file_name(format!("{stem}_proto.jpg"));
-            overlay.save_jpeg(out_path.to_str().unwrap(), 95)?;
+            save_jpeg(&overlay, out_path.to_str().unwrap(), 95)?;
             println!("  Render (proto):  {:?}", t_render.elapsed());
             println!("  Saved:           {}", out_path.display());
         }
