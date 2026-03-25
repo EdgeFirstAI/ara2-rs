@@ -21,13 +21,17 @@ fn tensor_err(e: impl std::fmt::Display) -> PyErr {
 /// The Model class provides methods to run inference on a loaded neural network.
 /// Input and output tensors are accessed via zero-based indices.
 ///
+/// Supports the context manager protocol. The model is unloaded from the
+/// NPU when the last Python reference is garbage-collected (via Rust Drop).
+/// Using ``with`` ensures references are released promptly on scope exit.
+///
 /// Typical workflow::
 ///
-///     model = endpoint.load_model("model.dvm")
-///     model.allocate_tensors()
-///     model.set_input_tensor(0, input_data)
-///     timing = model.run()
-///     output = model.get_output_tensor(0)
+///     with endpoint.load_model("model.dvm") as model:
+///         model.allocate_tensors()
+///         model.set_input_tensor(0, input_data)
+///         timing = model.run()
+///         output = model.get_output_tensor(0)
 #[pyclass(module = "edgefirst_ara2", unsendable)]
 pub struct Model {
     inner: ara2::Model,
@@ -455,7 +459,8 @@ fn memory_type_str(memory: TensorMemory) -> &'static str {
     match memory {
         TensorMemory::Dma => "dma",
         TensorMemory::Shm => "shm",
-        TensorMemory::Mem => "mem",
-        TensorMemory::Pbo => "pbo",
+        // Pbo (OpenGL pixel buffer) is a GPU-backed fallback for system memory;
+        // expose it as "mem" since Python users only care about DMA-BUF capability.
+        TensorMemory::Mem | TensorMemory::Pbo => "mem",
     }
 }

@@ -4,7 +4,7 @@
 use crate::endpoint::Endpoint;
 use crate::error::to_py_err;
 use pyo3::prelude::*;
-use std::{collections::HashMap, net::Ipv4Addr, str::FromStr};
+use std::{collections::HashMap, net::Ipv4Addr, path::PathBuf, str::FromStr};
 
 /// ARA-2 session for communicating with the proxy.
 ///
@@ -25,14 +25,19 @@ impl Session {
     /// Create a session connected via UNIX domain socket.
     ///
     /// Args:
-    ///     socket_path: Path to the UNIX socket (e.g., "/var/run/ara2.sock")
+    ///     socket_path: Path to the UNIX socket (str or os.PathLike,
+    ///                  e.g., "/var/run/ara2.sock")
     ///
     /// Returns:
     ///     Session: A new session connected to the proxy
+    ///
+    /// Raises:
+    ///     ProxyError: If the socket does not exist or the proxy is not running
     #[staticmethod]
-    fn create_via_unix_socket(socket_path: &str) -> PyResult<Self> {
+    fn create_via_unix_socket(socket_path: PathBuf) -> PyResult<Self> {
+        let path_str = socket_path.to_string_lossy();
         Ok(Session(
-            ara2::Session::create_via_unix_socket(socket_path).map_err(to_py_err)?,
+            ara2::Session::create_via_unix_socket(&path_str).map_err(to_py_err)?,
         ))
     }
 

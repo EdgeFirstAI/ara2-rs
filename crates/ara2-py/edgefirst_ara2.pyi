@@ -228,7 +228,7 @@ class Session:
     """
 
     @staticmethod
-    def create_via_unix_socket(socket_path: str) -> Session:
+    def create_via_unix_socket(socket_path: str | os.PathLike[str]) -> Session:
         """Create a session connected via UNIX domain socket.
 
         Args:
@@ -311,8 +311,9 @@ class Endpoint:
 class Model:
     """Neural network model loaded on an endpoint.
 
-    Supports the context manager protocol to guarantee NPU resources
-    are released::
+    Supports the context manager protocol. The model is unloaded from the
+    NPU when the last Python reference is garbage-collected (via Rust Drop).
+    Using ``with`` ensures references are released promptly on scope exit::
 
         with endpoint.load_model("model.dvm") as model:
             model.allocate_tensors("dma")
@@ -432,12 +433,12 @@ class Model:
         """
         ...
 
-    def input_tensor_memory(self, index: int) -> str:
-        """Get the memory type of an input tensor: "dma", "shm", or "mem"."""
+    def input_tensor_memory(self, index: int) -> Literal["dma", "shm", "mem"]:
+        """Get the memory type of an input tensor."""
         ...
 
-    def output_tensor_memory(self, index: int) -> str:
-        """Get the memory type of an output tensor: "dma", "shm", or "mem"."""
+    def output_tensor_memory(self, index: int) -> Literal["dma", "shm", "mem"]:
+        """Get the memory type of an output tensor."""
         ...
 
     # -- Introspection --

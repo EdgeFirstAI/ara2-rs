@@ -1,9 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright © 2025 Au-Zone Technologies. All Rights Reserved.
 
-use crate::error::to_py_err;
 use pyo3::prelude::*;
 use std::path::PathBuf;
+
+/// Convert metadata-related errors to MetadataError.
+///
+/// Unlike the general `to_py_err` which maps `Io` to `ProxyError`,
+/// metadata file operations should raise `MetadataError` for I/O failures
+/// since these are local file reads, not proxy connections.
+fn meta_err(err: ara2::Error) -> PyErr {
+    crate::error::MetadataError::new_err(err.to_string())
+}
 
 /// Read EdgeFirst metadata from a DVM model file.
 ///
@@ -12,9 +20,12 @@ use std::path::PathBuf;
 ///
 /// Returns:
 ///     DvmMetadata or None if the file has no embedded metadata
+///
+/// Raises:
+///     MetadataError: If the file cannot be read or metadata is malformed
 #[pyfunction]
 pub fn read_metadata(path: PathBuf) -> PyResult<Option<DvmMetadata>> {
-    let meta = ara2::read_metadata_from_file(&path).map_err(to_py_err)?;
+    let meta = ara2::read_metadata_from_file(&path).map_err(meta_err)?;
     Ok(meta.map(DvmMetadata))
 }
 
@@ -25,9 +36,12 @@ pub fn read_metadata(path: PathBuf) -> PyResult<Option<DvmMetadata>> {
 ///
 /// Returns:
 ///     list[str]: Class label strings (empty if not present)
+///
+/// Raises:
+///     MetadataError: If the file cannot be read
 #[pyfunction]
 pub fn read_labels(path: PathBuf) -> PyResult<Vec<String>> {
-    ara2::read_labels_from_file(&path).map_err(to_py_err)
+    ara2::read_labels_from_file(&path).map_err(meta_err)
 }
 
 /// Check if a DVM file has embedded metadata.
