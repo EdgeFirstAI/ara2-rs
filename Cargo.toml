@@ -26,6 +26,9 @@ image = { version = "0.25.8", default-features = false, features = [
 libloading = "0.8.9"
 log = { version = "0.4.28", features = ["release_max_level_debug"] }
 ndarray = { version = "0.16.1", features = ["rayon"] }
+numpy = { version = "0.24", default-features = false }
+pyo3 = "0.24"
+pyo3-build-config = "0.24"
 
 [profile.release]
 opt-level = 3
