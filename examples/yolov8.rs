@@ -35,8 +35,8 @@ use edgefirst_hal::{
     },
     tensor::{DType, PixelFormat, TensorMapTrait as _, TensorMemory, TensorTrait as _},
 };
-use std::os::fd::AsFd as _;
 use ndarray::IxDyn;
+use std::os::fd::AsFd as _;
 use std::{path::PathBuf, time::Instant};
 
 // ── Arguments ────────────────────────────────────────────────────────────────
@@ -223,19 +223,13 @@ fn output_to_quantized_view<'a>(
         (1, false) => Ok(ndarray::ArrayView::from_shape(ix, bytes)?.into()),
         (2, true) => {
             let data: &[i16] = unsafe {
-                std::slice::from_raw_parts(
-                    bytes.as_ptr() as *const i16,
-                    bytes.len() / 2,
-                )
+                std::slice::from_raw_parts(bytes.as_ptr() as *const i16, bytes.len() / 2)
             };
             Ok(ndarray::ArrayView::from_shape(ix, data)?.into())
         }
         (2, false) => {
             let data: &[u16] = unsafe {
-                std::slice::from_raw_parts(
-                    bytes.as_ptr() as *const u16,
-                    bytes.len() / 2,
-                )
+                std::slice::from_raw_parts(bytes.as_ptr() as *const u16, bytes.len() / 2)
             };
             Ok(ndarray::ArrayView::from_shape(ix, data)?.into())
         }
@@ -321,7 +315,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // ── 3a. Load and preprocess image (before decoder build for diagnostics) ──
     let image_bytes = std::fs::read(&args.image)?;
-    let src = load_image(&image_bytes, Some(PixelFormat::Rgba), Some(TensorMemory::Dma))?;
+    let src = load_image(
+        &image_bytes,
+        Some(PixelFormat::Rgba),
+        Some(TensorMemory::Dma),
+    )?;
     let (img_w, img_h) = (src.width().unwrap(), src.height().unwrap());
     println!("Image: {img_w}x{img_h}");
 
@@ -369,24 +367,53 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let bytes = maps_post[i].as_slice();
             let (bpp, is_signed) = (quants[i].2, quants[i].3);
             if bpp == 1 && is_signed {
-                let data: &[i8] = unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const i8, bytes.len()) };
+                let data: &[i8] =
+                    unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const i8, bytes.len()) };
                 let mut hist = std::collections::HashMap::new();
-                for &v in data.iter() { *hist.entry(v).or_insert(0u64) += 1; }
-                println!("  output[{i}]: shape={:?} unique_values={} total={}", shapes[i], hist.len(), data.len());
+                for &v in data.iter() {
+                    *hist.entry(v).or_insert(0u64) += 1;
+                }
+                println!(
+                    "  output[{i}]: shape={:?} unique_values={} total={}",
+                    shapes[i],
+                    hist.len(),
+                    data.len()
+                );
                 if hist.len() <= 10 {
                     let mut sorted: Vec<_> = hist.iter().collect();
                     sorted.sort_by_key(|&(&v, _)| v);
-                    for &(&v, &c) in &sorted { println!("    q={v}: {c} ({:.1}%)", 100.0 * c as f64 / data.len() as f64); }
+                    for &(&v, &c) in &sorted {
+                        println!(
+                            "    q={v}: {c} ({:.1}%)",
+                            100.0 * c as f64 / data.len() as f64
+                        );
+                    }
                 }
             } else if bpp == 1 && !is_signed {
                 let mut hist = std::collections::HashMap::new();
-                for &v in bytes.iter() { *hist.entry(v).or_insert(0u64) += 1; }
-                println!("  output[{i}]: shape={:?} unique_values={} total={}", shapes[i], hist.len(), bytes.len());
+                for &v in bytes.iter() {
+                    *hist.entry(v).or_insert(0u64) += 1;
+                }
+                println!(
+                    "  output[{i}]: shape={:?} unique_values={} total={}",
+                    shapes[i],
+                    hist.len(),
+                    bytes.len()
+                );
             } else if bpp == 2 && is_signed {
-                let data: &[i16] = unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const i16, bytes.len()/2) };
+                let data: &[i16] = unsafe {
+                    std::slice::from_raw_parts(bytes.as_ptr() as *const i16, bytes.len() / 2)
+                };
                 let mut hist = std::collections::HashMap::new();
-                for &v in data.iter() { *hist.entry(v).or_insert(0u64) += 1; }
-                println!("  output[{i}]: shape={:?} unique_values={} total={}", shapes[i], hist.len(), data.len());
+                for &v in data.iter() {
+                    *hist.entry(v).or_insert(0u64) += 1;
+                }
+                println!(
+                    "  output[{i}]: shape={:?} unique_values={} total={}",
+                    shapes[i],
+                    hist.len(),
+                    data.len()
+                );
             }
         }
     }
@@ -466,8 +493,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             output_to_quantized_view(
                 maps[i].as_slice(),
                 &shapes[i],
-                quants[i].2,  // bpp
-                quants[i].3,  // is_signed
+                quants[i].2, // bpp
+                quants[i].3, // is_signed
             )
             .expect("failed to create quantized view")
         })
@@ -485,110 +512,167 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Debug: inspect quantization parameters for mask/proto outputs
     if task == Task::Segment {
-    println!("\n--- Quantization Debug ---");
-    {
-        let (_, _, mi, pi) = identify_seg_outputs(&shapes).unwrap();
-        println!("  mask_coeff output[{mi}]: scale={}, offset={}, bpp={}, signed={}",
-            quants[mi].0, quants[mi].1, quants[mi].2, quants[mi].3);
-        println!("  protos output[{pi}]: scale={}, offset={}, bpp={}, signed={}",
-            quants[pi].0, quants[pi].1, quants[pi].2, quants[pi].3);
-        let combined_scale = quants[mi].0 * quants[pi].0;
-        println!("  combined_scale = {} * {} = {}", quants[mi].0, quants[pi].0, combined_scale);
+        println!("\n--- Quantization Debug ---");
+        {
+            let (_, _, mi, pi) = identify_seg_outputs(&shapes).unwrap();
+            println!(
+                "  mask_coeff output[{mi}]: scale={}, offset={}, bpp={}, signed={}",
+                quants[mi].0, quants[mi].1, quants[mi].2, quants[mi].3
+            );
+            println!(
+                "  protos output[{pi}]: scale={}, offset={}, bpp={}, signed={}",
+                quants[pi].0, quants[pi].1, quants[pi].2, quants[pi].3
+            );
+            let combined_scale = quants[mi].0 * quants[pi].0;
+            println!(
+                "  combined_scale = {} * {} = {}",
+                quants[mi].0, quants[pi].0, combined_scale
+            );
 
-        // Sample raw data from mask coefficient and proto tensors
-        let mask_bytes = maps[mi].as_slice();
-        let proto_bytes = maps[pi].as_slice();
-        print!("  mask_coeff first 32 values: [");
-        if quants[mi].3 { // signed
-            let data: &[i8] = unsafe { std::slice::from_raw_parts(mask_bytes.as_ptr() as *const i8, mask_bytes.len()) };
-            for v in data.iter().take(32) { print!("{v}, "); }
-        } else {
-            for v in mask_bytes.iter().take(32) { print!("{v}, "); }
-        }
-        println!("]");
-
-        // Comprehensive proto buffer analysis
-        println!("  proto buffer: {} bytes, bpp={}", proto_bytes.len(), quants[pi].2);
-        if quants[pi].3 { // signed
-            let data: &[i8] = unsafe { std::slice::from_raw_parts(proto_bytes.as_ptr() as *const i8, proto_bytes.len()) };
-            // Unique value histogram
-            let mut hist = std::collections::HashMap::new();
-            for &v in data.iter() { *hist.entry(v).or_insert(0u64) += 1; }
-            let mut sorted_vals: Vec<_> = hist.iter().collect();
-            sorted_vals.sort_by_key(|&(&v, _)| v);
-            println!("  proto unique values: {} (total elements: {})", hist.len(), data.len());
-            for &(&val, &count) in sorted_vals.iter().take(20) {
-                let pct = 100.0 * count as f64 / data.len() as f64;
-                let dequant = (val as f64 - quants[pi].1 as f64) * quants[pi].0 as f64;
-                println!("    q={val:>5}: {count:>8} ({pct:>5.1}%)  dequant={dequant:.4}");
-            }
-            if sorted_vals.len() > 20 { println!("    ... and {} more unique values", sorted_vals.len() - 20); }
-            // Sample from different regions
-            let n = data.len();
-            let proto_shape = &shapes[pi]; // [1, 32, 160, 160]
-            let ch = proto_shape.get(1).copied().unwrap_or(32);
-            let hw = proto_shape.get(2).copied().unwrap_or(160) * proto_shape.get(3).copied().unwrap_or(160);
-            println!("  proto layout: channels={ch} spatial={hw}");
-            // Print channel 0 row 0, channel 0 middle row, channel 16 row 0
-            let offsets = [
-                ("ch0 row0", 0usize),
-                ("ch0 mid", hw / 2),
-                ("ch16 row0", 16 * hw),
-                ("ch31 last", n.saturating_sub(160)),
-            ];
-            for (label, off) in offsets {
-                if off + 16 <= n {
-                    print!("  {label} @{off}: [");
-                    for v in data[off..off+16].iter() { print!("{v}, "); }
-                    println!("]");
+            // Sample raw data from mask coefficient and proto tensors
+            let mask_bytes = maps[mi].as_slice();
+            let proto_bytes = maps[pi].as_slice();
+            print!("  mask_coeff first 32 values: [");
+            if quants[mi].3 {
+                // signed
+                let data: &[i8] = unsafe {
+                    std::slice::from_raw_parts(mask_bytes.as_ptr() as *const i8, mask_bytes.len())
+                };
+                for v in data.iter().take(32) {
+                    print!("{v}, ");
+                }
+            } else {
+                for v in mask_bytes.iter().take(32) {
+                    print!("{v}, ");
                 }
             }
-        } else {
-            println!("  (unsigned proto analysis - not expected)");
+            println!("]");
+
+            // Comprehensive proto buffer analysis
+            println!(
+                "  proto buffer: {} bytes, bpp={}",
+                proto_bytes.len(),
+                quants[pi].2
+            );
+            if quants[pi].3 {
+                // signed
+                let data: &[i8] = unsafe {
+                    std::slice::from_raw_parts(proto_bytes.as_ptr() as *const i8, proto_bytes.len())
+                };
+                // Unique value histogram
+                let mut hist = std::collections::HashMap::new();
+                for &v in data.iter() {
+                    *hist.entry(v).or_insert(0u64) += 1;
+                }
+                let mut sorted_vals: Vec<_> = hist.iter().collect();
+                sorted_vals.sort_by_key(|&(&v, _)| v);
+                println!(
+                    "  proto unique values: {} (total elements: {})",
+                    hist.len(),
+                    data.len()
+                );
+                for &(&val, &count) in sorted_vals.iter().take(20) {
+                    let pct = 100.0 * count as f64 / data.len() as f64;
+                    let dequant = (val as f64 - quants[pi].1 as f64) * quants[pi].0 as f64;
+                    println!("    q={val:>5}: {count:>8} ({pct:>5.1}%)  dequant={dequant:.4}");
+                }
+                if sorted_vals.len() > 20 {
+                    println!("    ... and {} more unique values", sorted_vals.len() - 20);
+                }
+                // Sample from different regions
+                let n = data.len();
+                let proto_shape = &shapes[pi]; // [1, 32, 160, 160]
+                let ch = proto_shape.get(1).copied().unwrap_or(32);
+                let hw = proto_shape.get(2).copied().unwrap_or(160)
+                    * proto_shape.get(3).copied().unwrap_or(160);
+                println!("  proto layout: channels={ch} spatial={hw}");
+                // Print channel 0 row 0, channel 0 middle row, channel 16 row 0
+                let offsets = [
+                    ("ch0 row0", 0usize),
+                    ("ch0 mid", hw / 2),
+                    ("ch16 row0", 16 * hw),
+                    ("ch31 last", n.saturating_sub(160)),
+                ];
+                for (label, off) in offsets {
+                    if off + 16 <= n {
+                        print!("  {label} @{off}: [");
+                        for v in data[off..off + 16].iter() {
+                            print!("{v}, ");
+                        }
+                        println!("]");
+                    }
+                }
+            } else {
+                println!("  (unsigned proto analysis - not expected)");
+            }
+
+            // Simulate one dot product for first detection's mask coeff
+            // to see what the matmul result looks like
+            if !detections.is_empty() {
+                // The mask coeff tensor shape is [1, 32, 8400] in our normalized shape
+                // After find_outputs_with_shape_quantized and swap_axes, it becomes [32, 8400]
+                // Then reversed_axes makes it [8400, 32]. masks.row(box_idx) gives [32].
+                println!(
+                    "  (Manual matmul simulation would require box indices - see decoder internals)"
+                );
+            }
         }
 
-        // Simulate one dot product for first detection's mask coeff
-        // to see what the matmul result looks like
-        if !detections.is_empty() {
-            // The mask coeff tensor shape is [1, 32, 8400] in our normalized shape
-            // After find_outputs_with_shape_quantized and swap_axes, it becomes [32, 8400]
-            // Then reversed_axes makes it [8400, 32]. masks.row(box_idx) gives [32].
-            println!("  (Manual matmul simulation would require box indices - see decoder internals)");
+        // Debug: inspect masks
+        println!("\n--- Masks ---");
+        println!("  detections: {}, masks: {}", detections.len(), masks.len());
+        for (i, mask) in masks.iter().enumerate() {
+            let seg = &mask.segmentation;
+            let nonzero = seg.iter().filter(|&&v| v > 0).count();
+            // Also show value distribution
+            let min = seg.iter().min().copied().unwrap_or(0);
+            let max = seg.iter().max().copied().unwrap_or(0);
+            let sum: u64 = seg.iter().map(|&v| v as u64).sum();
+            let mean = if !seg.is_empty() {
+                sum as f64 / seg.len() as f64
+            } else {
+                0.0
+            };
+            println!(
+                "  mask[{i}]: shape={:?} bbox=[{:.3},{:.3},{:.3},{:.3}] nonzero={}/{} min={} max={} mean={:.1}",
+                seg.shape(),
+                mask.xmin,
+                mask.ymin,
+                mask.xmax,
+                mask.ymax,
+                nonzero,
+                seg.len(),
+                min,
+                max,
+                mean
+            );
         }
-    }
-
-    // Debug: inspect masks
-    println!("\n--- Masks ---");
-    println!("  detections: {}, masks: {}", detections.len(), masks.len());
-    for (i, mask) in masks.iter().enumerate() {
-        let seg = &mask.segmentation;
-        let nonzero = seg.iter().filter(|&&v| v > 0).count();
-        // Also show value distribution
-        let min = seg.iter().min().copied().unwrap_or(0);
-        let max = seg.iter().max().copied().unwrap_or(0);
-        let sum: u64 = seg.iter().map(|&v| v as u64).sum();
-        let mean = if !seg.is_empty() { sum as f64 / seg.len() as f64 } else { 0.0 };
-        println!(
-            "  mask[{i}]: shape={:?} bbox=[{:.3},{:.3},{:.3},{:.3}] nonzero={}/{} min={} max={} mean={:.1}",
-            seg.shape(), mask.xmin, mask.ymin, mask.xmax, mask.ymax, nonzero, seg.len(), min, max, mean
-        );
-    }
-    if let Some(ref pd) = proto_data {
-        let n_coeffs = pd.mask_coefficients.len();
-        let protos_info = match &pd.protos {
-            edgefirst_hal::decoder::ProtoTensor::Quantized { protos, quantization } =>
-                format!("Quantized {:?} scale={} zp={}", protos.shape(), quantization.scale, quantization.zero_point),
-            edgefirst_hal::decoder::ProtoTensor::Float(arr) =>
-                format!("Float {:?}", arr.shape()),
-        };
-        println!("  proto: {protos_info}, coefficients: {n_coeffs}");
-        // Print first detection's mask coefficients (dequantized)
-        if let Some(coeffs) = pd.mask_coefficients.first() {
-            print!("  det[0] coeffs (dequant): [");
-            for v in coeffs.iter().take(8) { print!("{v:.4}, "); }
-            println!("...]");
+        if let Some(ref pd) = proto_data {
+            let n_coeffs = pd.mask_coefficients.len();
+            let protos_info = match &pd.protos {
+                edgefirst_hal::decoder::ProtoTensor::Quantized {
+                    protos,
+                    quantization,
+                } => format!(
+                    "Quantized {:?} scale={} zp={}",
+                    protos.shape(),
+                    quantization.scale,
+                    quantization.zero_point
+                ),
+                edgefirst_hal::decoder::ProtoTensor::Float(arr) => {
+                    format!("Float {:?}", arr.shape())
+                }
+            };
+            println!("  proto: {protos_info}, coefficients: {n_coeffs}");
+            // Print first detection's mask coefficients (dequantized)
+            if let Some(coeffs) = pd.mask_coefficients.first() {
+                print!("  det[0] coeffs (dequant): [");
+                for v in coeffs.iter().take(8) {
+                    print!("{v:.4}, ");
+                }
+                println!("...]");
+            }
         }
-    }
     } // task == Task::Segment
 
     // ── 7. Print results ─────────────────────────────────────────────────
