@@ -42,8 +42,8 @@ name: Release
 on:
   push:
     tags:
-      - 'v[0-9]+.[0-9]+.[0-9]+'
-      - 'v[0-9]+.[0-9]+.[0-9]+-*'
+      - 'v[0-9]*.[0-9]*.[0-9]*'
+      - 'v[0-9]*.[0-9]*.[0-9]*-*'
 
 permissions:
   contents: write
@@ -240,6 +240,7 @@ jobs:
       - wait-for-ci
       - build-wheels
       - publish-crates
+      - publish-pypi
     runs-on: ubuntu-22.04
     permissions:
       contents: write
@@ -269,12 +270,10 @@ jobs:
         run: |
           mkdir -p release-assets
 
-          # Copy SBOM files with versioned naming
-          for f in artifacts/sbom/*.json; do
-            if [ -f "$f" ]; then
-              BASENAME=$(basename "$f" .json)
-              cp "$f" "release-assets/${BASENAME}-v${VERSION}.json"
-            fi
+          # Copy SBOM files with versioned naming (search recursively)
+          find artifacts/sbom -type f -name '*.json' | while read -r f; do
+            BASENAME=$(basename "$f" .json)
+            cp "$f" "release-assets/${BASENAME}-v${VERSION}.json"
           done
 
           # Copy wheel files

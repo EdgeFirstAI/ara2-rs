@@ -22,25 +22,36 @@ def main():
         return
 
     # Get version information
-    versions = session.versions()
-    print("Component versions:")
-    for component, version in sorted(versions.items()):
-        print(f"  {component}: {version}")
-    print()
+    try:
+        versions = session.versions()
+        print("Component versions:")
+        for component, version in sorted(versions.items()):
+            print(f"  {component}: {version}")
+        print()
+    except ara2.Ara2Error as e:
+        print(f"Failed to get versions: {e}")
 
     # List available endpoints
-    endpoints = session.list_endpoints()
+    try:
+        endpoints = session.list_endpoints()
+    except ara2.Ara2Error as e:
+        print(f"Failed to list endpoints: {e}")
+        return
+
     print(f"Found {len(endpoints)} endpoint(s)")
     print()
 
     for i, endpoint in enumerate(endpoints):
-        state = endpoint.check_status()
-        stats = endpoint.dram_statistics()
-        print(f"Endpoint {i}: {state}")
-        print(f"  DRAM: {stats.free_size / 1048576:.1f} MB free "
-              f"/ {stats.dram_size / 1048576:.1f} MB total")
-        print(f"  Model: {stats.model_occupancy_size / 1048576:.1f} MB, "
-              f"Tensor: {stats.tensor_occupancy_size / 1048576:.1f} MB")
+        try:
+            state = endpoint.check_status()
+            stats = endpoint.dram_statistics()
+            print(f"Endpoint {i}: {state}")
+            print(f"  DRAM: {stats.free_size / 1048576:.1f} MB free "
+                  f"/ {stats.dram_size / 1048576:.1f} MB total")
+            print(f"  Model: {stats.model_occupancy_size / 1048576:.1f} MB, "
+                  f"Tensor: {stats.tensor_occupancy_size / 1048576:.1f} MB")
+        except ara2.HardwareError as e:
+            print(f"Endpoint {i}: error - {e}")
         print()
 
 

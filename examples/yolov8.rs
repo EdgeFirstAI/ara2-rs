@@ -69,17 +69,22 @@ fn parse_args() -> Args {
     while i < args.len() {
         match args[i].as_str() {
             "--save" => save = true,
-            "--threshold" => {
+            flag @ ("--threshold" | "--iou" | "--benchmark") => {
                 i += 1;
-                threshold = args[i].parse().expect("invalid --threshold value");
-            }
-            "--iou" => {
-                i += 1;
-                iou = args[i].parse().expect("invalid --iou value");
-            }
-            "--benchmark" => {
-                i += 1;
-                benchmark = args[i].parse().expect("invalid --benchmark value");
+                if i >= args.len() {
+                    eprintln!("Error: {flag} requires a value");
+                    std::process::exit(1);
+                }
+                match flag {
+                    "--threshold" => {
+                        threshold = args[i].parse().expect("invalid --threshold value")
+                    }
+                    "--iou" => iou = args[i].parse().expect("invalid --iou value"),
+                    "--benchmark" => {
+                        benchmark = args[i].parse().expect("invalid --benchmark value")
+                    }
+                    _ => unreachable!(),
+                }
             }
             other => eprintln!("Unknown argument: {other}"),
         }

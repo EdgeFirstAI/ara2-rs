@@ -135,7 +135,12 @@ def main() -> None:
             oq = model.output_quants(i)
             info = model.output_info(i)
 
-            if 4 in shape:
+            # Box outputs have shape [1, 4, N] — specifically dim[1]==4 for
+            # Ultralytics split format. Plain `4 in shape` would misidentify
+            # score tensors from models with exactly 4 classes.
+            is_box = len(shape) == 3 and shape[1] == 4
+
+            if is_box:
                 # Box output: normalize qn by input dimension
                 scale = oq.qn / input_dim if input_dim > 1 else oq.qn
                 out = hal.Output.boxes(shape=shape, decoder=hal.DecoderType.Ultralytics)
