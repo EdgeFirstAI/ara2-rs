@@ -95,17 +95,45 @@ cargo build --release
 cargo zigbuild --release --target aarch64-unknown-linux-gnu
 ```
 
+## Performance
+
+Benchmarked on NXP i.MX 8M Plus + ARA-2 with YOLOv8n (640x640), showing
+the Python API adds minimal overhead over native Rust thanks to DMA-BUF
+zero-copy tensor sharing — the GPU and NPU operate on the same physical
+buffers with no CPU copies in the data path.
+
+| Stage | Rust | Python | Overhead |
+|-------|------|--------|----------|
+| GPU preprocess (RGBA → CHW) | 6.35 ms | 6.37 ms | +0.02 ms |
+| NPU inference (wall clock) | 8.95 ms | 9.13 ms | +0.18 ms |
+| &nbsp;&nbsp;NPU execution | 3.33 ms | 3.33 ms | — |
+| &nbsp;&nbsp;DMA input upload | 2.21 ms | 2.20 ms | — |
+| &nbsp;&nbsp;DMA output download | 1.96 ms | 1.96 ms | — |
+| Postprocess (decode + NMS) | 1.41 ms | 2.53 ms | +1.12 ms |
+| **Total pipeline** | **16.71 ms** | **18.03 ms** | **+1.32 ms** |
+| **Throughput** | **59.9 FPS** | **55.5 FPS** | |
+
+> Steady-state mean over 20 iterations after warmup. The Python overhead
+> is entirely in postprocessing (numpy array marshalling); GPU preprocessing
+> and NPU inference are identical since both use the same DMA-BUF tensors.
+
 ## Examples
 
 | Example | Description |
 |---------|-------------|
-| [`yolov8`](examples/yolov8.rs) | YOLOv8 detection/segmentation with edgefirst-hal pre/post-processing |
-| [`test_dvm_metadata`](examples/test_dvm_metadata.rs) | Read and display DVM model metadata |
+| [`yolov8.rs`](examples/yolov8.rs) | Rust — YOLOv8 detection/segmentation with HAL pre/post-processing |
+| [`yolov8.py`](examples/yolov8.py) | Python — YOLOv8 detection with DMA-BUF pipeline and HAL decoder |
+| [`endpoints.py`](examples/endpoints.py) | Python — Connect, list endpoints, check status |
+| [`test_dvm_metadata.rs`](examples/test_dvm_metadata.rs) | Rust — Read and display DVM model metadata |
 
-Run an example:
+Run examples:
 
 ```bash
-cargo run --release --example yolov8 -- model.dvm image.jpg --save
+# Rust
+cargo run --release --example yolov8 -- model.dvm image.jpg --benchmark 20
+
+# Python
+python examples/yolov8.py model.dvm image.jpg --benchmark 20
 ```
 
 ## Testing

@@ -1,19 +1,184 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2025 Au-Zone Technologies
+#
+# Release workflow for ara2-rs workspace
+#
+# This workflow orchestrates release publishing when a version tag is pushed:
+# - Waits for test.yml and sbom.yml workflows to complete
+# - Builds Python wheels for Linux platforms
+# - Downloads SBOM artifact from the commit's sbom.yml run
+# - Publishes crates to crates.io via trusted publishing
+# - Publishes Python wheels to PyPI via trusted publishing
+# - Creates GitHub Release with SBOM and wheels attached
+#
+# Release Process:
+# 1. Update version in Cargo.toml (workspace.package.version,
+#    workspace.dependencies.ara2.version, workspace.dependencies.ara2-sys.version)
+# 2. Update CHANGELOG.md with version entry
+# 3. Commit and push changes (triggers test.yml and sbom.yml)
+# 4. Create and push tag: git tag -s vX.Y.Z -m "vX.Y.Z" && git push --tags
+#    (release.yml waits for test.yml and sbom.yml to complete)
+#
+# Trusted Publisher Configuration:
+# - PyPI: https://pypi.org/manage/project/edgefirst-ara2/settings/publishing/
+#   Owner: EdgeFirstAI, Repository: ara2-rs, Workflow: release.yml, Environment: pypi
+# - crates.io: https://crates.io/settings/tokens
+#   Owner: EdgeFirstAI, Repository: ara2-rs, Workflow: release.yml, Environment: crates-io
+#
+# Action Versions (hash-pinned):
+# - actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd (v6.0.2)
+# - actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 (v6.2.0)
+# - actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f (v7.0.0)
+# - actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c (v8.0.1)
+# - lewagon/wait-on-check-action@74049309dfeff245fe8009a0137eacf28136cb3c (v1.5.0)
+# - dawidd6/action-download-artifact@8a338493df3d275e4a7a63bcff3b8fe97e51a927 (v19)
+# - softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe (v2.6.1)
+# - dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9 (master (2026-03-20))
+# - rust-lang/crates-io-auth-action@b7e9a28eded4986ec6b1fa40eeee8f8f165559ec (v1.0.3)
+# - pypa/gh-action-pypi-publish@ed0c53931b1dc9bd32cbe73a98c7f6766f8a527e (release/v1)
 
 name: Release
 
 on:
   push:
     tags:
-      - 'v*'
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-*'
+
+permissions:
+  contents: write
+  id-token: write
+  checks: read
+  actions: read
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  prepare-release:
+    name: Prepare Release
+    runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      changelog: ${{ steps.changelog.outputs.changelog }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Extracted version: $VERSION"
+
+      - name: Extract changelog for this version
+        id: changelog
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+
+          if [ -f CHANGELOG.md ]; then
+            CHANGELOG=$(awk -v ver="$VERSION" '
+              /^## \['"$VERSION"'\]/ { found=1; next }
+              found && /^## \[/ { exit }
+              found { print }
+            ' CHANGELOG.md)
+          fi
+
+          if [ -z "$CHANGELOG" ]; then
+            echo "WARNING: No changelog entry found for version $VERSION"
+            CHANGELOG="See commit history for details."
+          fi
+
+          echo "changelog<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$CHANGELOG" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+  wait-for-ci:
+    name: Wait for CI Workflows
+    needs: prepare-release
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Wait for Lint
+        uses: lewagon/wait-on-check-action@74049309dfeff245fe8009a0137eacf28136cb3c # v1.5.0
+        with:
+          ref: ${{ github.sha }}
+          check-name: 'Lint'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          wait-interval: 10
+
+      - name: Wait for Build Check
+        uses: lewagon/wait-on-check-action@74049309dfeff245fe8009a0137eacf28136cb3c # v1.5.0
+        with:
+          ref: ${{ github.sha }}
+          check-name: 'Build Check'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          wait-interval: 10
+
+      - name: Wait for SBOM
+        uses: lewagon/wait-on-check-action@74049309dfeff245fe8009a0137eacf28136cb3c # v1.5.0
+        with:
+          ref: ${{ github.sha }}
+          check-name: 'Generate SBOM'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          wait-interval: 10
+
+      - name: Wait for License Compliance
+        uses: lewagon/wait-on-check-action@74049309dfeff245fe8009a0137eacf28136cb3c # v1.5.0
+        with:
+          ref: ${{ github.sha }}
+          check-name: 'License Compliance'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          wait-interval: 10
+
+  build-wheels:
+    name: Build wheels (${{ matrix.name }})
+    needs: wait-for-ci
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: x86_64-linux
+            runner: ubuntu-22.04
+            maturin-args: --sdist --zig --compatibility manylinux2014
+            maturin-deps: maturin[patchelf,zig]
+          - name: aarch64-linux
+            runner: ubuntu-22.04-arm
+            maturin-args: --zig --compatibility manylinux2014
+            maturin-deps: maturin[patchelf,zig]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9 # master (2026-03-20)
+        with:
+          toolchain: stable
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.11'
+
+      - name: Install maturin
+        run: pip install ${{ matrix.maturin-deps }}
+
+      - name: Build wheels
+        run: maturin build --release -m crates/ara2-py/Cargo.toml ${{ matrix.maturin-args }}
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: wheels-${{ matrix.name }}
+          path: target/wheels/*
+
   publish-crates:
     name: Publish to crates.io
+    needs: wait-for-ci
     runs-on: ubuntu-22.04
     environment: crates-io
     permissions:
@@ -21,16 +186,16 @@ jobs:
       contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@56f84321dbccf38fb67ce29ab63e4754056677e0 # master
+        uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9 # master (2026-03-20)
         with:
           toolchain: stable
 
       - name: Authenticate with crates.io
         id: auth
-        uses: rust-lang/crates-io-auth-action@v1
+        uses: rust-lang/crates-io-auth-action@b7e9a28eded4986ec6b1fa40eeee8f8f165559ec # v1.0.3
 
       - name: Publish ara2-sys
         run: cargo publish -p ara2-sys
@@ -45,52 +210,93 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
 
+  publish-pypi:
+    name: Publish to PyPI
+    needs: build-wheels
+    runs-on: ubuntu-22.04
+    environment:
+      name: pypi
+      url: https://pypi.org/project/edgefirst-ara2/
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Download wheel artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: wheels-*
+          path: dist
+          merge-multiple: true
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@ed0c53931b1dc9bd32cbe73a98c7f6766f8a527e # release/v1
+        with:
+          skip-existing: true
+
   create-release:
-    name: Create Release
-    needs: publish-crates
+    name: Create GitHub Release
+    needs:
+      - prepare-release
+      - wait-for-ci
+      - build-wheels
+      - publish-crates
     runs-on: ubuntu-22.04
     permissions:
       contents: write
-    env:
-      TAG_NAME: ${{ github.ref_name }}
+      actions: read
     steps:
       - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Download SBOM from sbom.yml workflow
-        uses: dawidd6/action-download-artifact@bf251b5aa9c2f7eeb574a96ee720e24f801b7c11 # v6
+      - name: Download SBOM artifact from commit
+        uses: dawidd6/action-download-artifact@8a338493df3d275e4a7a63bcff3b8fe97e51a927 # v19
         with:
           workflow: sbom.yml
           commit: ${{ github.sha }}
           name: sbom
-          path: release/
+          path: artifacts/sbom
 
-      - name: Prepare SBOM artifacts
+      - name: Download wheel artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: wheels-*
+          path: artifacts/wheels
+          merge-multiple: true
+
+      - name: Organize release assets
+        env:
+          VERSION: ${{ needs.prepare-release.outputs.version }}
         run: |
-          mkdir -p assets
-          for dir in release/*/; do
-            crate="$(basename "$dir")"
-            if [ -f "$dir/bom.json" ]; then
-              cp "$dir/bom.json" "assets/${crate}-bom.json"
+          mkdir -p release-assets
+
+          # Copy SBOM files with versioned naming
+          for f in artifacts/sbom/*.json; do
+            if [ -f "$f" ]; then
+              BASENAME=$(basename "$f" .json)
+              cp "$f" "release-assets/${BASENAME}-v${VERSION}.json"
             fi
           done
-          ls -la assets/
-          if [ -z "$(ls -A assets/)" ]; then
-            echo "ERROR: no SBOM files found"
-            exit 1
-          fi
 
-      - name: Extract changelog
-        id: changelog
-        run: |
-          VERSION="${TAG_NAME#v}"
-          sed -n "/^## \[${VERSION}\]/,/^## \[/p" CHANGELOG.md | head -n -1 > release_notes.md
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          # Copy wheel files
+          cp artifacts/wheels/* release-assets/ 2>/dev/null || true
 
-      - name: Create Release
-        uses: softprops/action-gh-release@da05d552573ad5aba039eaac05058a918a7bf631 # v2.2.2
+          echo "Release assets prepared:"
+          ls -lh release-assets/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2.6.1
         with:
-          name: v${{ steps.changelog.outputs.version }}
-          body_path: release_notes.md
-          files: assets/*
-          generate_release_notes: true
+          name: v${{ needs.prepare-release.outputs.version }}
+          body: |
+            ## What's Changed
+
+            ${{ needs.prepare-release.outputs.changelog }}
+
+            ---
+
+            **crates.io**: [ara2](https://crates.io/crates/ara2) | [ara2-sys](https://crates.io/crates/ara2-sys)
+            **PyPI**: [edgefirst-ara2](https://pypi.org/project/edgefirst-ara2/)
+          files: release-assets/*
+          draft: false
+          prerelease: ${{ contains(needs.prepare-release.outputs.version, '-') }}
+          fail_on_unmatched_files: false
