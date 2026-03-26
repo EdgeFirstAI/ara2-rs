@@ -209,8 +209,9 @@ All unsafe blocks are in the FFI layer. When adding new FFI calls:
 |----------|---------|-------------|
 | `test.yml` | Push/PR to main, develop | Lint (fmt, clippy), build check (default + no-default-features), test (dvm_metadata only) |
 | `build.yml` | Push/PR to main, develop | Release build (x86_64, aarch64) |
+| `python.yml` | Push/PR to main, develop | Build Python wheels (x86_64, aarch64) with maturin+zig |
 | `sbom.yml` | Push/PR to main | SBOM generation, license compliance |
-| `release.yml` | Tag (v*) | Trusted publish to crates.io (ara2-sys → ara2), GitHub Release with SBOM |
+| `release.yml` | Tag (v*) | Trusted publish to crates.io + PyPI, GitHub Release with SBOM + wheels |
 
 ### Test Gap
 
@@ -238,25 +239,52 @@ All workspace crates share a single version. When releasing:
    git push && git push --tags
    ```
 4. The `release.yml` workflow handles the rest:
-   - Waits for lint + build checks
-   - Generates SBOM via `sbom.yml`
+   - Waits for lint + build + SBOM checks
+   - Builds Python wheels (x86_64 + aarch64, manylinux2014)
    - Publishes `ara2-sys` then `ara2` to crates.io (trusted publishing)
-   - Creates GitHub Release with SBOM and changelog
+   - Publishes `edgefirst-ara2` to PyPI (trusted publishing)
+   - Creates GitHub Release with SBOM, wheels, and changelog
 
-### crates.io Trusted Publishing
+### Python Wheel
+
+The Python version is derived from `Cargo.toml` via `dynamic = ["version"]`
+in `pyproject.toml` — no manual sync needed. Wheels are built with maturin+zig
+for manylinux2014 compatibility.
+
+```bash
+# Development install
+cd crates/ara2-py
+maturin develop --release
+
+# Build release wheel
+maturin build --release -m crates/ara2-py/Cargo.toml --zig --compatibility manylinux2014
+```
+
+### Trusted Publishing
 
 Releases are published automatically via OIDC trusted publishing when a `v*` tag is pushed.
-No API tokens needed — authentication uses the `crates-io` GitHub environment.
+No API tokens needed — authentication uses GitHub environments.
+
+| Registry | Environment | Trusted Publisher |
+|----------|-------------|-------------------|
+| crates.io | `crates-io` | EdgeFirstAI/ara2-rs, release.yml |
+| PyPI | `pypi` | EdgeFirstAI/ara2-rs, release.yml |
 
 For manual publishing (e.g., initial release):
 
 ```bash
+# Rust crates
 cargo publish -p ara2-sys
 cargo publish -p ara2
+
+# Python wheel (requires PyPI API token)
+cd crates/ara2-py
+maturin publish --skip-existing
 ```
 
 ### Trusted Publishing Setup
 
-1. Manually publish the initial release of each crate
+1. Manually publish the initial release of each crate/package
 2. On crates.io: each crate → Settings → Trusted Publishers → Add `EdgeFirstAI/ara2-rs`
-3. On GitHub: Settings → Environments → Create `crates-io` environment
+3. On PyPI: project → Settings → Publishing → Add `EdgeFirstAI/ara2-rs`, workflow: `release.yml`, environment: `pypi`
+4. On GitHub: Settings → Environments → Create `crates-io` and `pypi` environments

@@ -140,6 +140,32 @@ with endpoint.load_model("yolov8s.dvm") as model:
     print(f"Inference: {timing.run_time_us} us")
 ```
 
+## Performance
+
+Benchmarked on NXP i.MX 8M Plus + ARA-2 with YOLOv8n (640x640).
+The Python API adds minimal overhead over native Rust thanks to DMA-BUF
+zero-copy — GPU and NPU operate on the same physical memory buffers.
+
+| Stage | Rust | Python | Overhead |
+|-------|------|--------|----------|
+| GPU preprocess (RGBA → CHW) | 6.35 ms | 6.37 ms | +0.02 ms |
+| NPU inference (wall clock) | 8.95 ms | 9.13 ms | +0.18 ms |
+| &nbsp;&nbsp;NPU execution | 3.33 ms | 3.33 ms | — |
+| &nbsp;&nbsp;DMA input upload | 2.21 ms | 2.20 ms | — |
+| &nbsp;&nbsp;DMA output download | 1.96 ms | 1.96 ms | — |
+| Postprocess (decode + NMS) | 1.41 ms | 2.53 ms | +1.12 ms |
+| **Total pipeline** | **16.71 ms** | **18.03 ms** | **+1.32 ms** |
+| **Throughput** | **59.9 FPS** | **55.5 FPS** | |
+
+> Steady-state mean over 20 iterations. Python overhead is in postprocessing
+> (numpy array marshalling). GPU preprocessing and NPU inference are identical.
+
+Run the benchmark yourself:
+
+```bash
+python examples/yolov8.py model.dvm image.jpg --benchmark 20
+```
+
 ## DVM Metadata
 
 Read model metadata without loading onto the NPU:

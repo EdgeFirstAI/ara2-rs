@@ -33,7 +33,9 @@ use edgefirst_hal::{
     image::{
         Crop, Flip, ImageProcessor, ImageProcessorTrait as _, Rotation, load_image, save_jpeg,
     },
-    tensor::{DType, PixelFormat, TensorMapTrait as _, TensorMemory, TensorTrait as _},
+    tensor::{
+        DType, PixelFormat, PlaneDescriptor, TensorMapTrait as _, TensorMemory, TensorTrait as _,
+    },
 };
 use ndarray::IxDyn;
 use std::os::fd::AsFd as _;
@@ -47,13 +49,14 @@ struct Args {
     save: bool,
     threshold: f32,
     iou: f32,
+    benchmark: usize,
 }
 
 fn parse_args() -> Args {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 3 {
         eprintln!(
-            "Usage: {} <model.dvm> <image.jpg> [--save] [--threshold N] [--iou N]",
+            "Usage: {} <model.dvm> <image.jpg> [--save] [--threshold N] [--iou N] [--benchmark N]",
             args[0]
         );
         std::process::exit(1);
@@ -61,17 +64,27 @@ fn parse_args() -> Args {
     let mut threshold = 0.25;
     let mut iou = 0.45;
     let mut save = false;
+    let mut benchmark = 0;
     let mut i = 3;
     while i < args.len() {
         match args[i].as_str() {
             "--save" => save = true,
-            "--threshold" => {
+            flag @ ("--threshold" | "--iou" | "--benchmark") => {
                 i += 1;
-                threshold = args[i].parse().expect("invalid --threshold value");
-            }
-            "--iou" => {
-                i += 1;
-                iou = args[i].parse().expect("invalid --iou value");
+                if i >= args.len() {
+                    eprintln!("Error: {flag} requires a value");
+                    std::process::exit(1);
+                }
+                match flag {
+                    "--threshold" => {
+                        threshold = args[i].parse().expect("invalid --threshold value")
+                    }
+                    "--iou" => iou = args[i].parse().expect("invalid --iou value"),
+                    "--benchmark" => {
+                        benchmark = args[i].parse().expect("invalid --benchmark value")
+                    }
+                    _ => unreachable!(),
+                }
             }
             other => eprintln!("Unknown argument: {other}"),
         }
@@ -83,6 +96,7 @@ fn parse_args() -> Args {
         save,
         threshold,
         iou,
+        benchmark,
     }
 }
 
@@ -325,31 +339,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut processor = ImageProcessor::new()?;
 
-    let t_pre = Instant::now();
-    {
-        let input = model.input_tensor(0);
-        let input_fd = input.clone_fd()?;
-        let mut dst = processor.create_image_from_fd(
-            input_fd.as_fd(),
-            in_w,
-            in_h,
-            PixelFormat::PlanarRgb,
-            DType::U8,
-        )?;
-        processor.convert(&src, &mut dst, Rotation::None, Flip::None, Crop::default())?;
-    }
-
-    // Apply quantization shift if the model expects signed input
     let input_quant = model.input_quants(0);
-    if input_quant.is_signed {
-        let mut map = model.input_tensor(0).map()?;
-        let slice = map.as_mut_slice();
-        let signed: &mut [i8] =
-            unsafe { std::slice::from_raw_parts_mut(slice.as_mut_ptr() as *mut i8, slice.len()) };
-        for v in signed.iter_mut() {
-            *v = (*v as u8 as i8).wrapping_sub(-128);
-        }
-    }
+    let input_dtype = if input_quant.is_signed {
+        DType::I8
+    } else {
+        DType::U8
+    };
+
+    // Import model's input DMA-BUF as PlanarRgb destination
+    let input_fd = model.input_tensor(0).clone_fd()?;
+    let plane = PlaneDescriptor::new(input_fd.as_fd())?;
+    let mut dst =
+        processor.import_image(plane, None, in_w, in_h, PixelFormat::PlanarRgb, input_dtype)?;
+
+    let t_pre = Instant::now();
+    processor.convert(&src, &mut dst, Rotation::None, Flip::None, Crop::default())?;
     let preprocess_time = t_pre.elapsed();
 
     // ── 3b. Inference (run before decoder build so we can analyze raw buffers) ──
@@ -707,7 +711,73 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
-    // ── 8. Save overlays ─────────────────────────────────────────────────
+    // ── 8. Benchmark ─────────────────────────────────────────────────────
+    if args.benchmark > 0 {
+        // Warmup
+        processor.convert(&src, &mut dst, Rotation::None, Flip::None, Crop::default())?;
+        model.run()?;
+
+        let n = args.benchmark;
+        let mut pre_us = Vec::with_capacity(n);
+        let mut inf_us = Vec::with_capacity(n);
+        let mut npu_us = Vec::with_capacity(n);
+        let mut din_us = Vec::with_capacity(n);
+        let mut dout_us = Vec::with_capacity(n);
+        let mut post_us = Vec::with_capacity(n);
+
+        for _ in 0..n {
+            let t0 = Instant::now();
+            processor.convert(&src, &mut dst, Rotation::None, Flip::None, Crop::default())?;
+            let t1 = Instant::now();
+            let t = model.run()?;
+            let t2 = Instant::now();
+
+            let maps: Vec<_> = (0..n_outputs)
+                .map(|i| model.output_tensor(i).map().expect("map"))
+                .collect();
+            let views: Vec<ArrayViewDQuantized> = (0..n_outputs)
+                .map(|i| {
+                    output_to_quantized_view(
+                        maps[i].as_slice(),
+                        &shapes[i],
+                        quants[i].2,
+                        quants[i].3,
+                    )
+                    .expect("view")
+                })
+                .collect();
+            let mut dets: Vec<DetectBox> = Vec::with_capacity(100);
+            let mut msks = Vec::with_capacity(100);
+            decoder.decode_quantized(&views, &mut dets, &mut msks)?;
+            let t3 = Instant::now();
+
+            pre_us.push((t1 - t0).as_micros() as f64 / 1000.0);
+            inf_us.push((t2 - t1).as_micros() as f64 / 1000.0);
+            npu_us.push(t.run_time.as_micros() as f64 / 1000.0);
+            din_us.push(t.input_time.as_micros() as f64 / 1000.0);
+            dout_us.push(t.output_time.as_micros() as f64 / 1000.0);
+            post_us.push((t3 - t2).as_micros() as f64 / 1000.0);
+        }
+
+        println!("\n--- Benchmark ({n} iterations) ---");
+        println!(
+            "  {:30} {:>7}  {:>7}  {:>7}  {:>7}",
+            "", "mean", "min", "max", "std"
+        );
+        bench_row("GPU preprocess (convert):", &pre_us);
+        bench_row("Inference (wall clock):", &inf_us);
+        bench_row("  NPU execution:", &npu_us);
+        bench_row("  DMA input upload:", &din_us);
+        bench_row("  DMA output download:", &dout_us);
+        bench_row("Postprocess (decode+NMS):", &post_us);
+        let total_us: Vec<f64> = (0..n).map(|i| pre_us[i] + inf_us[i] + post_us[i]).collect();
+        println!("  {}", "─".repeat(54));
+        bench_row("Total pipeline:", &total_us);
+        let mean_total: f64 = total_us.iter().sum::<f64>() / n as f64;
+        println!("  Throughput: {:.1} FPS", 1000.0 / mean_total);
+    }
+
+    // ── 9. Save overlays ─────────────────────────────────────────────────
     if args.save {
         let stem = args.image.file_stem().unwrap_or_default().to_string_lossy();
 
@@ -759,6 +829,16 @@ fn identify_det_outputs(shapes: &[Vec<usize>]) -> Result<(usize, usize), String>
         boxes.ok_or("cannot identify boxes output (shape contains 4)")?,
         scores.ok_or("cannot identify scores output")?,
     ))
+}
+
+fn bench_row(label: &str, data: &[f64]) {
+    let n = data.len() as f64;
+    let mean = data.iter().sum::<f64>() / n;
+    let min = data.iter().cloned().fold(f64::INFINITY, f64::min);
+    let max = data.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let variance = data.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / n;
+    let std = variance.sqrt();
+    println!("  {label:<30} {mean:6.2}  {min:6.2}  {max:6.2}  {std:6.2}");
 }
 
 /// Identify segmentation output indices: boxes, scores, mask_coeff, protos.

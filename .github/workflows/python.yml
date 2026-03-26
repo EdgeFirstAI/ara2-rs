@@ -1,0 +1,73 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2025 Au-Zone Technologies
+#
+# Python wheel build workflow
+#
+# Builds release wheels for the edgefirst-ara2 Python package on Linux
+# platforms using maturin with zig for manylinux2014 compatibility.
+# ARA-2 hardware is Linux-only (NXP i.MX), so no Windows/macOS wheels.
+#
+# Action Versions (hash-pinned):
+# - actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd (v6.0.2)
+# - actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 (v6.2.0)
+# - actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f (v7.0.0)
+# - dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9 (master (2026-03-20))
+
+name: Python
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-wheels:
+    name: Build wheels (${{ matrix.name }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: x86_64-linux
+            runner: ubuntu-22.04
+            maturin-args: --sdist --zig --compatibility manylinux2014
+            maturin-deps: maturin[patchelf,zig]
+          - name: aarch64-linux
+            runner: ubuntu-22.04-arm
+            maturin-args: --zig --compatibility manylinux2014
+            maturin-deps: maturin[patchelf,zig]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9 # master (2026-03-20)
+        with:
+          toolchain: stable
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.11'
+
+      - name: Install maturin
+        run: pip install ${{ matrix.maturin-deps }}
+
+      - name: Build wheels
+        run: maturin build --release -m crates/ara2-py/Cargo.toml ${{ matrix.maturin-args }}
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: wheels-${{ matrix.name }}
+          path: target/wheels/*
+          retention-days: 7
