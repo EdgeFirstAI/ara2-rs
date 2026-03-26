@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-03-26
+
+### Added
+
+- **Python API** (`edgefirst-ara2` on PyPI) — complete PyO3 bindings with:
+  - Session, Endpoint, and Model wrappers with full API parity
+  - numpy tensor I/O (`set_input_tensor`, `get_output_tensor`, `dequantize`)
+  - DMA-BUF file descriptor access (`input_tensor_fd`, `output_tensor_fd`) for
+    zero-copy GPU preprocessing with `edgefirst-hal.import_image()`
+  - DVM metadata API (`read_metadata`, `read_labels`, `has_metadata`)
+  - Python exception hierarchy (`Ara2Error` → `LibraryError`, `HardwareError`,
+    `ProxyError`, `ModelError`, `TensorError`, `MetadataError`)
+  - Bounds checking on all tensor index accessors (raises `IndexError`)
+  - Allocation guards (`run()` before `allocate_tensors()` raises `TensorError`)
+  - Context manager support (`with` statement) on Session and Model
+  - `os.PathLike` support on all path parameters
+  - Comprehensive `.pyi` type stubs with docstrings
+- Python YOLOv8 example (`examples/yolov8.py`) with DMA-BUF pipeline,
+  HAL decoder integration, and `--benchmark` mode
+- Rust YOLOv8 `--benchmark` mode with matching output format
+- PyPI publishing via GitHub Actions with OIDC trusted publishing
+- `python.yml` CI workflow for building manylinux2014 wheels (x86_64, aarch64)
+
+### Changed
+
+- Upgraded `edgefirst-hal` from 0.11.0 to 0.13.0
+- Migrated Rust YOLOv8 example to HAL 0.13 `import_image` / `PlaneDescriptor` API
+- Upgraded `pyo3` from 0.23 to 0.24, added `numpy` 0.24
+- Release workflow now builds and publishes Python wheels alongside Rust crates
+- Python version derived from `Cargo.toml` via `dynamic = ["version"]`
+- Updated all GitHub Action hashes to latest versions (checkout v6.0.2,
+  upload-artifact v7.0.0, rust-cache v2.9.1, install-action v2.69.10)
+- Updated `examples/endpoints.py` to use `edgefirst_ara2` module name
+
+### Fixed
+
+- Release workflow tag patterns (glob-style `v[0-9]*` instead of regex `v[0-9]+`)
+- Release workflow SBOM collection (recursive find for nested artifact paths)
+- Rust YOLOv8 args parsing bounds check (prevents panic on missing flag value)
+
 ## [0.1.3] - 2026-03-09
 
 ### Changed
@@ -75,7 +115,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Requires `edgefirst-hal` for HAL integration
 - Requires `libaraclient.so` runtime library
 
-[Unreleased]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.1.0...v0.1.1
