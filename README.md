@@ -97,43 +97,68 @@ cargo zigbuild --release --target aarch64-unknown-linux-gnu
 
 ## Performance
 
-Benchmarked on NXP i.MX 8M Plus + ARA-2 with YOLOv8n (640x640), showing
-the Python API adds minimal overhead over native Rust thanks to DMA-BUF
-zero-copy tensor sharing — the GPU and NPU operate on the same physical
-buffers with no CPU copies in the data path.
+Benchmarked on NXP FRDM i.MX 95 + ARA-2 with YOLOv8m-seg (640×640),
+showing the Python API adds minimal overhead over native Rust thanks to
+DMA-BUF zero-copy tensor sharing — the GPU and NPU operate on the same
+physical buffers with no CPU copies in the data path.
 
 | Stage | Rust | Python | Overhead |
 |-------|------|--------|----------|
-| GPU preprocess (RGBA → CHW) | 6.35 ms | 6.37 ms | +0.02 ms |
-| NPU inference (wall clock) | 8.95 ms | 9.13 ms | +0.18 ms |
-| &nbsp;&nbsp;NPU execution | 3.33 ms | 3.33 ms | — |
-| &nbsp;&nbsp;DMA input upload | 2.21 ms | 2.20 ms | — |
-| &nbsp;&nbsp;DMA output download | 1.96 ms | 1.96 ms | — |
-| Postprocess (decode + NMS) | 1.41 ms | 2.53 ms | +1.12 ms |
-| **Total pipeline** | **16.71 ms** | **18.03 ms** | **+1.32 ms** |
-| **Throughput** | **59.9 FPS** | **55.5 FPS** | |
+| GPU preprocess (letterbox + RGBA→CHW) | 2.85 ms | 2.88 ms | +0.03 ms |
+| NPU inference (wall clock) | 34.53 ms | 34.63 ms | +0.10 ms |
+| &nbsp;&nbsp;NPU execution | 26.04 ms | 26.04 ms | — |
+| &nbsp;&nbsp;DMA input upload | 2.02 ms | 2.05 ms | — |
+| &nbsp;&nbsp;DMA output download | 3.68 ms | 3.68 ms | — |
+| Decode (NMS + dequant) | 4.05 ms | 4.31 ms | +0.26 ms |
+| Materialize (CPU coeff × proto → bitmaps) | 5.67 ms | 5.98 ms | +0.31 ms |
+| Draw (GL mask overlay) | 5.54 ms | 5.71 ms | +0.17 ms |
+| **Total pipeline** | **52.64 ms** | **53.52 ms** | **+0.88 ms** |
+| **Throughput** | **19.0 FPS** | **18.7 FPS** | |
 
-> Steady-state mean over 20 iterations after warmup. The Python overhead
-> is entirely in postprocessing (numpy array marshalling); GPU preprocessing
-> and NPU inference are identical since both use the same DMA-BUF tensors.
+> Steady-state mean over 30 iterations after warmup. Python overhead is
+> under 1 ms across the entire pipeline. GPU preprocessing and NPU inference
+> are identical since both use the same DMA-BUF tensors.
 
 ## Examples
 
 | Example | Description |
 |---------|-------------|
-| [`yolov8.rs`](examples/yolov8.rs) | Rust — YOLOv8 detection/segmentation with HAL pre/post-processing |
-| [`yolov8.py`](examples/yolov8.py) | Python — YOLOv8 detection with DMA-BUF pipeline and HAL decoder |
+| [`yolov8.rs`](examples/yolov8.rs) | Rust — YOLOv8 detection + segmentation with letterbox preprocessing and 3-step mask pipeline |
+| [`yolov8.py`](examples/yolov8.py) | Python — Same 3-step pipeline via `edgefirst-hal` and `edgefirst-ara2` Python packages |
 | [`endpoints.py`](examples/endpoints.py) | Python — Connect, list endpoints, check status |
 | [`test_dvm_metadata.rs`](examples/test_dvm_metadata.rs) | Rust — Read and display DVM model metadata |
 
-Run examples:
+### Running the Rust example
+
+Cross-compile from your development machine and deploy to the target:
 
 ```bash
-# Rust
-cargo run --release --example yolov8 -- model.dvm image.jpg --benchmark 20
+# Build
+cargo zigbuild --release --example yolov8 --target aarch64-unknown-linux-gnu
 
-# Python
-python examples/yolov8.py model.dvm image.jpg --benchmark 20
+# Deploy and run
+scp target/aarch64-unknown-linux-gnu/release/examples/yolov8 <target>:/root/yolov8-ara2
+ssh <target> "/root/yolov8-ara2 model.dvm image.jpg --benchmark 30 --save"
+```
+
+### Running the Python example
+
+Create a virtual environment on the target and install the packages from PyPI:
+
+```bash
+# On target
+python3 -m venv ~/venv
+~/venv/bin/pip install edgefirst-ara2 edgefirst-hal
+```
+
+Copy the script and run:
+
+```bash
+# From dev machine
+scp examples/yolov8.py <target>:/root/
+
+# On target
+~/venv/bin/python3 /root/yolov8.py model.dvm image.jpg --benchmark 30 --save
 ```
 
 ## Testing

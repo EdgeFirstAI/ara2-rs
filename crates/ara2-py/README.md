@@ -142,28 +142,33 @@ with endpoint.load_model("yolov8s.dvm") as model:
 
 ## Performance
 
-Benchmarked on NXP i.MX 8M Plus + ARA-2 with YOLOv8n (640x640).
+Benchmarked on NXP FRDM i.MX 95 + ARA-2 with YOLOv8m-seg (640×640).
 The Python API adds minimal overhead over native Rust thanks to DMA-BUF
 zero-copy — GPU and NPU operate on the same physical memory buffers.
 
 | Stage | Rust | Python | Overhead |
 |-------|------|--------|----------|
-| GPU preprocess (RGBA → CHW) | 6.35 ms | 6.37 ms | +0.02 ms |
-| NPU inference (wall clock) | 8.95 ms | 9.13 ms | +0.18 ms |
-| &nbsp;&nbsp;NPU execution | 3.33 ms | 3.33 ms | — |
-| &nbsp;&nbsp;DMA input upload | 2.21 ms | 2.20 ms | — |
-| &nbsp;&nbsp;DMA output download | 1.96 ms | 1.96 ms | — |
-| Postprocess (decode + NMS) | 1.41 ms | 2.53 ms | +1.12 ms |
-| **Total pipeline** | **16.71 ms** | **18.03 ms** | **+1.32 ms** |
-| **Throughput** | **59.9 FPS** | **55.5 FPS** | |
+| GPU preprocess (letterbox + RGBA→CHW) | 2.85 ms | 2.88 ms | +0.03 ms |
+| NPU inference (wall clock) | 34.53 ms | 34.63 ms | +0.10 ms |
+| &nbsp;&nbsp;NPU execution | 26.04 ms | 26.04 ms | — |
+| &nbsp;&nbsp;DMA input upload | 2.02 ms | 2.05 ms | — |
+| &nbsp;&nbsp;DMA output download | 3.68 ms | 3.68 ms | — |
+| Decode (NMS + dequant) | 4.05 ms | 4.31 ms | +0.26 ms |
+| Materialize (CPU coeff × proto → bitmaps) | 5.67 ms | 5.98 ms | +0.31 ms |
+| Draw (GL mask overlay) | 5.54 ms | 5.71 ms | +0.17 ms |
+| **Total pipeline** | **52.64 ms** | **53.52 ms** | **+0.88 ms** |
+| **Throughput** | **19.0 FPS** | **18.7 FPS** | |
 
-> Steady-state mean over 20 iterations. Python overhead is in postprocessing
-> (numpy array marshalling). GPU preprocessing and NPU inference are identical.
+> Steady-state mean over 30 iterations after warmup. Python overhead is
+> under 1 ms across the entire pipeline.
 
-Run the benchmark yourself:
+Run the benchmark yourself. Create a virtual environment on the target and
+install the packages from PyPI:
 
 ```bash
-python examples/yolov8.py model.dvm image.jpg --benchmark 20
+python3 -m venv ~/venv
+~/venv/bin/pip install edgefirst-ara2 edgefirst-hal
+~/venv/bin/python3 yolov8.py model.dvm image.jpg --benchmark 30 --save
 ```
 
 ## DVM Metadata
@@ -224,8 +229,8 @@ Loaded neural network model.
 - `dequantize(index: int) -> np.ndarray` - Dequantize output to float32
 
 **DMA-BUF Zero-Copy:**
-- `input_tensor_fd(index: int) -> int` - Get input tensor FD
-- `output_tensor_fd(index: int) -> int` - Get output tensor FD
+- `input_tensor_fd(index: int) -> int` - Get input tensor FD (pass to `hal.ImageProcessor.import_image`, which dups it — close after)
+- `output_tensor_fd(index: int) -> int` - Get output tensor FD (pass to `hal.Tensor.from_fd`, which takes ownership — do **not** close after)
 - `input_tensor_memory(index: int) -> str` - Input memory type
 - `output_tensor_memory(index: int) -> str` - Output memory type
 

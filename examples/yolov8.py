@@ -2,34 +2,32 @@
 # SPDX-FileCopyrightText: Copyright 2025 Au-Zone Technologies
 # SPDX-License-Identifier: Apache-2.0
 """
-YOLOv8 detection on ARA-2 NPU — complete Python inference example.
+YOLOv8 detection + instance segmentation on ARA-2 NPU.
 
-Demonstrates the full zero-copy DMA-BUF pipeline using edgefirst-ara2
-and edgefirst-hal:
+End-to-end inference using the same 3-step postprocessing pipeline as
+the Rust example (examples/yolov8.rs):
 
-  1. Read model metadata and class labels from the DVM file
-  2. Connect to the ARA-2 proxy and load the model onto the NPU
-  3. Allocate DMA-BUF tensors and set up GPU preprocessing
-  4. Run GPU convert (RGBA → PlanarRgb CHW) + NPU inference
-  5. Decode quantized outputs with the HAL decoder (dequant + NMS)
-  6. Print detections with bounding boxes scaled to image coordinates
-
-Steady-state performance on i.MX8MP + ARA-2 (yolov8n, 640x640):
-
-  GPU preprocess (convert):     6.37 ms
-  Inference (wall clock):       9.13 ms
-    NPU execution:              3.33 ms
-    DMA input upload:           2.20 ms
-    DMA output download:        1.96 ms
-  Postprocess (decode+NMS):     2.53 ms
-  Total pipeline:              18.03 ms  (55.5 FPS)
+    JPEG → [GPU] letterbox resize → PlanarRGB → [NPU] inference
+                                                         │
+                                                 ┌───────┴────────┐
+                                            boxes/scores      proto data
+                                                 │                │
+                                       [1] decode_proto           │
+                                         NMS + dequant            │
+                                                 │                │
+                                       [2] materialize_masks ─────┘
+                                         CPU dot-product
+                                         coeff × protos → bitmaps
+                                                 │
+                                       [3] draw_decoded_masks
+                                         GL overlay onto canvas
 
 Usage:
     python yolov8.py <model.dvm> <image.jpg>
     python yolov8.py <model.dvm> <image.jpg> --benchmark 50
 
 Requirements:
-    pip install edgefirst-ara2 edgefirst-hal numpy
+    edgefirst-ara2  edgefirst-hal  numpy
 """
 
 from __future__ import annotations
@@ -45,7 +43,7 @@ import edgefirst_ara2 as ara2
 import edgefirst_hal as hal
 
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 
 def normalize_shape(raw: tuple[int, int, int]) -> list[int]:
@@ -55,8 +53,8 @@ def normalize_shape(raw: tuple[int, int, int]) -> list[int]:
     (e.g., scores [80, 8400]), the shape is padded as [80, 8400, 1].
     We strip trailing 1s and prepend batch=1 for the decoder.
 
-      [80, 8400, 1]  → [1, 80, 8400]   (scores)
-      [4, 8400, 1]   → [1, 4, 8400]    (boxes)
+      [80, 8400, 1]  → [1, 80, 8400]     (scores)
+      [4, 8400, 1]   → [1, 4, 8400]      (boxes)
       [32, 160, 160] → [1, 32, 160, 160] (protos)
     """
     shape = list(raw)
@@ -66,41 +64,119 @@ def normalize_shape(raw: tuple[int, int, int]) -> list[int]:
     return shape
 
 
-def typed_output(raw: np.ndarray, shape: list[int], bpp: int, signed: bool) -> np.ndarray:
-    """Reinterpret raw uint8 bytes as the correct integer type and shape."""
-    if bpp == 2 and signed:
-        return raw.view(np.int16).reshape(shape)
-    elif bpp == 2:
-        return raw.view(np.uint16).reshape(shape)
-    elif bpp == 1 and signed:
-        return raw.view(np.int8).reshape(shape)
-    else:
-        return raw.reshape(shape)
+def compute_letterbox(
+    src_w: int, src_h: int, dst_w: int, dst_h: int
+) -> tuple[hal.Rect, tuple[float, float, float, float]]:
+    """Fit src into dst preserving aspect ratio with YOLO gray (114) padding.
+
+    Returns:
+        dst_rect:      pixel-space Rect for ImageProcessor.convert()
+        letterbox_norm: normalized (lx0, ly0, lx1, ly1) for materialize_masks
+                        and draw_decoded_masks
+    """
+    scale = min(dst_w / src_w, dst_h / src_h)
+    new_w = int(src_w * scale)
+    new_h = int(src_h * scale)
+    x = (dst_w - new_w) // 2
+    y = (dst_h - new_h) // 2
+    rect = hal.Rect(x, y, new_w, new_h)
+    norm = (x / dst_w, y / dst_h, (x + new_w) / dst_w, (y + new_h) / dst_h)
+    return rect, norm
 
 
-# ── Main ─────────────────────────────────────────────────────────────────────
+def output_dtype(bpp: int, signed: bool) -> str:
+    """Map ARA-2 output tensor bpp/signed flags to a HAL dtype string."""
+    if bpp == 1:
+        return "int8" if signed else "uint8"
+    return "int16" if signed else "uint16"
+
+
+def build_decoder(
+    shapes: list[list[int]],
+    quants: list,
+    input_dim: float,
+    threshold: float,
+    iou: float,
+) -> hal.Decoder:
+    """Build a HAL Decoder from model output metadata.
+
+    Output tensor roles are identified by shape:
+      - Protos:             rank-4  [1, 32, H, W]
+      - Boxes:              rank-3  [1,  4, N]  (shape[1] == 4)
+      - Mask coefficients:  rank-3  [1, 32, N]  (shape[1] == n_proto_channels)
+      - Scores:             rank-3  [1,  C, N]  (everything else)
+    """
+    # Number of prototype channels (e.g., 32) from the rank-4 proto tensor.
+    proto_shape = next((s for s in shapes if len(s) == 4), None)
+    n_proto_ch = proto_shape[1] if proto_shape else None
+
+    outputs = []
+    for i, shape in enumerate(shapes):
+        qn, offset = quants[i].qn, quants[i].offset
+
+        if len(shape) == 4:
+            # Proto tensor [1, 32, H, W]
+            out = hal.Output.protos(shape=shape, decoder=hal.DecoderType.Ultralytics)
+            out = out.with_quantization(qn, offset)
+
+        elif len(shape) == 3 and shape[1] == 4:
+            # Box tensor [1, 4, N] — divide qn by input_dim to normalize to [0, 1]
+            scale = qn / input_dim if input_dim > 1 else qn
+            out = hal.Output.boxes(shape=shape, decoder=hal.DecoderType.Ultralytics)
+            out = out.with_quantization(scale, offset).with_normalized(True)
+
+        elif n_proto_ch and len(shape) == 3 and shape[1] == n_proto_ch:
+            # Mask coefficient tensor [1, 32, N]
+            out = hal.Output.mask_coefficients(shape=shape,
+                                               decoder=hal.DecoderType.Ultralytics)
+            out = out.with_quantization(qn, offset)
+
+        else:
+            # Score tensor [1, C, N]
+            out = hal.Output.scores(shape=shape, decoder=hal.DecoderType.Ultralytics)
+            out = out.with_quantization(qn, offset)
+
+        outputs.append(out)
+
+    return hal.Decoder.new_from_outputs(
+        outputs,
+        score_threshold=threshold,
+        iou_threshold=iou,
+        decoder_version=hal.DecoderVersion.Yolov8,
+    )
+
+
+# ── Benchmark stats ───────────────────────────────────────────────────────────
+
+
+def _row(label: str, data: list[float]) -> None:
+    a = np.array(data)
+    print(f"  {label:<30} {a.mean():6.2f}  {a.min():6.2f}  {a.max():6.2f}  {a.std():6.2f}")
+
+
+# ── Main ──────────────────────────────────────────────────────────────────────
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="YOLOv8 detection on ARA-2 NPU",
+        description="YOLOv8 detection + segmentation on ARA-2 NPU",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="Example: python yolov8.py yolov8n_640x640.dvm zidane.jpg --benchmark 20",
     )
     parser.add_argument("model", help="Path to compiled .dvm model file")
     parser.add_argument("image", help="Path to input image (JPEG/PNG)")
-    parser.add_argument("--threshold", type=float, default=0.25, help="Score threshold")
-    parser.add_argument("--iou", type=float, default=0.45, help="NMS IoU threshold")
+    parser.add_argument("--threshold", type=float, default=0.25)
+    parser.add_argument("--iou", type=float, default=0.45)
     parser.add_argument("--benchmark", type=int, default=0,
                         help="Run N iterations and print timing statistics")
-    parser.add_argument("--socket", default=ara2.DEFAULT_SOCKET, help="Proxy socket path")
+    parser.add_argument("--save", action="store_true",
+                        help="Save overlay image next to the input image")
+    parser.add_argument("--socket", default=ara2.DEFAULT_SOCKET)
     args = parser.parse_args()
 
-    # ── 1. Metadata ──────────────────────────────────────────────────────
+    # ── 1. Read DVM metadata ─────────────────────────────────────────────
     print(f"edgefirst-ara2 v{ara2.__version__}, edgefirst-hal v{hal.version()}")
-
     metadata = ara2.read_metadata(args.model)
-    labels = ara2.read_labels(args.model)
+    labels = ara2.read_labels(args.model) or COCO_LABELS
     if metadata:
         print(f"Task: {metadata.task}, Classes: {len(labels)}")
         if metadata.compilation and metadata.compilation.ppa:
@@ -108,7 +184,7 @@ def main() -> None:
             print(f"Target: {metadata.compilation.target}, "
                   f"IPS: {ppa.ips:.0f}, Power: {ppa.power_mw:.0f} mW")
 
-    # ── 2. Connect and load model ────────────────────────────────────────
+    # ── 2. Connect to ARA-2 and load model ───────────────────────────────
     session = ara2.Session.create_via_unix_socket(args.socket)
     endpoints = session.list_endpoints()
     if not endpoints:
@@ -116,9 +192,8 @@ def main() -> None:
         sys.exit(1)
 
     endpoint = endpoints[0]
-    state = endpoint.check_status()
     stats = endpoint.dram_statistics()
-    print(f"Endpoint: {state}, "
+    print(f"Endpoint: {endpoint.check_status()}, "
           f"DRAM: {stats.free_size / 1048576:.0f} / {stats.dram_size / 1048576:.0f} MB free")
 
     with endpoint.load_model(args.model) as model:
@@ -126,120 +201,142 @@ def main() -> None:
         c, h, w = model.input_shape(0)
         input_dim = float(max(w, h))
         iq = model.input_quants(0)
-        print(f"Input: {c}x{h}x{w} (CHW), signed={iq.is_signed}")
+        print(f"Input: {c}×{h}×{w} (CHW), dtype={'int8' if iq.is_signed else 'uint8'}")
 
-        # ── 3. Build HAL decoder from output tensor metadata ─────────
-        decoder_outputs = []
+        # ── 3. Build decoder from output tensor metadata ─────────────────
+        shapes, quants = [], []
         for i in range(model.n_outputs):
             shape = normalize_shape(model.output_shape(i))
             oq = model.output_quants(i)
             info = model.output_info(i)
+            print(f"  output[{i}]: {shape}  bpp={info.bpp}  "
+                  f"qn={oq.qn:.4f}  signed={oq.is_signed}")
+            shapes.append(shape)
+            quants.append(oq)
 
-            # Box outputs have shape [1, 4, N] — specifically dim[1]==4 for
-            # Ultralytics split format. Plain `4 in shape` would misidentify
-            # score tensors from models with exactly 4 classes.
-            is_box = len(shape) == 3 and shape[1] == 4
+        decoder = build_decoder(shapes, quants, input_dim, args.threshold, args.iou)
 
-            if is_box:
-                # Box output: normalize qn by input dimension
-                scale = oq.qn / input_dim if input_dim > 1 else oq.qn
-                out = hal.Output.boxes(shape=shape, decoder=hal.DecoderType.Ultralytics)
-                out = out.with_quantization(scale, oq.offset).with_normalized(True)
-                kind = "boxes"
-            else:
-                out = hal.Output.scores(shape=shape, decoder=hal.DecoderType.Ultralytics)
-                out = out.with_quantization(oq.qn, oq.offset)
-                kind = "scores"
-
-            print(f"  output[{i}]: {kind} {shape} bpp={info.bpp} "
-                  f"qn={oq.qn:.4f} signed={oq.is_signed}")
-            decoder_outputs.append(out)
-
-        decoder = hal.Decoder.new_from_outputs(
-            decoder_outputs,
-            score_threshold=args.threshold,
-            iou_threshold=args.iou,
-            decoder_version=hal.DecoderVersion.Yolov8,
-        )
-
-        # ── 4. Set up persistent DMA-BUF tensors ────────────────────
+        # ── 4. Load source image into a DMA-BUF tensor ───────────────────
         processor = hal.ImageProcessor()
-
-        # Load source image into a DMA-BUF tensor (one-time decode)
         with open(args.image, "rb") as f:
             jpeg_bytes = f.read()
         src = hal.Tensor.load_from_bytes(
             jpeg_bytes, format=hal.PixelFormat.Rgba, mem=hal.TensorMemory.DMA,
         )
         img_w, img_h = src.width, src.height
-        print(f"Image: {img_w}x{img_h}")
+        print(f"Image: {img_w}×{img_h}")
 
-        # Import model input DMA-BUF as PlanarRgb (CHW layout)
-        # Use int8 dtype for signed input quantization
+        # ── 5. Import NPU input tensor and compute letterbox ──────────────
+        # Letterbox-resize src → NPU input preserving aspect ratio with
+        # YOLO gray (114, 114, 114) padding. The same letterbox_norm is
+        # later passed to materialize_masks and draw_decoded_masks so mask
+        # coordinates are correctly mapped to output-image space.
         input_fd = model.input_tensor_fd(0)
         try:
-            dtype = "int8" if iq.is_signed else "uint8"
             dst = processor.import_image(
-                input_fd, w, h, hal.PixelFormat.PlanarRgb, dtype=dtype,
+                input_fd, w, h, hal.PixelFormat.PlanarRgb,
+                dtype="int8" if iq.is_signed else "uint8",
             )
         finally:
             os.close(input_fd)
 
-        # ── 5. Warmup pass ───────────────────────────────────────────
-        processor.convert(src, dst)
-        model.run()
+        letterbox_rect, letterbox_norm = compute_letterbox(img_w, img_h, w, h)
 
-        # ── 6. Inference + decode ────────────────────────────────────
-        t_pre = time.monotonic()
-        processor.convert(src, dst)
-        t_inf = time.monotonic()
-        timing = model.run()
-        t_post = time.monotonic()
-
-        # Read and reshape outputs for the decoder
-        raw_outputs = []
+        # ── 6. Wrap output DMA-BUF tensors for zero-copy decode ──────────
+        # These persist across iterations; model.run() updates the underlying
+        # DMA memory in-place, so decode_proto always sees fresh data without
+        # any CPU copy.
+        output_tensors = []
         for i in range(model.n_outputs):
-            raw = model.get_output_tensor(i)
-            shape = normalize_shape(model.output_shape(i))
-            oq = model.output_quants(i)
-            info = model.output_info(i)
-            raw_outputs.append(typed_output(raw, shape, info.bpp, oq.is_signed))
+            fd = model.output_tensor_fd(i)
+            # from_fd takes ownership of fd via OwnedFd (no dup) — do NOT close.
+            t = hal.Tensor.from_fd(fd, shapes[i],
+                                   output_dtype(model.output_info(i).bpp,
+                                                model.output_quants(i).is_signed))
+            output_tensors.append(t)
 
-        boxes, scores, class_ids, _masks = decoder.decode(raw_outputs)
-        t_done = time.monotonic()
+        # ── 7. Pre-allocate render canvas ────────────────────────────────
+        # Blank DMA-BUF RGBA canvas at source-image resolution for the overlay.
+        canvas = hal.Tensor.image(img_w, img_h, hal.PixelFormat.Rgba,
+                                  hal.TensorMemory.DMA)
 
+        # ── 8. Warmup: prime GPU caches, JIT paths, EGL image bindings ───
+        processor.convert(src, dst, dst_crop=letterbox_rect,
+                          dst_color=(114, 114, 114, 255))
+        model.run()
+        _wb, _ws, _wc, _wp = decoder.decode_proto(output_tensors)
+        _wm = processor.materialize_masks(_wb, _ws, _wc, _wp,
+                                          letterbox=letterbox_norm) if _wp else []
+        processor.draw_decoded_masks(canvas, _wb, _ws, _wc, seg=_wm,
+                                     background=src, letterbox=letterbox_norm,
+                                     color_mode=hal.ColorMode.Instance)
+
+        # ── 9. Single-shot timed run ──────────────────────────────────────
+        t0 = time.monotonic()
+        processor.convert(src, dst, dst_crop=letterbox_rect,
+                          dst_color=(114, 114, 114, 255))
+        pre_ms = (time.monotonic() - t0) * 1000
+
+        t1 = time.monotonic()
+        timing = model.run()
+        inf_ms = (time.monotonic() - t1) * 1000
+
+        # Step 1 — Decode: NMS + dequant on raw NPU output tensors
+        t2 = time.monotonic()
+        boxes, scores, classes, proto_data = decoder.decode_proto(output_tensors)
+        dec_ms = (time.monotonic() - t2) * 1000
+
+        # Step 2 — Materialize: CPU dot-product coeff × protos → bitmaps.
+        # No-op for detection-only models (proto_data is None).
+        t3 = time.monotonic()
+        masks = (processor.materialize_masks(boxes, scores, classes, proto_data,
+                                             letterbox=letterbox_norm)
+                 if proto_data else [])
+        mat_ms = (time.monotonic() - t3) * 1000
+
+        # Step 3 — Draw: GL-accelerated overlay of bitmaps onto canvas
+        t4 = time.monotonic()
+        processor.draw_decoded_masks(canvas, boxes, scores, classes,
+                                     seg=masks, background=src,
+                                     letterbox=letterbox_norm,
+                                     color_mode=hal.ColorMode.Instance)
+        draw_ms = (time.monotonic() - t4) * 1000
+
+        # ── 10. Print results ─────────────────────────────────────────────
         n_det = len(scores)
-        pre_ms = (t_inf - t_pre) * 1000
-        inf_ms = (t_post - t_inf) * 1000
-        post_ms = (t_done - t_post) * 1000
-
-        # ── 7. Print detections ──────────────────────────────────────
         print(f"\n--- Detections ({n_det}) ---")
         for i in range(n_det):
-            cls = int(class_ids[i])
+            cls = int(classes[i])
             name = labels[cls] if cls < len(labels) else f"class_{cls}"
             x1, y1 = boxes[i, 0] * img_w, boxes[i, 1] * img_h
             x2, y2 = boxes[i, 2] * img_w, boxes[i, 3] * img_h
             print(f"  {name:>12} {scores[i]*100:5.1f}%  "
                   f"[{x1:.0f}, {y1:.0f}, {x2:.0f}, {y2:.0f}]")
 
-        # ── 8. Timing ────────────────────────────────────────────────
-        print(f"\n--- Timing ---")
-        print(f"  GPU preprocess (convert):  {pre_ms:6.2f} ms")
-        print(f"  Inference (wall clock):    {inf_ms:6.2f} ms")
-        print(f"    NPU execution:           {timing.run_time_us/1000:6.2f} ms")
-        print(f"    DMA input upload:        {timing.input_time_us/1000:6.2f} ms")
-        print(f"    DMA output download:     {timing.output_time_us/1000:6.2f} ms")
-        print(f"  Postprocess (decode+NMS):  {post_ms:6.2f} ms")
-        total = pre_ms + inf_ms + post_ms
-        print(f"  Total pipeline:            {total:6.2f} ms  ({1000/total:.1f} FPS)")
+        total = pre_ms + inf_ms + dec_ms + mat_ms + draw_ms
+        print("\n--- Timing ---")
+        print(f"  Preprocess:  {pre_ms:6.2f} ms")
+        print(f"  Inference:   {inf_ms:6.2f} ms"
+              f"  (npu: {timing.run_time_us/1000:.2f} ms,"
+              f"  in: {timing.input_time_us/1000:.2f} ms,"
+              f"  out: {timing.output_time_us/1000:.2f} ms)")
+        print(f"  Decode:      {dec_ms:6.2f} ms")
+        print(f"  Materialize: {mat_ms:6.2f} ms")
+        print(f"  Draw:        {draw_ms:6.2f} ms")
+        print(f"  Total:       {total:6.2f} ms  ({1000/total:.1f} FPS)")
 
-        # ── 9. Benchmark (optional) ──────────────────────────────────
+        # ── 11. Save overlay ──────────────────────────────────────────────
+        if args.save:
+            base, _ = os.path.splitext(args.image)
+            out_path = base + "_overlay.jpg"
+            canvas.save_jpeg(out_path, 90)
+            print(f"\n  Saved: {out_path}")
+
+        # ── 12. Benchmark ─────────────────────────────────────────────────
         if args.benchmark > 0:
-            _benchmark(
-                model, processor, src, dst, decoder, labels,
-                img_w, img_h, args.benchmark,
-            )
+            _benchmark(model, processor, src, dst, canvas, decoder,
+                       output_tensors, letterbox_rect, letterbox_norm,
+                       args.benchmark)
 
 
 def _benchmark(
@@ -247,62 +344,90 @@ def _benchmark(
     processor: hal.ImageProcessor,
     src: hal.Tensor,
     dst: hal.Tensor,
+    canvas: hal.Tensor,
     decoder: hal.Decoder,
-    labels: list[str],
-    img_w: int,
-    img_h: int,
+    output_tensors: list,
+    letterbox_rect: hal.Rect,
+    letterbox_norm: tuple,
     n_iter: int,
 ) -> None:
-    """Run N iterations and print timing statistics."""
-    pre_times = np.empty(n_iter)
-    inf_times = np.empty(n_iter)
-    npu_times = np.empty(n_iter)
-    dma_in_times = np.empty(n_iter)
-    dma_out_times = np.empty(n_iter)
-    post_times = np.empty(n_iter)
+    """Run N timed iterations and print per-stage statistics."""
+    pre_ms, inf_ms, npu_ms, din_ms, dout_ms = [], [], [], [], []
+    dec_ms, mat_ms, draw_ms = [], [], []
 
-    for j in range(n_iter):
+    for _ in range(n_iter):
+        # Preprocess: GPU letterbox-resize src → NPU input tensor (DMA-BUF)
         t0 = time.monotonic()
-        processor.convert(src, dst)
+        processor.convert(src, dst, dst_crop=letterbox_rect,
+                          dst_color=(114, 114, 114, 255))
         t1 = time.monotonic()
+
+        # Inference: NPU execution (includes DMA input upload + output download)
         timing = model.run()
         t2 = time.monotonic()
 
-        raw_outputs = []
-        for i in range(model.n_outputs):
-            raw = model.get_output_tensor(i)
-            shape = normalize_shape(model.output_shape(i))
-            oq = model.output_quants(i)
-            info = model.output_info(i)
-            raw_outputs.append(typed_output(raw, shape, info.bpp, oq.is_signed))
-        decoder.decode(raw_outputs)
+        # Step 1 — Decode: NMS + dequant
+        boxes, scores, classes, proto_data = decoder.decode_proto(output_tensors)
         t3 = time.monotonic()
 
-        pre_times[j] = (t1 - t0) * 1000
-        inf_times[j] = (t2 - t1) * 1000
-        npu_times[j] = timing.run_time_us / 1000
-        dma_in_times[j] = timing.input_time_us / 1000
-        dma_out_times[j] = timing.output_time_us / 1000
-        post_times[j] = (t3 - t2) * 1000
+        # Step 2 — Materialize: CPU dot-product → per-detection bitmaps
+        masks = (processor.materialize_masks(boxes, scores, classes, proto_data,
+                                             letterbox=letterbox_norm)
+                 if proto_data else [])
+        t4 = time.monotonic()
 
-    total = pre_times + inf_times + post_times
+        # Step 3 — Draw: GL overlay of bitmaps onto canvas
+        processor.draw_decoded_masks(canvas, boxes, scores, classes,
+                                     seg=masks, background=src,
+                                     letterbox=letterbox_norm,
+                                     color_mode=hal.ColorMode.Instance)
+        t5 = time.monotonic()
+
+        pre_ms.append((t1 - t0) * 1000)
+        inf_ms.append((t2 - t1) * 1000)
+        npu_ms.append(timing.run_time_us / 1000)
+        din_ms.append(timing.input_time_us / 1000)
+        dout_ms.append(timing.output_time_us / 1000)
+        dec_ms.append((t3 - t2) * 1000)
+        mat_ms.append((t4 - t3) * 1000)
+        draw_ms.append((t5 - t4) * 1000)
+
+    total_ms = [pre_ms[i] + inf_ms[i] + dec_ms[i] + mat_ms[i] + draw_ms[i]
+                for i in range(n_iter)]
 
     print(f"\n--- Benchmark ({n_iter} iterations) ---")
-    print(f"                              {'mean':>7}  {'min':>7}  {'max':>7}  {'std':>7}")
-    _row("GPU preprocess (convert):", pre_times)
-    _row("Inference (wall clock):", inf_times)
-    _row("  NPU execution:", npu_times)
-    _row("  DMA input upload:", dma_in_times)
-    _row("  DMA output download:", dma_out_times)
-    _row("Postprocess (decode+NMS):", post_times)
+    print(f"  {'':30} {'mean':>6}  {'min':>6}  {'max':>6}  {'std':>6}")
+    _row("GPU preprocess (convert):", pre_ms)
+    _row("Inference (wall clock):", inf_ms)
+    _row("  NPU execution:", npu_ms)
+    _row("  DMA input upload:", din_ms)
+    _row("  DMA output download:", dout_ms)
+    _row("Decode (NMS+proto):", dec_ms)
+    _row("Materialize (CPU dot-prod):", mat_ms)
+    _row("Draw (GL overlay):", draw_ms)
     print(f"  {'─' * 54}")
-    _row("Total pipeline:", total)
-    print(f"  Throughput: {1000 / total.mean():.1f} FPS")
+    _row("Total pipeline:", total_ms)
+    mean_total = np.mean(total_ms)
+    print(f"  Throughput: {1000 / mean_total:.1f} FPS")
 
 
-def _row(label: str, data: np.ndarray) -> None:
-    print(f"  {label:<30} {data.mean():6.2f}  {data.min():6.2f}  "
-          f"{data.max():6.2f}  {data.std():6.2f}")
+# ── COCO labels (fallback when DVM has no embedded labels) ────────────────────
+
+COCO_LABELS = [
+    "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train",
+    "truck", "boat", "traffic light", "fire hydrant", "stop sign",
+    "parking meter", "bench", "bird", "cat", "dog", "horse", "sheep",
+    "cow", "elephant", "bear", "zebra", "giraffe", "backpack", "umbrella",
+    "handbag", "tie", "suitcase", "frisbee", "skis", "snowboard",
+    "sports ball", "kite", "baseball bat", "baseball glove", "skateboard",
+    "surfboard", "tennis racket", "bottle", "wine glass", "cup", "fork",
+    "knife", "spoon", "bowl", "banana", "apple", "sandwich", "orange",
+    "broccoli", "carrot", "hot dog", "pizza", "donut", "cake", "chair",
+    "couch", "potted plant", "bed", "dining table", "toilet", "tv",
+    "laptop", "mouse", "remote", "keyboard", "cell phone", "microwave",
+    "oven", "toaster", "sink", "refrigerator", "book", "clock", "vase",
+    "scissors", "teddy bear", "hair drier", "toothbrush",
+]
 
 
 if __name__ == "__main__":
