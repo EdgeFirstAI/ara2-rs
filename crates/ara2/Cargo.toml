@@ -29,6 +29,8 @@ zip = { version = "2.2", default-features = false }
 
 [dev-dependencies]
 criterion.workspace = true
+libcamera.workspace = true
+libloading.workspace = true
 
 [[bench]]
 name = "model_benchmark"
@@ -41,3 +43,7 @@ path = "../../examples/test_dvm_metadata.rs"
 [[example]]
 name = "yolov8"
 path = "../../examples/yolov8.rs"
+
+[[example]]
+name = "yolov8_live"
+path = "../../examples/yolov8_live.rs"
