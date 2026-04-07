@@ -8,14 +8,15 @@ zero-copy DMA-BUF buffers throughout the pipeline.
 
 - ARA-2 proxy service running: `systemctl status ara2.service`
 - ARA-2 PCIe device visible: `lspci | grep -i kinara`
-- A compiled DVM model, e.g. `yolov8m-seg_640x640.dvm`
+- Wayland compositor running (Weston) with `zwp_linux_dmabuf_v1` support
+- A compiled DVM model, e.g. `yolov8n-seg_640x640.dvm`
 
 | File | Description |
 |------|-------------|
 | `yolov8.rs` | Static image inference (Rust) |
-| `yolov8_live.rs` | Live camera inference with libcamera (Rust) |
-| `yolov8_live.py` | Live camera inference with GStreamer (Python) |
-| `wlegl_display.c` | Wayland/EGL display library (C, shared by live examples) |
+| `yolov8_live.rs` | Live camera inference (Rust + libcamera + wayland-client) |
+| `yolov8_live.py` | Live camera inference (Python + libcamera + pywayland) |
+| `yolov8.py` | Static image inference (Python) |
 
 ---
 
@@ -51,11 +52,14 @@ yolov8 <model.dvm> <image.jpg> [--save] [--threshold 0.25] [--iou 0.45] [--bench
 
 ---
 
-## yolov8_live -- Live Camera Inference (Rust + libcamera)
+## yolov8_live -- Live Camera Inference (Rust)
 
 Captures NV12 frames from a camera via libcamera, runs YOLOv8 inference on
-the ARA-2 NPU, and displays results in a Wayland/EGL window.  This is a
+the ARA-2 NPU, and displays results in a Wayland window.  This is a
 minimal serial (single-threaded) pipeline.
+
+Display uses the `zwp_linux_dmabuf_v1` Wayland protocol to submit the
+RGBA canvas DMA-BUF directly to the compositor -- no EGL or OpenGL.
 
 ### Architecture
 
@@ -65,17 +69,32 @@ libcamera (NV12 DMA-BUF)
   -> HAL convert (NV12 -> PlanarRGB letterbox)
   -> ARA-2 NPU inference
   -> HAL draw_masks (decode + composite -> RGBA canvas)
-  -> EGL display (DMA-BUF -> EGLImage -> GL texture)
+  -> Wayland display (DMA-BUF -> wl_buffer -> compositor)
 ```
 
 ### Build
 
-The libcamera crate requires `libcamera-dev` headers, so this example must
-be compiled on-target (cannot cross-compile with zigbuild).
+Cross-compile using the Yocto SDK (zigbuild cannot handle `libcamera-sys`
+C++ dependencies):
 
 ```bash
-# On target:
-cargo build --release --example yolov8_live
+SDK=/opt/yocto-sdk-imx95-frdm
+SYSROOT=$SDK/sysroots/armv8a-poky-linux
+export PATH=$SDK/sysroots/x86_64-pokysdk-linux/usr/bin/aarch64-poky-linux:$PATH
+export CC_aarch64_unknown_linux_gnu="aarch64-poky-linux-gcc --sysroot=$SYSROOT"
+export CXX_aarch64_unknown_linux_gnu="aarch64-poky-linux-g++ --sysroot=$SYSROOT"
+export AR_aarch64_unknown_linux_gnu="aarch64-poky-linux-ar"
+export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER="aarch64-poky-linux-gcc"
+export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-C link-arg=--sysroot=$SYSROOT"
+export PKG_CONFIG_SYSROOT_DIR=$SYSROOT
+export PKG_CONFIG_PATH=$SYSROOT/usr/lib/pkgconfig
+export PKG_CONFIG_ALLOW_CROSS=1
+GCC_INC=$SYSROOT/usr/lib/gcc/aarch64-poky-linux/14.3.0/include
+CXX_INC=$SYSROOT/usr/include/c++/14.3.0
+export BINDGEN_EXTRA_CLANG_ARGS="--target=aarch64-poky-linux --sysroot=$SYSROOT \
+    -I$GCC_INC -I$CXX_INC -I$CXX_INC/aarch64-poky-linux -I$SYSROOT/usr/include"
+
+cargo build --release --target aarch64-unknown-linux-gnu --example yolov8_live
 ```
 
 ### Run
@@ -85,7 +104,7 @@ export XDG_RUNTIME_DIR=/run/user/0
 export WAYLAND_DISPLAY=wayland-0
 export LIBCAMERA_PIPELINES_MATCH_LIST='nxp/neo,imx8-isi,simple'
 
-yolov8_live /root/models/yolov8m-seg_640x640.dvm \
+yolov8_live /root/models/yolov8n-seg_640x640.dvm \
     --camera-name '/base/soc/bus@42000000/i2c@42540000/os08a20_mipi@36' \
     --width 1920 --height 1080
 ```
@@ -102,28 +121,32 @@ yolov8_live /root/models/yolov8m-seg_640x640.dvm \
 
 ---
 
-## yolov8_live.py -- Live Camera Inference (Python + GStreamer)
+## yolov8_live.py -- Live Camera Inference (Python)
 
-Python version of the live pipeline using GStreamer for camera capture.
-Requires PyGObject and GStreamer Python bindings.
+Python version of the live pipeline using the native libcamera Python
+bindings for camera capture and pywayland for display.  No GStreamer,
+EGL, OpenGL, or compiled C libraries needed.
 
 ### Python environment
 
 ```bash
 python3 -m venv --system-site-packages /root/venv
 source /root/venv/bin/activate
-pip install edgefirst-ara2 edgefirst-hal numpy
+pip install edgefirst-ara2 edgefirst-hal numpy pywayland
 ```
 
-The `--system-site-packages` flag is required to pick up PyGObject and
-GStreamer bindings from system packages.
+The `--system-site-packages` flag is required to pick up the libcamera
+Python bindings from system packages.
 
 ### Run
 
 ```bash
+export XDG_RUNTIME_DIR=/run/user/0
+export WAYLAND_DISPLAY=wayland-0
+export LIBCAMERA_PIPELINES_MATCH_LIST='nxp/neo,imx8-isi,simple'
+
 source /root/venv/bin/activate
-python3 yolov8_live.py /root/models/yolov8m-seg_640x640.dvm \
-    --source libcamera \
+python3 yolov8_live.py /root/models/yolov8n-seg_640x640.dvm \
     --camera-name '/base/soc/bus@42000000/i2c@42540000/os08a20_mipi@36' \
     --width 1920 --height 1080
 ```
@@ -131,118 +154,66 @@ python3 yolov8_live.py /root/models/yolov8m-seg_640x640.dvm \
 | Flag | Default | Description |
 |------|---------|-------------|
 | `model` | (required) | Path to `.dvm` model file |
-| `--source` | `libcamera` | `libcamera`, `v4l2`, or a custom GStreamer pipeline |
-| `--camera-name` | auto | libcamerasrc `camera-name` property |
-| `--device` | `/dev/video0` | V4L2 device path (with `--source v4l2`) |
+| `--camera-name` | first available | libcamera camera ID |
 | `--width` | 1920 | Camera capture width |
 | `--height` | 1080 | Camera capture height |
 | `--threshold` | 0.50 | Detection confidence threshold |
 | `--iou` | 0.45 | NMS IoU threshold |
-| `--display-mode` | `auto` | `dmabuf`, `memcpy`, or `auto` |
-| `--socket` | `/run/ara2.sock` | ARA-2 proxy UNIX socket path |
-
-### GStreamer appsink API note
-
-The Python GI bindings for `GstApp.AppSink` do not expose `.pull_sample()`
-as a method.  Use the signal-emission API instead:
-
-```python
-sample = appsink.emit("pull-sample")        # blocking
-sample = appsink.emit("try-pull-sample", 0)  # non-blocking
-```
-
-### Inode-based DMA-BUF tensor cache
-
-GStreamer recycles DMA-BUF file descriptors -- when a buffer is unreffed
-the fd number may be reused for a different buffer.  The Python example
-caches by inode (`os.fstat(fd).st_ino`) instead of fd to avoid stale hits.
-The Rust example uses libcamera's stable buffer indices and does not need
-this workaround.
-
----
-
-## Display Library (wlegl_display.c)
-
-Minimal Wayland/EGL shared library for rendering DMA-BUF RGBA textures.
-Used by both the Rust and Python live examples via FFI/ctypes.
-
-### Build (on target)
-
-```bash
-gcc -shared -fPIC -o libwlegl_display.so wlegl_display.c \
-    $(pkg-config --cflags --libs wayland-client wayland-egl egl glesv2) \
-    -DLINUX -DWL_EGL_PLATFORM
-
-cp libwlegl_display.so /usr/lib/
-ldconfig
-```
-
-### Dependencies
-
-- `libwayland-dev`, `libwayland-egl1`
-- `libegl-dev`, `libgles2-dev`
-- `pkg-config`, `gcc`
-
-The xdg-shell Wayland protocol is implemented inline -- no
-`wayland-scanner` or protocol XML files are needed.
-
-### DMA-BUF synchronization
-
-HAL's `ImageProcessor` uses its own headless EGL context for GPU
-operations (`convert`, `draw_masks`) and calls `glFinish()` before
-returning, so the output DMA-BUF is fully written when the caller
-regains control.  The display library calls `DMA_BUF_IOCTL_SYNC` with
-`SYNC_START|READ` before binding the texture and `SYNC_END|READ` after
-rendering, ensuring the GPU texture cache sees the latest data written
-by HAL's separate EGL context.
-
-### System memory fallback
-
-When DMA-BUF import fails (e.g. the GPU driver lacks
-`EGL_EXT_image_dma_buf_import`), the examples fall back to reading
-canvas pixels to CPU and uploading via `glTexImage2D`.  This path is
-functional but slower.
+| `--socket` | `/var/run/ara2.sock` | ARA-2 proxy UNIX socket path |
 
 ---
 
 ## Performance (measured on imx95-frdm)
 
-With `yolov8m-seg_640x640.dvm` at 1920x1080 NV12 input:
+### yolov8n-seg (nano) at 1920x1080
 
 | Stage | Time |
 |-------|------|
 | Pull (capture + drain) | 0.2 ms |
-| Import (cache lookup) | 0.6 ms |
-| Convert (NV12 -> RGB letterbox) | 6.0 ms |
-| NPU inference | 34.7 ms |
-| Draw masks (composite) | 4.5 ms |
-| Display (EGL texture + swap) | 1.1 ms |
-| **Total** | **47 ms (~21 FPS)** |
+| Import (cache lookup) | 0.1 ms |
+| Convert (NV12 -> RGB letterbox) | 4.5 ms |
+| NPU inference | 12.6 ms |
+| Draw masks (no detections) | 4.2 ms |
+| Display (wl_buffer attach+commit) | 0.1 ms |
+| **Total** | **~22 ms (~45 FPS)** |
 
-NPU inference wall-clock time (34.7 ms) includes PCIe DMA overhead
-beyond raw compute (~26 ms).
+### yolov8m-seg (medium) at 1920x1080
+
+| Stage | Time |
+|-------|------|
+| Pull (capture + drain) | 0.2 ms |
+| Import (cache lookup) | 0.1 ms |
+| Convert (NV12 -> RGB letterbox) | 5.0 ms |
+| NPU inference | 34.7 ms |
+| Draw masks (no detections) | 4.0 ms |
+| Display (wl_buffer attach+commit) | 0.1 ms |
+| **Total** | **~44 ms (~23 FPS)** |
+
+NPU inference wall-clock time includes PCIe DMA overhead beyond raw
+compute.  Draw masks time increases with the number of detections
+(mask compositing is proportional to detection count).
 
 ## Known issues
 
 ### Frame rate
 
-These are serial single-threaded pipelines.  At ~21 FPS the per-frame
-timing is consistent (~47 ms), dominated by NPU inference (~35 ms).
-Higher frame rates require overlapping capture with inference (e.g. a
-capture thread), which is outside the scope of these minimal examples.
+These are serial single-threaded pipelines.  Frame rate is dominated
+by NPU inference time.  Higher frame rates require overlapping capture
+with inference (e.g. a capture thread), which is outside the scope of
+these minimal examples.
 
-### Compositor latency
+### ISP adjustment stutter
 
-`eglSwapInterval(0)` is set, so the display library does not block on
-vsync.  However, Weston triple-buffers internally which can add 1-2
-compositor frames (~16-33 ms) of perceived lag.  This is inherent to
-the composited Wayland path.
+Visible stutter occurs when the camera ISP adjusts auto-exposure or
+auto-white-balance (e.g. when lighting changes or an object moves close
+to the lens).  A raw `libcamerasrc ! waylandsink` GStreamer pipeline
+does not exhibit this stutter under the same conditions.
 
 ### NV12 DMA-BUF planes
 
 The NeoISP on i.MX 95 produces NV12 frames as two separate DMA-BUF
-memory objects (luma and chroma) with different inodes.  Both examples
-handle this via separate luma/chroma plane descriptors.
+memory objects (luma and chroma).  Both examples handle this via
+separate luma/chroma plane descriptors.
 
 ### Debug logging
 

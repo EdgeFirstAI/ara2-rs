@@ -4,44 +4,34 @@
 """
 YOLOv8 live camera inference on ARA-2 NPU with Wayland display.
 
-Captures video from a camera (via GStreamer), runs YOLOv8 detection +
-instance segmentation on the ARA-2 NPU, and displays results in a
-native Wayland window using direct DMA-BUF submission (no EGL/OpenGL).
+Captures NV12 frames from a camera via the native libcamera Python
+bindings, runs YOLOv8 detection + instance segmentation on the ARA-2
+NPU, and displays results in a Wayland window using direct DMA-BUF
+submission (no EGL, OpenGL, GStreamer, or compiled C libraries).
 
 Pipeline::
 
-    GStreamer capture        HAL / ARA-2                 Wayland display
+    libcamera capture       HAL / ARA-2                 Wayland display
     ┌──────────────┐    ┌───────────────────┐    ┌──────────────────────┐
-    │ libcamerasrc  │    │ inode-cached      │    │ pywayland            │
-    │   or v4l2src  │ →  │ import → convert  │ →  │  DMA-BUF → wl_buffer│
-    │ → appsink     │    │ → NPU inference   │    │  → wl_surface_attach │
-    │ (NV12 dmabuf) │    │ → draw_masks      │    │  → wl_surface_commit │
+    │ libcamera     │    │ cached import     │    │ pywayland            │
+    │ NV12 DMA-BUF  │ →  │ → convert         │ →  │  DMA-BUF → wl_buffer│
+    │               │    │ → NPU inference   │    │  → wl_surface_attach │
+    │               │    │ → draw_masks      │    │  → wl_surface_commit │
     └──────────────┘    │ → RGBA canvas     │    └──────────────────────┘
                          └───────────────────┘
 
-Camera sources:
-  - ``libcamerasrc`` — for platforms with libcamera (e.g. i.MX 95 NeoISP)
-  - ``v4l2src`` — for platforms with V4L2 cameras (e.g. i.MX 8M Plus)
-
 Display:
   Uses ``pywayland`` with the ``zwp_linux_dmabuf_v1`` protocol to submit
-  the RGBA canvas DMA-BUF directly to the Wayland compositor.  No EGL,
-  OpenGL, or compiled C libraries needed.
+  the RGBA canvas DMA-BUF directly to the Wayland compositor.
 
 Usage::
 
-    # libcamera (i.MX 95):
-    python yolov8_live.py model.dvm --source libcamera
-
-    # V4L2 camera:
-    python yolov8_live.py model.dvm --source v4l2 --device /dev/video0
-
-    # Custom GStreamer pipeline:
-    python yolov8_live.py model.dvm --source 'videotestsrc ! video/x-raw,format=NV12,width=640,height=480'
+    python yolov8_live.py model.dvm
+    python yolov8_live.py model.dvm --camera-name '/base/soc/...' --width 1920 --height 1080
 
 Requirements:
-    edgefirst-ara2  edgefirst-hal  numpy  PyGObject  pywayland
-    GStreamer 1.20+ with libcamerasrc or v4l2src
+    edgefirst-ara2  edgefirst-hal  numpy  pywayland
+    libcamera Python bindings (ship with libcamera)
     Wayland compositor running (e.g. Weston) with zwp_linux_dmabuf_v1
 """
 
@@ -49,6 +39,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import select
 import signal
 import sys
 import time
@@ -57,6 +48,15 @@ import numpy as np
 
 import edgefirst_ara2 as ara2
 import edgefirst_hal as hal
+
+# Camera capture via native libcamera Python bindings
+try:
+    import libcamera
+except ImportError as exc:
+    sys.exit(
+        f"libcamera Python bindings not available: {exc}\n"
+        "These ship with libcamera — install the libcamera-python package."
+    )
 
 # Wayland display via pywayland (no EGL/GL needed)
 try:
@@ -71,19 +71,6 @@ except ImportError as exc:
     sys.exit(
         f"pywayland not available: {exc}\n"
         "Install: pip install pywayland"
-    )
-
-# GStreamer is only used for camera capture
-try:
-    import gi
-
-    gi.require_version("Gst", "1.0")
-    gi.require_version("GstAllocators", "1.0")
-    from gi.repository import Gst, GstAllocators
-except (ImportError, ValueError) as exc:
-    sys.exit(
-        f"GStreamer Python bindings not available: {exc}\n"
-        "Install: python3-gi gstreamer1.0-plugins-base gstreamer1.0-plugins-good"
     )
 
 
@@ -295,130 +282,44 @@ def build_decoder(
     )
 
 
-# ── Inode-based DMA-BUF tensor cache ─────────────────────────────────────────
+# ── DMA-BUF tensor cache (by buffer index) ──────────────────────────────────
 
 
-class InodeTensorCache:
-    """Cache HAL tensors keyed by DMA-BUF ``(inode, offset)``.
+class FrameCache:
+    """Cache HAL tensors by libcamera buffer index.
 
-    File descriptors are *not* stable identifiers for DMA-BUF buffers:
-    when GStreamer unrefs a buffer the fd may be recycled.  The Linux
-    kernel assigns a unique inode to each ``dma_buf`` object which remains
-    constant regardless of fd recycling.
-
-    See HAL ``ARCHITECTURE.md`` § "DMA-BUF Inode as Stable Identity".
+    libcamera's ``FrameBufferAllocator`` pre-allocates stable buffers
+    (unlike GStreamer which recycles fds).  We cache by request cookie
+    (buffer index) so ``import_image`` is called only once per slot.
     """
 
-    def __init__(self) -> None:
-        self._cache: dict[tuple[int, int], hal.Tensor] = {}
+    def __init__(self, capacity: int) -> None:
+        self._entries: list[hal.Tensor | None] = [None] * capacity
 
     def get_or_import(
         self,
+        index: int,
         processor: hal.ImageProcessor,
-        fd: int,
+        framebuffer: libcamera.FrameBuffer,
         width: int,
         height: int,
-        fmt: hal.PixelFormat,
-        *,
-        offset: int = 0,
-        chroma_fd: int | None = None,
-        chroma_offset: int | None = None,
     ) -> hal.Tensor:
-        key = (os.fstat(fd).st_ino, offset)
-        tensor = self._cache.get(key)
+        tensor = self._entries[index]
         if tensor is None:
+            planes = framebuffer.planes
+            luma_fd = planes[0].fd
+            chroma_fd = planes[1].fd if len(planes) >= 2 else None
+            chroma_offset = planes[1].offset if len(planes) >= 2 else None
             tensor = processor.import_image(
-                fd, width, height, fmt,
-                offset=offset if offset else None,
+                luma_fd, width, height, hal.PixelFormat.Nv12,
                 chroma_fd=chroma_fd,
-                chroma_offset=chroma_offset,
+                chroma_offset=chroma_offset if chroma_offset else None,
             )
-            self._cache[key] = tensor
+            self._entries[index] = tensor
         return tensor
 
     def __len__(self) -> int:
-        return len(self._cache)
-
-    def clear(self) -> None:
-        self._cache.clear()
-
-
-# ── Camera capture ────────────────────────────────────────────────────────────
-
-
-def build_capture_pipeline(args: argparse.Namespace) -> Gst.Element:
-    """Build a GStreamer pipeline that delivers NV12 DMA-BUF frames."""
-    cam_w, cam_h = args.width, args.height
-
-    if args.source == "libcamera":
-        src = "libcamerasrc"
-        if args.camera_name:
-            src += f" camera-name={args.camera_name}"
-        desc = (
-            f"{src} ! "
-            f"video/x-raw,format=NV12,width={cam_w},height={cam_h} ! "
-            f"appsink name=capture emit-signals=false sync=false "
-            f"max-buffers=1 drop=true"
-        )
-    elif args.source == "v4l2":
-        desc = (
-            f"v4l2src device={args.device} ! "
-            f"video/x-raw,format=NV12,width={cam_w},height={cam_h} ! "
-            f"appsink name=capture emit-signals=false sync=false "
-            f"max-buffers=1 drop=true"
-        )
-    else:
-        # Custom pipeline string — user provides everything before appsink
-        desc = (
-            f"{args.source} ! "
-            f"appsink name=capture emit-signals=false sync=false "
-            f"max-buffers=1 drop=true"
-        )
-
-    return Gst.parse_launch(desc)
-
-
-def is_dmabuf_buffer(buffer: Gst.Buffer) -> bool:
-    """Check if a GstBuffer contains DMA-BUF memory."""
-    return GstAllocators.is_dmabuf_memory(buffer.peek_memory(0))
-
-
-def get_dmabuf_fds(buffer: Gst.Buffer) -> tuple[int, int | None, int | None]:
-    """Extract DMA-BUF fds and chroma offset from a GstBuffer.
-
-    Returns ``(luma_fd, chroma_fd, chroma_offset)``.
-    For single-plane formats, chroma values are None.
-    """
-    mem0 = buffer.peek_memory(0)
-    luma_fd = GstAllocators.dmabuf_memory_get_fd(mem0)
-
-    if buffer.n_memory() >= 2:
-        mem1 = buffer.peek_memory(1)
-        chroma_fd = GstAllocators.dmabuf_memory_get_fd(mem1)
-        _, chroma_offset, _ = mem1.get_sizes()
-        return luma_fd, chroma_fd, chroma_offset
-
-    return luma_fd, None, None
-
-
-def copy_sysmem_to_tensor(buffer: Gst.Buffer, tensor: hal.Tensor) -> None:
-    """Copy system-memory GstBuffer data into a HAL tensor via TensorMap.
-
-    Used as a fallback when the camera produces system memory instead
-    of DMA-BUF (e.g. videotestsrc, USB cameras without DMA-BUF).
-    """
-    ok, info = buffer.map(Gst.MapFlags.READ)
-    if not ok:
-        raise RuntimeError("Failed to map GstBuffer")
-    try:
-        mapped = tensor.map()
-        dst = np.frombuffer(mapped, dtype=np.uint8)
-        src = np.frombuffer(info.data, dtype=np.uint8)
-        n = min(len(src), len(dst))
-        dst[:n] = src[:n]
-        mapped.unmap()
-    finally:
-        buffer.unmap(info)
+        return sum(1 for e in self._entries if e is not None)
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -435,26 +336,15 @@ def main() -> None:
     ap.add_argument("--width", type=int, default=1920, help="Camera width")
     ap.add_argument("--height", type=int, default=1080, help="Camera height")
     ap.add_argument(
-        "--source", default="libcamera",
-        help="Camera source: 'libcamera', 'v4l2', or a custom GStreamer pipeline",
-    )
-    ap.add_argument(
-        "--device", default="/dev/video0",
-        help="V4L2 device path (only used with --source v4l2)",
-    )
-    ap.add_argument(
         "--camera-name", default=None,
-        help="libcamerasrc camera-name property",
+        help="libcamera camera ID",
     )
     ap.add_argument("--socket", default=ara2.DEFAULT_SOCKET)
     args = ap.parse_args()
 
     cam_w, cam_h = args.width, args.height
 
-    # ── 1. Initialize GStreamer ──────────────────────────────────────────
-    Gst.init(None)
-
-    # ── 2. Read model metadata ───────────────────────────────────────────
+    # ── 1. Read model metadata ───────────────────────────────────────────
     metadata = ara2.read_metadata(args.model)
     labels = ara2.read_labels(args.model) or COCO_LABELS
     if metadata:
@@ -528,19 +418,61 @@ def main() -> None:
         canvas = processor.create_image(cam_w, cam_h, hal.PixelFormat.Rgba)
         canvas_fd = canvas.fd  # dup'd fd, we own it
 
-        # ── 7. Inode-based tensor cache ──────────────────────────────────
-        input_cache = InodeTensorCache()
+        # ── 7. Setup libcamera ───────────────────────────────────────────
+        cm = libcamera.CameraManager.singleton()
+        cameras = cm.cameras
+        if not cameras:
+            sys.exit("No cameras found")
+
+        if args.camera_name:
+            cam_obj = next(
+                (c for c in cameras if c.id == args.camera_name), None
+            )
+            if cam_obj is None:
+                print(f"Camera '{args.camera_name}' not found. Available:")
+                for c in cameras:
+                    print(f"  {c.id}")
+                sys.exit(1)
+        else:
+            cam_obj = cameras[0]
+
+        print(f"Camera: {cam_obj.id}")
+        cam_obj.acquire()
+
+        cam_config = cam_obj.generate_configuration(
+            [libcamera.StreamRole.VideoRecording]
+        )
+        stream_cfg = cam_config.at(0)
+        stream_cfg.pixel_format = libcamera.formats.NV12
+        stream_cfg.size = libcamera.Size(cam_w, cam_h)
+        status = cam_config.validate()
+        if status == libcamera.CameraConfiguration.Status.Invalid:
+            sys.exit("Invalid camera configuration")
+        cam_obj.configure(cam_config)
+
+        stream = stream_cfg.stream
+        alloc = libcamera.FrameBufferAllocator(cam_obj)
+        alloc.allocate(stream)
+        buffers = alloc.buffers(stream)
+        n_buffers = len(buffers)
+        print(f"Allocated {n_buffers} camera buffers")
+
+        cam_reqs = []
+        for i, fb in enumerate(buffers):
+            req = cam_obj.create_request(i)
+            req.add_buffer(stream, fb)
+            cam_reqs.append(req)
+
+        frame_cache = FrameCache(n_buffers)
 
         # ── 8. Create Wayland display window ─────────────────────────────
         display = WaylandDisplay(cam_w, cam_h, "ARA-2 YOLOv8 Live")
 
-        # ── 9. Build and start capture pipeline ──────────────────────────
-        capture_pipe = build_capture_pipeline(args)
-        appsink = capture_pipe.get_by_name("capture")
-
-        ret = capture_pipe.set_state(Gst.State.PLAYING)
-        if ret == Gst.StateChangeReturn.FAILURE:
-            sys.exit("Failed to start capture pipeline")
+        # ── 9. Start camera ──────────────────────────────────────────────
+        cam_obj.start()
+        for req in cam_reqs:
+            cam_obj.queue_request(req)
+        event_fd = cm.event_fd
 
         # Graceful shutdown
         running = True
@@ -553,35 +485,22 @@ def main() -> None:
 
         print(f"\nCapturing {cam_w}x{cam_h} — press Ctrl+C to stop\n")
 
-        # ── 10. Warmup — detect capture memory type ─────────────────────
-        sample = appsink.emit("pull-sample")
-        if sample is None:
-            sys.exit("Failed to pull initial sample from camera")
+        # ── 10. Warmup ──────────────────────────────────────────────────
+        select.select([event_fd], [], [], 5.0)
+        ready = cm.get_ready_requests()
+        if not ready:
+            sys.exit("No frames from camera")
+        req = ready[0]
+        idx = req.cookie
+        fb = req.buffers[stream]
+        src = frame_cache.get_or_import(idx, processor, fb, cam_w, cam_h)
+        req.reuse()
+        cam_obj.queue_request(req)
+        # Requeue any extra ready requests
+        for r in ready[1:]:
+            r.reuse()
+            cam_obj.queue_request(r)
 
-        buf = sample.get_buffer()
-        capture_is_dmabuf = is_dmabuf_buffer(buf)
-
-        # For system-memory sources, create a HAL tensor to receive copies
-        sysmem_input = None
-        if not capture_is_dmabuf:
-            sysmem_input = processor.create_image(cam_w, cam_h, hal.PixelFormat.Nv12)
-            print(f"Capture: system memory (will memcpy into HAL tensor)")
-        else:
-            print(f"Capture: DMA-BUF (zero-copy)")
-
-        def import_frame(buf: Gst.Buffer) -> hal.Tensor:
-            """Import a GstBuffer as a HAL tensor (DMA-BUF or sysmem)."""
-            if capture_is_dmabuf:
-                luma_fd, chroma_fd, chroma_off = get_dmabuf_fds(buf)
-                return input_cache.get_or_import(
-                    processor, luma_fd, cam_w, cam_h, hal.PixelFormat.Nv12,
-                    chroma_fd=chroma_fd, chroma_offset=chroma_off,
-                )
-            else:
-                copy_sysmem_to_tensor(buf, sysmem_input)
-                return sysmem_input
-
-        src = import_frame(buf)
         processor.convert(
             src, model_input,
             dst_crop=letterbox_rect, dst_color=pad_color,
@@ -595,11 +514,9 @@ def main() -> None:
             letterbox=letterbox_norm,
             color_mode=hal.ColorMode.Instance,
         )
-
-        # Test display path
         display.render_dmabuf(canvas_fd)
 
-        print(f"Warmup complete, cache: {len(input_cache)} bufs")
+        print(f"Warmup complete, cache: {len(frame_cache)} bufs")
 
         # ── 11. Live inference loop ──────────────────────────────────────
         frame_count = 0
@@ -613,22 +530,24 @@ def main() -> None:
         while running and display.is_open():
             t0 = time.monotonic()
 
-            # Pull the latest frame, dropping any stale queued frames.
-            # This prevents pipeline buffering from adding latency.
-            sample = appsink.emit("pull-sample")
-            if sample is None:
+            # Wait for a completed frame, then drain to get the latest
+            select.select([event_fd], [], [], 5.0)
+            ready = cm.get_ready_requests()
+            if not ready:
                 break
-            dropped = 0
-            while True:
-                newer = appsink.emit("try-pull-sample", 0)
-                if newer is None:
-                    break
-                sample = newer
-                dropped += 1
+            dropped = len(ready) - 1
+            # Requeue all but the latest
+            for r in ready[:-1]:
+                r.reuse()
+                cam_obj.queue_request(r)
+            req = ready[-1]
             t1 = time.monotonic()
 
-            buf = sample.get_buffer()
-            src = import_frame(buf)
+            idx = req.cookie
+            fb = req.buffers[stream]
+            src = frame_cache.get_or_import(idx, processor, fb, cam_w, cam_h)
+            req.reuse()
+            cam_obj.queue_request(req)
             t2 = time.monotonic()
 
             processor.convert(
@@ -693,10 +612,10 @@ def main() -> None:
                 f"({frame_count / elapsed:.1f} FPS average)"
             )
 
-        capture_pipe.set_state(Gst.State.NULL)
+        cam_obj.stop()
+        cam_obj.release()
         os.close(canvas_fd)
         display.destroy()
-        input_cache.clear()
 
 
 # ── COCO labels (fallback) ────────────────────────────────────────────────────
