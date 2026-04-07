@@ -5,10 +5,13 @@
 //!
 //! Minimal serial example: captures NV12 frames from a camera via libcamera,
 //! runs YOLOv8 detection + instance segmentation on the ARA-2 NPU, and
-//! displays results in a native Wayland/EGL window.
+//! displays results in a native Wayland window.
 //!
 //! The entire path from camera sensor to display uses zero-copy DMA-BUF
 //! buffers.  The pipeline is intentionally single-threaded and synchronous.
+//!
+//! Display uses the `zwp_linux_dmabuf_v1` Wayland protocol to submit the
+//! RGBA canvas DMA-BUF directly to the compositor — no EGL or OpenGL.
 //!
 //! ## Pipeline
 //!
@@ -18,7 +21,7 @@
 //!   -> HAL convert (NV12 -> PlanarRGB letterbox)
 //!   -> ARA-2 NPU inference
 //!   -> HAL draw_masks (decode + composite -> RGBA canvas)
-//!   -> EGL display (DMA-BUF -> EGLImage -> GL texture)
+//!   -> Wayland display (DMA-BUF -> wl_buffer -> compositor)
 //! ```
 //!
 //! ## Usage
@@ -32,9 +35,8 @@
 //! ## Requirements
 //!
 //! - libcamera (camera capture)
-//! - libwlegl_display.so (Wayland/EGL display, compiled from `wlegl_display.c`)
 //! - ARA-2 proxy service running
-//! - Wayland compositor (Weston)
+//! - Wayland compositor (Weston) with `zwp_linux_dmabuf_v1` support
 
 use ara2::{Session, dvm_metadata};
 use edgefirst_hal::{
@@ -56,78 +58,251 @@ use libcamera::{
     request::ReuseFlag,
     stream::StreamRole,
 };
-use std::ffi::{c_char, c_int, c_void, CString};
-extern crate libloading;
+use std::collections::HashMap;
 use std::os::fd::{AsFd as _, AsRawFd, BorrowedFd};
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-// ── Display (runtime-loaded from libwlegl_display.so) ───────────────────────
+use wayland_client::protocol::{wl_buffer, wl_callback, wl_compositor, wl_registry, wl_surface};
+use wayland_client::{Connection, Dispatch, EventQueue, QueueHandle, delegate_noop};
+use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
+use wayland_protocols::wp::linux_dmabuf::zv1::client::{
+    zwp_linux_buffer_params_v1, zwp_linux_dmabuf_v1,
+};
 
-type FnInit = unsafe extern "C" fn(c_int, c_int, *const c_char) -> *mut c_void;
-type FnRenderDmabuf = unsafe extern "C" fn(*mut c_void, c_int, c_int, c_int) -> c_int;
-type FnIsOpen = unsafe extern "C" fn(*mut c_void) -> c_int;
-type FnDestroy = unsafe extern "C" fn(*mut c_void);
+// ── Wayland display (direct DMA-BUF submission, no EGL/GL) ──────────────────
 
-struct EglDisplay {
-    ptr: *mut c_void,
-    width: c_int,
-    height: c_int,
-    _lib: libloading::Library,
-    render_dmabuf: FnRenderDmabuf,
-    is_open_fn: FnIsOpen,
-    destroy_fn: FnDestroy,
+/// DRM_FORMAT_ABGR8888 — matches HAL's RGBA pixel layout.
+const DRM_FORMAT_ABGR8888: u32 = 0x34324241;
+
+struct DisplayState {
+    compositor: Option<wl_compositor::WlCompositor>,
+    wm_base: Option<xdg_wm_base::XdgWmBase>,
+    dmabuf: Option<zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1>,
+    surface: Option<wl_surface::WlSurface>,
+    configured: bool,
+    closed: bool,
+    frame_done: bool,
+    width: i32,
+    height: i32,
+    buffer_cache: HashMap<i32, wl_buffer::WlBuffer>,
 }
 
-impl EglDisplay {
+struct WaylandDisplay {
+    conn: Connection,
+    queue: EventQueue<DisplayState>,
+    state: DisplayState,
+}
+
+impl WaylandDisplay {
     fn new(width: usize, height: usize, title: &str) -> Result<Self, String> {
-        let lib = unsafe { libloading::Library::new("libwlegl_display.so") }
-            .map_err(|e| format!("Cannot load libwlegl_display.so: {e}"))?;
+        let conn = Connection::connect_to_env()
+            .map_err(|e| format!("No Wayland compositor: {e}"))?;
 
-        let init: FnInit = *unsafe { lib.get(b"display_init\0") }
-            .map_err(|e| format!("display_init: {e}"))?;
-        let render_dmabuf: FnRenderDmabuf = *unsafe { lib.get(b"display_render_dmabuf\0") }
-            .map_err(|e| format!("display_render_dmabuf: {e}"))?;
-        let is_open_fn: FnIsOpen = *unsafe { lib.get(b"display_is_open\0") }
-            .map_err(|e| format!("display_is_open: {e}"))?;
-        let destroy_fn: FnDestroy = *unsafe { lib.get(b"display_destroy\0") }
-            .map_err(|e| format!("display_destroy: {e}"))?;
+        let mut state = DisplayState {
+            compositor: None,
+            wm_base: None,
+            dmabuf: None,
+            surface: None,
+            configured: false,
+            closed: false,
+            frame_done: true,
+            width: width as i32,
+            height: height as i32,
+            buffer_cache: HashMap::new(),
+        };
 
-        let c_title = CString::new(title).unwrap();
-        let ptr = unsafe { init(width as c_int, height as c_int, c_title.as_ptr()) };
-        if ptr.is_null() {
-            return Err(
-                "Failed to create EGL display. Is a Wayland compositor running?".into(),
-            );
+        let mut queue = conn.new_event_queue();
+        let qh = queue.handle();
+        let display = conn.display();
+        display.get_registry(&qh, ());
+
+        // Roundtrip to bind globals
+        queue.roundtrip(&mut state).map_err(|e| format!("roundtrip: {e}"))?;
+
+        if state.compositor.is_none() {
+            return Err("Missing wl_compositor".into());
         }
-        Ok(Self {
-            ptr,
-            width: width as c_int,
-            height: height as c_int,
-            _lib: lib,
-            render_dmabuf,
-            is_open_fn,
-            destroy_fn,
-        })
+        if state.wm_base.is_none() {
+            return Err("Missing xdg_wm_base".into());
+        }
+        if state.dmabuf.is_none() {
+            return Err("Missing zwp_linux_dmabuf_v1".into());
+        }
+
+        // Create surface + xdg shell window
+        let surface = state.compositor.as_ref().unwrap().create_surface(&qh, ());
+        let xdg_surface = state.wm_base.as_ref().unwrap().get_xdg_surface(&surface, &qh, ());
+        let toplevel = xdg_surface.get_toplevel(&qh, ());
+        toplevel.set_title(title.to_string());
+        toplevel.set_app_id("ara2-demo".to_string());
+        surface.commit();
+
+        state.surface = Some(surface);
+
+        // Wait for configure
+        while !state.configured {
+            queue.blocking_dispatch(&mut state)
+                .map_err(|e| format!("dispatch: {e}"))?;
+        }
+
+        eprintln!("display: {}x{} wayland dmabuf", width, height);
+
+        Ok(Self { conn, queue, state })
     }
 
-    fn render_dmabuf(&self, fd: i32) -> bool {
-        unsafe { (self.render_dmabuf)(self.ptr, fd, self.width, self.height) == 0 }
+    fn render_dmabuf(&mut self, fd: i32) -> bool {
+        // Process pending events (close, frame callback, ping)
+        self.queue.dispatch_pending(&mut self.state).ok();
+
+        if self.state.closed {
+            return false;
+        }
+
+        // Only submit when the compositor is ready for a new frame
+        if !self.state.frame_done {
+            // Compositor hasn't consumed the previous frame yet — skip
+            self.conn.flush().ok();
+            return true;
+        }
+
+        let qh = self.queue.handle();
+        let w = self.state.width;
+        let h = self.state.height;
+
+        // Get or create wl_buffer for this DMA-BUF fd
+        if !self.state.buffer_cache.contains_key(&fd) {
+            let dmabuf = self.state.dmabuf.as_ref().unwrap();
+            let params = dmabuf.create_params(&qh, ());
+            // SAFETY: fd is a valid DMA-BUF fd owned by the HAL canvas tensor
+            let borrowed = unsafe { BorrowedFd::borrow_raw(fd) };
+            params.add(borrowed, 0, 0, (w * 4) as u32, 0, 0);
+            let flags = zwp_linux_buffer_params_v1::Flags::empty();
+            let buffer = params.create_immed(w, h, DRM_FORMAT_ABGR8888, flags, &qh, ());
+            params.destroy();
+            self.state.buffer_cache.insert(fd, buffer);
+        }
+        let buffer = &self.state.buffer_cache[&fd];
+
+        let surface = self.state.surface.as_ref().unwrap();
+        surface.attach(Some(buffer), 0, 0);
+        surface.damage_buffer(0, 0, w, h);
+
+        // Request frame callback — paces us to the compositor's refresh
+        surface.frame(&qh, ());
+        self.state.frame_done = false;
+
+        surface.commit();
+        self.conn.flush().ok();
+        true
     }
 
-    fn is_open(&self) -> bool {
-        unsafe { (self.is_open_fn)(self.ptr) != 0 }
+    fn is_open(&mut self) -> bool {
+        self.queue.dispatch_pending(&mut self.state).ok();
+        self.conn.flush().ok();
+        !self.state.closed
     }
 }
 
-impl Drop for EglDisplay {
-    fn drop(&mut self) {
-        if !self.ptr.is_null() {
-            unsafe { (self.destroy_fn)(self.ptr) };
+// ── Wayland protocol dispatch ───────────────────────────────────────────────
+
+impl Dispatch<wl_registry::WlRegistry, ()> for DisplayState {
+    fn event(
+        state: &mut Self,
+        registry: &wl_registry::WlRegistry,
+        event: wl_registry::Event,
+        _: &(),
+        _: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
+        if let wl_registry::Event::Global { name, interface, version } = event {
+            match interface.as_str() {
+                "wl_compositor" => {
+                    state.compositor =
+                        Some(registry.bind(name, version.min(4), qh, ()));
+                }
+                "xdg_wm_base" => {
+                    state.wm_base =
+                        Some(registry.bind(name, version.min(1), qh, ()));
+                }
+                "zwp_linux_dmabuf_v1" => {
+                    state.dmabuf =
+                        Some(registry.bind(name, version.min(3), qh, ()));
+                }
+                _ => {}
+            }
         }
     }
 }
+
+impl Dispatch<xdg_wm_base::XdgWmBase, ()> for DisplayState {
+    fn event(
+        _: &mut Self,
+        wm_base: &xdg_wm_base::XdgWmBase,
+        event: xdg_wm_base::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let xdg_wm_base::Event::Ping { serial } = event {
+            wm_base.pong(serial);
+        }
+    }
+}
+
+impl Dispatch<xdg_surface::XdgSurface, ()> for DisplayState {
+    fn event(
+        state: &mut Self,
+        xdg_surface: &xdg_surface::XdgSurface,
+        event: xdg_surface::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let xdg_surface::Event::Configure { serial } = event {
+            xdg_surface.ack_configure(serial);
+            state.configured = true;
+        }
+    }
+}
+
+impl Dispatch<xdg_toplevel::XdgToplevel, ()> for DisplayState {
+    fn event(
+        state: &mut Self,
+        _: &xdg_toplevel::XdgToplevel,
+        event: xdg_toplevel::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let xdg_toplevel::Event::Close = event {
+            state.closed = true;
+        }
+    }
+}
+
+impl Dispatch<wl_callback::WlCallback, ()> for DisplayState {
+    fn event(
+        state: &mut Self,
+        _: &wl_callback::WlCallback,
+        event: wl_callback::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let wl_callback::Event::Done { .. } = event {
+            state.frame_done = true;
+        }
+    }
+}
+
+// No-op dispatchers for objects we don't handle events on
+delegate_noop!(DisplayState: ignore wl_compositor::WlCompositor);
+delegate_noop!(DisplayState: ignore wl_surface::WlSurface);
+delegate_noop!(DisplayState: ignore wl_buffer::WlBuffer);
+delegate_noop!(DisplayState: ignore zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1);
+delegate_noop!(DisplayState: ignore zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1);
 
 // ── DMA-BUF tensor cache ────────────────────────────────────────────────────
 
@@ -697,7 +872,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // ── 7. Setup display ────────────────────────────────────────────────
-    let display = EglDisplay::new(cam_w, cam_h, "ARA-2 YOLOv8 Live")?;
+    let mut display = WaylandDisplay::new(cam_w, cam_h, "ARA-2 YOLOv8 Live")?;
 
     // ── 8. Start camera and warmup ──────────────────────────────────────
     cam.start(None).expect("Failed to start camera");
@@ -728,9 +903,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         processor.draw_masks(&decoder, &output_refs, &mut canvas, overlay)?;
 
         if !display.render_dmabuf(canvas_raw_fd) {
-            return Err(
-                "DMA-BUF display failed. This example requires EGL_EXT_image_dma_buf_import.".into(),
-            );
+            return Err("DMA-BUF display failed. Compositor may not support zwp_linux_dmabuf_v1.".into());
         }
     }
 

@@ -30,7 +30,8 @@ zip = { version = "2.2", default-features = false }
 [dev-dependencies]
 criterion.workspace = true
 libcamera.workspace = true
-libloading.workspace = true
+wayland-client.workspace = true
+wayland-protocols.workspace = true
 
 [[bench]]
 name = "model_benchmark"

@@ -2,20 +2,20 @@
 # SPDX-FileCopyrightText: Copyright 2025 Au-Zone Technologies
 # SPDX-License-Identifier: Apache-2.0
 """
-YOLOv8 live camera inference on ARA-2 NPU with EGL/Wayland display.
+YOLOv8 live camera inference on ARA-2 NPU with Wayland display.
 
 Captures video from a camera (via GStreamer), runs YOLOv8 detection +
 instance segmentation on the ARA-2 NPU, and displays results in a
-native Wayland/EGL window.
+native Wayland window using direct DMA-BUF submission (no EGL/OpenGL).
 
 Pipeline::
 
-    GStreamer capture        HAL / ARA-2                 EGL display
+    GStreamer capture        HAL / ARA-2                 Wayland display
     ┌──────────────┐    ┌───────────────────┐    ┌──────────────────────┐
-    │ libcamerasrc  │    │ inode-cached      │    │ libwlegl_display.so  │
-    │   or v4l2src  │ →  │ import → convert  │ →  │  dmabuf → EGLImage  │
-    │ → appsink     │    │ → NPU inference   │    │  → GL texture       │
-    │ (NV12 dmabuf) │    │ → draw_masks      │    │  → eglSwapBuffers   │
+    │ libcamerasrc  │    │ inode-cached      │    │ pywayland            │
+    │   or v4l2src  │ →  │ import → convert  │ →  │  DMA-BUF → wl_buffer│
+    │ → appsink     │    │ → NPU inference   │    │  → wl_surface_attach │
+    │ (NV12 dmabuf) │    │ → draw_masks      │    │  → wl_surface_commit │
     └──────────────┘    │ → RGBA canvas     │    └──────────────────────┘
                          └───────────────────┘
 
@@ -24,10 +24,9 @@ Camera sources:
   - ``v4l2src`` — for platforms with V4L2 cameras (e.g. i.MX 8M Plus)
 
 Display:
-  The ``wlegl_display.c`` companion library creates a Wayland/EGL window
-  and renders DMA-BUF textures via ``EGL_EXT_image_dma_buf_import``.
-  A memcpy fallback (``display_render_pixels``) is used if DMA-BUF
-  import fails.
+  Uses ``pywayland`` with the ``zwp_linux_dmabuf_v1`` protocol to submit
+  the RGBA canvas DMA-BUF directly to the Wayland compositor.  No EGL,
+  OpenGL, or compiled C libraries needed.
 
 Usage::
 
@@ -41,16 +40,14 @@ Usage::
     python yolov8_live.py model.dvm --source 'videotestsrc ! video/x-raw,format=NV12,width=640,height=480'
 
 Requirements:
-    edgefirst-ara2  edgefirst-hal  numpy  PyGObject
+    edgefirst-ara2  edgefirst-hal  numpy  PyGObject  pywayland
     GStreamer 1.20+ with libcamerasrc or v4l2src
-    libwlegl_display.so (compiled from wlegl_display.c)
-    Wayland compositor running (e.g. Weston)
+    Wayland compositor running (e.g. Weston) with zwp_linux_dmabuf_v1
 """
 
 from __future__ import annotations
 
 import argparse
-import ctypes
 import os
 import signal
 import sys
@@ -60,6 +57,21 @@ import numpy as np
 
 import edgefirst_ara2 as ara2
 import edgefirst_hal as hal
+
+# Wayland display via pywayland (no EGL/GL needed)
+try:
+    from pywayland.client import Display as WlDisplay
+    from pywayland.protocol.wayland import WlCompositor, WlSurface, WlCallback, WlBuffer
+    from pywayland.protocol.xdg_shell import XdgWmBase, XdgSurface, XdgToplevel
+    from pywayland.protocol.linux_dmabuf_unstable_v1 import (
+        ZwpLinuxDmabufV1,
+        ZwpLinuxBufferParamsV1,
+    )
+except ImportError as exc:
+    sys.exit(
+        f"pywayland not available: {exc}\n"
+        "Install: pip install pywayland"
+    )
 
 # GStreamer is only used for camera capture
 try:
@@ -75,72 +87,135 @@ except (ImportError, ValueError) as exc:
     )
 
 
-# ── EGL Display Library (ctypes) ─────────────────────────────────────────────
+# ── Wayland display (direct DMA-BUF submission via pywayland) ────────────────
+
+# DRM_FORMAT_ABGR8888 — matches HAL's RGBA pixel layout.
+DRM_FORMAT_ABGR8888 = 0x34324241
 
 
-class EglDisplay:
-    """Python wrapper around libwlegl_display.so."""
+class WaylandDisplay:
+    """Wayland window that displays DMA-BUF RGBA buffers directly.
+
+    Uses ``zwp_linux_dmabuf_v1`` to submit DMA-BUF buffers to the
+    compositor as ``wl_buffer`` objects — no EGL or OpenGL needed.
+    Frame pacing is handled via ``wl_surface.frame`` callbacks.
+    """
 
     def __init__(self, width: int, height: int, title: str = "ARA-2 YOLOv8"):
-        self._lib = ctypes.cdll.LoadLibrary("libwlegl_display.so")
-
-        # void *display_init(int w, int h, const char *title)
-        self._lib.display_init.restype = ctypes.c_void_p
-        self._lib.display_init.argtypes = [
-            ctypes.c_int, ctypes.c_int, ctypes.c_char_p,
-        ]
-        # int display_render_dmabuf(void *d, int fd, int w, int h)
-        self._lib.display_render_dmabuf.restype = ctypes.c_int
-        self._lib.display_render_dmabuf.argtypes = [
-            ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_int,
-        ]
-        # int display_render_pixels(void *d, const void *rgba, int w, int h)
-        self._lib.display_render_pixels.restype = ctypes.c_int
-        self._lib.display_render_pixels.argtypes = [
-            ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int, ctypes.c_int,
-        ]
-        # int display_is_open(void *d)
-        self._lib.display_is_open.restype = ctypes.c_int
-        self._lib.display_is_open.argtypes = [ctypes.c_void_p]
-        # void display_destroy(void *d)
-        self._lib.display_destroy.restype = None
-        self._lib.display_destroy.argtypes = [ctypes.c_void_p]
-
-        self._ptr = self._lib.display_init(width, height, title.encode())
-        if not self._ptr:
-            raise RuntimeError(
-                "Failed to create EGL display window. "
-                "Is a Wayland compositor (Weston) running?"
-            )
         self.width = width
         self.height = height
-        self._dmabuf_ok = True  # optimistic; falls back on first failure
+        self._closed = False
+        self._configured = False
+        self._frame_done = True
+        self._buffer_cache: dict[int, WlBuffer] = {}
 
-    def render_dmabuf(self, fd: int, width: int, height: int) -> bool:
-        """Render a DMA-BUF RGBA texture. Returns True on success."""
-        if not self._dmabuf_ok:
+        # Globals
+        self._compositor: WlCompositor | None = None
+        self._wm_base: XdgWmBase | None = None
+        self._dmabuf: ZwpLinuxDmabufV1 | None = None
+
+        # Connect and bind globals
+        self._display = WlDisplay()
+        self._display.connect()
+        registry = self._display.get_registry()
+        registry.dispatcher["global"] = self._on_global
+        self._display.roundtrip()
+
+        if not self._compositor or not self._wm_base or not self._dmabuf:
+            raise RuntimeError(
+                "Compositor missing required globals "
+                "(wl_compositor, xdg_wm_base, zwp_linux_dmabuf_v1). "
+                "Is Weston running?"
+            )
+
+        # Create surface + xdg shell window
+        self._surface = self._compositor.create_surface()
+        self._xdg_surface = self._wm_base.get_xdg_surface(self._surface)
+        self._xdg_surface.dispatcher["configure"] = self._on_xdg_configure
+        self._toplevel = self._xdg_surface.get_toplevel()
+        self._toplevel.set_title(title)
+        self._toplevel.set_app_id("ara2-demo")
+        self._toplevel.dispatcher["close"] = self._on_close
+        self._surface.commit()
+
+        # Wait for configure
+        while not self._configured:
+            self._display.dispatch(block=True)
+
+        print(f"display: {width}x{height} wayland dmabuf")
+
+    def _on_global(self, registry, id_num, iface_name, version):
+        if iface_name == "wl_compositor":
+            self._compositor = registry.bind(id_num, WlCompositor, min(version, 4))
+        elif iface_name == "xdg_wm_base":
+            self._wm_base = registry.bind(id_num, XdgWmBase, min(version, 1))
+            self._wm_base.dispatcher["ping"] = self._on_ping
+        elif iface_name == "zwp_linux_dmabuf_v1":
+            self._dmabuf = registry.bind(id_num, ZwpLinuxDmabufV1, min(version, 3))
+
+    def _on_ping(self, wm_base, serial):
+        wm_base.pong(serial)
+
+    def _on_xdg_configure(self, xdg_surface, serial):
+        xdg_surface.ack_configure(serial)
+        self._configured = True
+
+    def _on_close(self, *_args):
+        self._closed = True
+
+    def _on_frame_done(self, callback, _time):
+        self._frame_done = True
+        callback._destroy()
+
+    def _get_or_create_buffer(self, fd: int) -> WlBuffer:
+        """Get a cached wl_buffer or create one from a DMA-BUF fd."""
+        buf = self._buffer_cache.get(fd)
+        if buf is not None:
+            return buf
+
+        params = self._dmabuf.create_params()
+        params.add(fd, 0, 0, self.width * 4, 0, 0)
+        buf = params.create_immed(
+            self.width, self.height, DRM_FORMAT_ABGR8888, 0,
+        )
+        params.destroy()
+        self._buffer_cache[fd] = buf
+        return buf
+
+    def render_dmabuf(self, fd: int) -> bool:
+        """Submit a DMA-BUF RGBA buffer to the compositor."""
+        self._display.dispatch(block=False)
+
+        if self._closed:
             return False
-        ret = self._lib.display_render_dmabuf(self._ptr, fd, width, height)
-        if ret != 0:
-            self._dmabuf_ok = False
-            return False
+
+        # Only submit when compositor is ready (frame callback fired)
+        if not self._frame_done:
+            self._display.flush()
+            return True
+
+        buffer = self._get_or_create_buffer(fd)
+        self._surface.attach(buffer, 0, 0)
+        self._surface.damage_buffer(0, 0, self.width, self.height)
+
+        # Request frame callback for pacing
+        callback = self._surface.frame()
+        callback.dispatcher["done"] = self._on_frame_done
+        self._frame_done = False
+
+        self._surface.commit()
+        self._display.flush()
         return True
 
-    def render_pixels(self, data: np.ndarray, width: int, height: int) -> bool:
-        """Render RGBA pixels from a numpy array (memcpy path)."""
-        ptr = data.ctypes.data_as(ctypes.c_void_p)
-        return self._lib.display_render_pixels(self._ptr, ptr, width, height) == 0
-
     def is_open(self) -> bool:
-        return bool(self._lib.display_is_open(self._ptr))
+        self._display.dispatch(block=False)
+        self._display.flush()
+        return not self._closed
 
     def destroy(self):
-        if self._ptr:
-            self._lib.display_destroy(self._ptr)
-            self._ptr = None
-
-    def __del__(self):
-        self.destroy()
+        if self._display:
+            self._display.disconnect()
+            self._display = None
 
 
 # ── Helpers (shared with yolov8.py) ───────────────────────────────────────────
@@ -351,7 +426,7 @@ def copy_sysmem_to_tensor(buffer: Gst.Buffer, tensor: hal.Tensor) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser(
-        description="YOLOv8 live camera inference on ARA-2 with EGL display",
+        description="YOLOv8 live camera inference on ARA-2 with Wayland display",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     ap.add_argument("model", help="Path to compiled .dvm model file")
@@ -372,10 +447,6 @@ def main() -> None:
         help="libcamerasrc camera-name property",
     )
     ap.add_argument("--socket", default=ara2.DEFAULT_SOCKET)
-    ap.add_argument(
-        "--display-mode", choices=["dmabuf", "memcpy", "auto"], default="auto",
-        help="Display mode: dmabuf (zero-copy), memcpy (fallback), auto (try dmabuf first)",
-    )
     args = ap.parse_args()
 
     cam_w, cam_h = args.width, args.height
@@ -452,21 +523,16 @@ def main() -> None:
 
         # ── 6. Output canvas for draw_masks ─────────────────────────────
         # Single RGBA canvas.  HAL calls glFinish() before returning from
-        # draw_masks(), so the DMA-BUF is fully written and safe to pass
-        # to the display's EGL context.
+        # draw_masks(), so the DMA-BUF is fully written and safe to submit
+        # to the Wayland compositor.
         canvas = processor.create_image(cam_w, cam_h, hal.PixelFormat.Rgba)
         canvas_fd = canvas.fd  # dup'd fd, we own it
-
-        # Memcpy fallback buffer
-        canvas_np = np.zeros((cam_h, cam_w, 4), dtype=np.uint8)
 
         # ── 7. Inode-based tensor cache ──────────────────────────────────
         input_cache = InodeTensorCache()
 
-        # ── 8. Create EGL display window ─────────────────────────────────
-        display = EglDisplay(cam_w, cam_h, "ARA-2 YOLOv8 Live")
-
-        use_dmabuf = args.display_mode != "memcpy"
+        # ── 8. Create Wayland display window ─────────────────────────────
+        display = WaylandDisplay(cam_w, cam_h, "ARA-2 YOLOv8 Live")
 
         # ── 9. Build and start capture pipeline ──────────────────────────
         capture_pipe = build_capture_pipeline(args)
@@ -531,17 +597,9 @@ def main() -> None:
         )
 
         # Test display path
-        if use_dmabuf:
-            if not display.render_dmabuf(canvas_fd, cam_w, cam_h):
-                print("DMA-BUF display failed, falling back to memcpy")
-                use_dmabuf = False
+        display.render_dmabuf(canvas_fd)
 
-        if not use_dmabuf:
-            canvas.normalize_to_numpy(canvas_np)
-            display.render_pixels(canvas_np, cam_w, cam_h)
-
-        print(f"Warmup complete, cache: {len(input_cache)} bufs, "
-              f"display: {'dmabuf' if use_dmabuf else 'memcpy'}")
+        print(f"Warmup complete, cache: {len(input_cache)} bufs")
 
         # ── 11. Live inference loop ──────────────────────────────────────
         frame_count = 0
@@ -592,11 +650,7 @@ def main() -> None:
             )
             t5 = time.monotonic()
 
-            if use_dmabuf:
-                display.render_dmabuf(canvas_fd, cam_w, cam_h)
-            else:
-                canvas.normalize_to_numpy(canvas_np)
-                display.render_pixels(canvas_np, cam_w, cam_h)
+            display.render_dmabuf(canvas_fd)
             t6 = time.monotonic()
 
             t_pull += t1 - t0
