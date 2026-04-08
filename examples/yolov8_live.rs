@@ -73,22 +73,48 @@ use wayland_protocols::wp::linux_dmabuf::zv1::client::{
 
 // ── Wayland display (direct DMA-BUF submission, no EGL/GL) ──────────────────
 
-/// DRM_FORMAT_ABGR8888 — matches HAL's RGBA pixel layout.
+/// DRM fourcc code for `ABGR8888` (`0x34324241`).
+///
+/// This is the Wayland/DRM equivalent of HAL's [`PixelFormat::Rgba`] layout:
+/// each pixel is stored as R, G, B, A bytes in memory, which DRM interprets
+/// as AB-GR in little-endian register order.
 const DRM_FORMAT_ABGR8888: u32 = 0x34324241;
 
+/// Mutable state for the Wayland event loop, passed as the `Dispatch` target.
+///
+/// Globals are populated during the initial registry roundtrip and remain
+/// `Some` for the lifetime of the display.
 struct DisplayState {
+    /// Wayland compositor global — used to create surfaces.
     compositor: Option<wl_compositor::WlCompositor>,
+    /// XDG shell global — used to create desktop windows (toplevels).
     wm_base: Option<xdg_wm_base::XdgWmBase>,
+    /// `zwp_linux_dmabuf_v1` global — used to import DMA-BUF fds as `wl_buffer`s.
     dmabuf: Option<zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1>,
+    /// The single application surface (created once after globals are bound).
     surface: Option<wl_surface::WlSurface>,
+    /// Set to `true` after the initial `xdg_surface::configure` handshake completes.
     configured: bool,
+    /// Set to `true` when the compositor sends `xdg_toplevel::Close` (e.g. user closes the window).
     closed: bool,
+    /// Frame-pacing flag: `true` when the compositor is ready to accept the next frame.
+    /// Reset to `false` after submitting a buffer, set to `true` by the `wl_callback::Done` event.
     frame_done: bool,
+    /// Window width in pixels (signed to match Wayland protocol types).
     width: i32,
+    /// Window height in pixels.
     height: i32,
+    /// Maps DMA-BUF fd values to their imported `wl_buffer`. Since the HAL canvas
+    /// uses a fixed set of fds, each fd is imported at most once and then reused.
     buffer_cache: HashMap<i32, wl_buffer::WlBuffer>,
 }
 
+/// Wayland display connection for zero-copy DMA-BUF presentation.
+///
+/// Wraps the Wayland client connection, event queue, and display state needed
+/// to submit DMA-BUF frames directly to the compositor without EGL or OpenGL.
+/// The window is created via XDG shell and buffers are imported through the
+/// `zwp_linux_dmabuf_v1` protocol.
 struct WaylandDisplay {
     conn: Connection,
     queue: EventQueue<DisplayState>,
@@ -96,6 +122,15 @@ struct WaylandDisplay {
 }
 
 impl WaylandDisplay {
+    /// Create a new Wayland window and bind the required protocol globals.
+    ///
+    /// Connects to the Wayland compositor via `$WAYLAND_DISPLAY`, performs a
+    /// registry roundtrip to bind `wl_compositor`, `xdg_wm_base`, and
+    /// `zwp_linux_dmabuf_v1`, then creates an XDG toplevel surface and waits
+    /// for the initial configure event.
+    ///
+    /// Returns an error if any required global is missing (e.g. the compositor
+    /// does not support the DMA-BUF protocol).
     fn new(width: usize, height: usize, title: &str) -> Result<Self, String> {
         let conn = Connection::connect_to_env()
             .map_err(|e| format!("No Wayland compositor: {e}"))?;
@@ -152,6 +187,19 @@ impl WaylandDisplay {
         Ok(Self { conn, queue, state })
     }
 
+    /// Submit a DMA-BUF frame to the compositor for display.
+    ///
+    /// Uses `wl_surface.frame` callbacks for pacing: a frame is only submitted
+    /// when [`DisplayState::frame_done`] is `true`, meaning the compositor has
+    /// signaled readiness for a new buffer. If the compositor is still busy
+    /// with the previous frame, this call is a no-op (frame is skipped) and
+    /// returns `true`.
+    ///
+    /// The `wl_buffer` for each DMA-BUF fd is cached in
+    /// [`DisplayState::buffer_cache`] so the `zwp_linux_buffer_params_v1`
+    /// import is performed only once per unique fd.
+    ///
+    /// Returns `false` if the window has been closed, `true` otherwise.
     fn render_dmabuf(&mut self, fd: i32) -> bool {
         // Process pending events (close, frame callback, ping)
         self.queue.dispatch_pending(&mut self.state).ok();
@@ -198,6 +246,10 @@ impl WaylandDisplay {
         true
     }
 
+    /// Check whether the window is still open.
+    ///
+    /// Dispatches any pending Wayland events (which may set `closed`) and
+    /// returns `true` if the window has not been closed by the user or compositor.
     fn is_open(&mut self) -> bool {
         self.queue.dispatch_pending(&mut self.state).ok();
         self.conn.flush().ok();
@@ -207,6 +259,7 @@ impl WaylandDisplay {
 
 // ── Wayland protocol dispatch ───────────────────────────────────────────────
 
+/// Handles `wl_registry::Global` events to bind compositor, XDG shell, and DMA-BUF globals.
 impl Dispatch<wl_registry::WlRegistry, ()> for DisplayState {
     fn event(
         state: &mut Self,
@@ -236,6 +289,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for DisplayState {
     }
 }
 
+/// Responds to compositor ping events with a pong to keep the connection alive.
 impl Dispatch<xdg_wm_base::XdgWmBase, ()> for DisplayState {
     fn event(
         _: &mut Self,
@@ -251,6 +305,7 @@ impl Dispatch<xdg_wm_base::XdgWmBase, ()> for DisplayState {
     }
 }
 
+/// Acknowledges XDG surface configure events and marks the surface as ready.
 impl Dispatch<xdg_surface::XdgSurface, ()> for DisplayState {
     fn event(
         state: &mut Self,
@@ -267,6 +322,7 @@ impl Dispatch<xdg_surface::XdgSurface, ()> for DisplayState {
     }
 }
 
+/// Handles the toplevel close event (user closes the window).
 impl Dispatch<xdg_toplevel::XdgToplevel, ()> for DisplayState {
     fn event(
         state: &mut Self,
@@ -282,6 +338,7 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for DisplayState {
     }
 }
 
+/// Handles `wl_surface.frame` callback completion, signaling readiness for the next frame.
 impl Dispatch<wl_callback::WlCallback, ()> for DisplayState {
     fn event(
         state: &mut Self,
@@ -322,6 +379,23 @@ impl FrameCache {
         }
     }
 
+    /// Return the cached HAL tensor for buffer `index`, importing it on first use.
+    ///
+    /// On the first call for a given `index`, the DMA-BUF fd(s) from the
+    /// libcamera `framebuffer` are imported into a HAL tensor via
+    /// [`ImageProcessor::import_image`]. The fd is duplicated internally, so
+    /// the libcamera buffer can be requeued immediately after this call.
+    ///
+    /// - `index` — libcamera request cookie (buffer slot index).
+    /// - `processor` — HAL image processor used to import the DMA-BUF.
+    /// - `framebuffer` — libcamera frame buffer containing the DMA-BUF plane fd(s).
+    /// - `width`, `height` — frame dimensions in pixels.
+    /// - `format` — pixel format of the captured frame (e.g. `Nv12`, `Yuyv`).
+    ///
+    /// # Safety
+    ///
+    /// The libcamera `framebuffer` fds must be valid for the duration of this
+    /// call. After import, the cached tensor holds its own duplicated fd.
     fn get_or_import(
         &mut self,
         index: usize,
@@ -364,17 +438,32 @@ impl FrameCache {
 
 // ── Arguments ───────────────────────────────────────────────────────────────
 
+/// Command-line arguments for the live inference demo.
 struct Args {
+    /// Path to the compiled DVM model file (e.g. `yolov8n-seg.dvm`).
     model: PathBuf,
+    /// Minimum confidence score for detections (default: 0.50).
     threshold: f32,
+    /// IoU threshold for non-maximum suppression (default: 0.45).
     iou: f32,
+    /// Capture width in pixels (default: 1920).
     width: usize,
+    /// Capture height in pixels (default: 1080).
     height: usize,
+    /// Optional libcamera camera ID string. When `None`, the first available camera is used.
     camera_name: Option<String>,
+    /// Unix socket path for the ARA-2 proxy service.
     socket: String,
+    /// Camera pixel format name: `"nv12"` or `"yuyv"` (default: `"nv12"`).
     format: String,
 }
 
+/// Parse command-line arguments into [`Args`].
+///
+/// # Panics
+///
+/// Exits the process with a usage message if no model path is provided,
+/// or if a flag value cannot be parsed to its expected type.
 fn parse_args() -> Args {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
@@ -434,6 +523,7 @@ fn parse_args() -> Args {
 
 // ── COCO labels (fallback) ──────────────────────────────────────────────────
 
+/// Default COCO-80 class labels, used when the DVM model does not embed its own label list.
 const COCO: &[&str] = &[
     "person",
     "bicycle",
@@ -519,9 +609,12 @@ const COCO: &[&str] = &[
 
 // ── Output identification ───────────────────────────────────────────────────
 
+/// The type of YOLOv8 task, determined from DVM metadata or output shape inspection.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Task {
+    /// Object detection only (bounding boxes + class scores, 2 outputs).
     Detect,
+    /// Instance segmentation (bounding boxes + class scores + mask coefficients + prototypes, 4 outputs).
     Segment,
 }
 
@@ -529,7 +622,18 @@ enum Task {
 
 /// Normalize an ARA-2 output shape for the HAL decoder.
 ///
-/// ARA-2 reports 3D `[nch, height, width]`.  Strip trailing 1s, prepend batch=1.
+/// ARA-2 reports 3D shapes as `[nch, height, width]`. This function strips
+/// trailing dimensions of size 1 (which are padding artifacts from the
+/// compiler) and prepends a batch dimension of 1 to match the NCHW layout
+/// that the HAL decoder expects.
+///
+/// # Examples
+///
+/// ```text
+/// [4, 8400, 1] -> strip trailing 1 -> [4, 8400] -> prepend batch -> [1, 4, 8400]
+/// [80, 8400, 1] -> strip trailing 1 -> [80, 8400] -> prepend batch -> [1, 80, 8400]
+/// [32, 160, 160] -> no trailing 1s  -> [32, 160, 160] -> prepend batch -> [1, 32, 160, 160]
+/// ```
 fn normalize_shape(raw: [usize; 3]) -> Vec<usize> {
     let mut shape: Vec<usize> = raw.to_vec();
     while shape.len() > 1 && shape.last() == Some(&1) {
@@ -539,6 +643,13 @@ fn normalize_shape(raw: [usize; 3]) -> Vec<usize> {
     shape
 }
 
+/// Identify the boxes and scores output indices for a detection model.
+///
+/// Matches outputs by shape:
+/// - **Boxes**: 3D shape where `shape[1] == 4` (i.e. `[1, 4, N]`).
+/// - **Scores**: the first remaining 3D tensor (i.e. `[1, num_classes, N]`).
+///
+/// Returns `(boxes_index, scores_index)`.
 fn identify_det_outputs(shapes: &[Vec<usize>]) -> Result<(usize, usize), String> {
     if shapes.len() < 2 {
         return Err(format!("detection needs >= 2 outputs, got {}", shapes.len()));
@@ -557,6 +668,20 @@ fn identify_det_outputs(shapes: &[Vec<usize>]) -> Result<(usize, usize), String>
     ))
 }
 
+/// Identify the four output indices for a segmentation model.
+///
+/// YOLOv8-seg produces four outputs whose roles are inferred by shape:
+/// - **Protos**: the only 4D tensor (`[1, mask_dim, H, W]`).
+/// - **Boxes**: 3D with `shape[1] == 4` (`[1, 4, N]`).
+/// - **Mask coefficients**: 3D whose `shape[1]` matches the protos' `mask_dim`.
+/// - **Scores**: the remaining 3D tensor (`[1, num_classes, N]`).
+///
+/// Because ARA-2 output ordering is not guaranteed, a retry pass is performed
+/// when the mask-coefficient tensor appears before the protos tensor in the
+/// output list (since the first pass cannot match `mask_dim` until protos is
+/// found).
+///
+/// Returns `(boxes_index, scores_index, masks_index, protos_index)`.
 fn identify_seg_outputs(shapes: &[Vec<usize>]) -> Result<(usize, usize, usize, usize), String> {
     if shapes.len() < 4 {
         return Err(format!("segmentation needs 4 outputs, got {}", shapes.len()));
@@ -600,6 +725,17 @@ fn identify_seg_outputs(shapes: &[Vec<usize>]) -> Result<(usize, usize, usize, u
     ))
 }
 
+/// Compute a letterbox [`Crop`] that scales the source image into the
+/// destination area while preserving aspect ratio.
+///
+/// The image is centered in the destination with a neutral grey
+/// (`[114, 114, 114]`) fill, which is the standard YOLO letterbox padding.
+///
+/// - `src_w`, `src_h` — source (camera) frame dimensions.
+/// - `dst_w`, `dst_h` — destination (model input) dimensions.
+///
+/// Returns a [`Crop`] with the `dst_rect` and `dst_color` configured for
+/// the HAL `convert` operation.
 #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 fn compute_letterbox(src_w: usize, src_h: usize, dst_w: usize, dst_h: usize) -> Crop {
     let scale = (dst_w as f32 / src_w as f32).min(dst_h as f32 / src_h as f32);
@@ -612,12 +748,23 @@ fn compute_letterbox(src_w: usize, src_h: usize, dst_w: usize, dst_h: usize) -> 
 
 // ── Pixel format mapping ────────────────────────────────────────────────────
 
+/// DRM fourcc for NV12 — semi-planar YUV 4:2:0 (luma plane + interleaved UV plane).
+///
+/// This is the most common zero-copy camera format on embedded Linux platforms.
 const LIBCAM_NV12: libcamera::pixel_format::PixelFormat =
     libcamera::pixel_format::PixelFormat::new(u32::from_le_bytes([b'N', b'V', b'1', b'2']), 0);
 
+/// DRM fourcc for YUYV — packed YUV 4:2:2 (single plane, 2 bytes per pixel).
+///
+/// Used by USB cameras (UVC) that do not support NV12.
 const LIBCAM_YUYV: libcamera::pixel_format::PixelFormat =
     libcamera::pixel_format::PixelFormat::new(u32::from_le_bytes([b'Y', b'U', b'Y', b'V']), 0);
 
+/// Map a user-facing format name to both the libcamera and HAL pixel format enums.
+///
+/// # Panics
+///
+/// Exits the process if `name` is not a recognized format (`"nv12"`, `"yuyv"`, or `"yuy2"`).
 fn parse_capture_format(name: &str) -> (libcamera::pixel_format::PixelFormat, PixelFormat) {
     match name {
         "nv12" => (LIBCAM_NV12, PixelFormat::Nv12),
@@ -638,6 +785,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (libcam_fmt, hal_fmt) = parse_capture_format(&args.format);
 
     // ── 1. Read model metadata ──────────────────────────────────────────
+    // Load the DVM binary, extract embedded metadata (task type, compilation
+    // target, PPA stats) and class labels. Falls back to COCO-80 labels if
+    // none are embedded in the model.
     let dvm_data = std::fs::read(&args.model)?;
     let metadata = dvm_metadata::read_metadata(&dvm_data)?;
     let dvm_labels = dvm_metadata::read_labels(&dvm_data)?;
@@ -669,6 +819,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // ── 2. Connect to ARA-2 and load model ──────────────────────────────
+    // Establish a session with the ARA-2 proxy over a Unix socket, load the
+    // DVM model onto the first available NPU endpoint, and allocate
+    // DMA-BUF-backed input/output tensors.
     let session = Session::create_via_unix_socket(&args.socket)?;
     let endpoints = session.list_endpoints()?;
     if endpoints.is_empty() {
@@ -693,6 +846,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Input: {in_c}x{in_h}x{in_w} (CHW)");
 
     // ── 3. Build decoder ────────────────────────────────────────────────
+    // Normalize output shapes, extract quantization parameters, identify
+    // which output index corresponds to boxes/scores/masks/protos, and
+    // build the appropriate HAL post-processing decoder (detection or
+    // segmentation).
     let n_outputs = model.n_outputs();
     let mut shapes = Vec::with_capacity(n_outputs);
     let mut quants = Vec::with_capacity(n_outputs);
@@ -776,6 +933,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // ── 4. Setup HAL processor and model I/O tensors ────────────────────
+    // Create the HAL image processor and import the model's DMA-BUF
+    // input tensor as a PlanarRGB image. Also compute the letterbox crop
+    // and wrap each output tensor fd for later decoder use.
     let mut processor = ImageProcessor::new()?;
 
     let input_quant = model.input_quants(0);
@@ -806,12 +966,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let output_refs: Vec<&TensorDyn> = output_tensors.iter().collect();
 
     // ── 5. Output canvas ────────────────────────────────────────────────
+    // Allocate a DMA-BUF-backed RGBA canvas at camera resolution. This is
+    // the final render target: draw_masks composites the camera frame with
+    // detection overlays into this buffer, which is then submitted to Wayland.
     let mut canvas =
         processor.create_image(cam_w, cam_h, PixelFormat::Rgba, DType::U8, None)?;
     let canvas_fd = canvas.clone_fd()?;
     let canvas_raw_fd = canvas_fd.as_raw_fd();
 
     // ── 6. Setup libcamera ──────────────────────────────────────────────
+    // Open the camera, configure a single VideoRecording stream at the
+    // requested resolution and pixel format, allocate DMA-BUF frame
+    // buffers, and create one capture request per buffer.
     let mgr = CameraManager::new()?;
     let cameras = mgr.cameras();
     if cameras.is_empty() {
@@ -894,9 +1060,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // ── 7. Setup display ────────────────────────────────────────────────
+    // Create a Wayland window at camera resolution for DMA-BUF presentation.
     let mut display = WaylandDisplay::new(cam_w, cam_h, "ARA-2 YOLOv8 Live")?;
 
     // ── 8. Start camera and warmup ──────────────────────────────────────
+    // Start the camera stream, queue all capture requests, then run one
+    // full inference pass (import -> convert -> NPU -> draw) to warm up
+    // caches, JIT paths, and ISP auto-exposure before entering the live loop.
     cam.start(None).expect("Failed to start camera");
     for req in reqs {
         cam.queue_request(req).map_err(|(_, e)| e)?;
@@ -933,6 +1103,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Capturing {cam_w}x{cam_h} -- press Ctrl+C to stop\n");
 
     // ── 9. Live inference loop ──────────────────────────────────────────
+    // Main loop: pull the newest camera frame (dropping stale ones), run
+    // the full pipeline (import -> convert -> NPU -> draw -> display),
+    // and print per-stage timing statistics every 30 frames.
     let mut frame_count: u64 = 0;
     let t_start = Instant::now();
 
@@ -1032,6 +1205,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // ── 10. Shutdown ────────────────────────────────────────────────────
+    // Stop the camera stream and print the overall performance summary.
     eprintln!();
     cam.stop().ok();
     if frame_count > 0 {

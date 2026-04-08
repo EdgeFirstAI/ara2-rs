@@ -1,19 +1,50 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: Copyright 2025 Au-Zone Technologies
+# SPDX-License-Identifier: Apache-2.0
 """
-Example script demonstrating the edgefirst-ara2 Python library.
+ARA-2 endpoint discovery and status.
 
-Connects to the ARA-2 proxy, retrieves version information,
-and lists available endpoints with their status.
+Connects to the ARA-2 proxy service, retrieves software version
+information for all components (proxy, firmware, driver), and lists
+every available NPU endpoint with its operational state and DRAM
+usage breakdown.
+
+This example does not load a model or perform inference — it is a
+diagnostic tool for verifying that the ARA-2 hardware and proxy
+service are operational.
+
+Usage::
+
+    python endpoints.py
+
+Requirements:
+    edgefirst-ara2
+    ARA-2 proxy service running (ara2-proxy / ara2.service)
 """
 
 import edgefirst_ara2 as ara2
 
 
-def main():
+def main() -> None:
+    """Connect to the ARA-2 proxy and print endpoint status.
+
+    The function performs three steps:
+
+    1. **Connect** — creates a ``Session`` via the default UNIX socket
+       (``/var/run/ara2.sock``).
+    2. **Versions** — queries the proxy for component version strings
+       (proxy, firmware, driver, libaraclient).
+    3. **Endpoints** — lists each NPU endpoint with its operational
+       state (Idle, Active, Fault, ...) and DRAM statistics (total,
+       free, model occupancy, tensor occupancy).
+
+    Errors at each step are caught and printed rather than aborting,
+    so partial information is still displayed if one query fails.
+    """
     print(f"edgefirst-ara2 v{ara2.__version__}")
     print()
 
-    # Connect to the ARA-2 proxy via UNIX socket
+    # ── 1. Connect to the ARA-2 proxy via UNIX socket ────────────────
     try:
         session = ara2.Session.create_via_unix_socket(ara2.DEFAULT_SOCKET)
         print(f"Connected via {session.socket_type} socket")
@@ -21,7 +52,7 @@ def main():
         print(f"Failed to connect: {e}")
         return
 
-    # Get version information
+    # ── 2. Query component versions ──────────────────────────────────
     try:
         versions = session.versions()
         print("Component versions:")
@@ -31,7 +62,7 @@ def main():
     except ara2.Ara2Error as e:
         print(f"Failed to get versions: {e}")
 
-    # List available endpoints
+    # ── 3. List NPU endpoints and their DRAM statistics ──────────────
     try:
         endpoints = session.list_endpoints()
     except ara2.Ara2Error as e:

@@ -76,7 +76,8 @@ except ImportError as exc:
 
 # ── Wayland display (direct DMA-BUF submission via pywayland) ────────────────
 
-# DRM_FORMAT_ABGR8888 — matches HAL's RGBA pixel layout.
+# DRM fourcc for ABGR8888 (little-endian 'AB24').  This maps to the memory
+# layout R-G-B-A which matches HAL's PixelFormat.Rgba byte order.
 DRM_FORMAT_ABGR8888 = 0x34324241
 
 
@@ -89,6 +90,24 @@ class WaylandDisplay:
     """
 
     def __init__(self, width: int, height: int, title: str = "ARA-2 YOLOv8"):
+        """Connect to Wayland and create an xdg-shell toplevel window.
+
+        Performs a registry roundtrip to bind three required compositor
+        globals (``wl_compositor``, ``xdg_wm_base``, ``zwp_linux_dmabuf_v1``),
+        then creates an xdg-shell toplevel window and blocks until the
+        compositor sends the initial ``configure`` event.
+
+        Args:
+            width:  Window width in pixels (must match the DMA-BUF buffer
+                    width passed to ``render_dmabuf``).
+            height: Window height in pixels.
+            title:  Window title shown in the compositor's task bar.
+
+        Raises:
+            RuntimeError: If any of the three required Wayland globals are
+                missing (e.g. the compositor does not support
+                ``zwp_linux_dmabuf_v1``).
+        """
         self.width = width
         self.height = height
         self._closed = False
@@ -132,6 +151,17 @@ class WaylandDisplay:
         print(f"display: {width}x{height} wayland dmabuf")
 
     def _on_global(self, registry, id_num, iface_name, version):
+        """Handle wl_registry.global events to bind required interfaces.
+
+        Binds three interfaces when advertised by the compositor:
+
+        * ``wl_compositor`` (v4) -- creates surfaces.
+        * ``xdg_wm_base`` (v1) -- provides the xdg-shell window lifecycle;
+          a ``ping`` handler is attached immediately to keep the connection
+          alive.
+        * ``zwp_linux_dmabuf_v1`` (v3) -- imports DMA-BUF fds as
+          ``wl_buffer`` objects without GPU rendering.
+        """
         if iface_name == "wl_compositor":
             self._compositor = registry.bind(id_num, WlCompositor, min(version, 4))
         elif iface_name == "xdg_wm_base":
@@ -141,21 +171,66 @@ class WaylandDisplay:
             self._dmabuf = registry.bind(id_num, ZwpLinuxDmabufV1, min(version, 3))
 
     def _on_ping(self, wm_base, serial):
+        """Respond to the compositor's keep-alive ping.
+
+        The xdg_wm_base protocol requires the client to reply with
+        ``pong`` promptly; failure to do so causes the compositor to
+        consider the client unresponsive and may grey-out the window.
+        """
         wm_base.pong(serial)
 
     def _on_xdg_configure(self, xdg_surface, serial):
+        """Acknowledge the compositor's xdg_surface configure event.
+
+        The xdg-shell protocol requires the client to ``ack_configure``
+        before it may attach buffers.  The first configure completes the
+        window setup handshake started in ``__init__``.
+        """
         xdg_surface.ack_configure(serial)
         self._configured = True
 
     def _on_close(self, *_args):
+        """Mark the window as closed when the user (or compositor) requests it.
+
+        Sets ``_closed`` so that ``is_open`` and ``render_dmabuf`` will
+        cause the main loop to exit cleanly.
+        """
         self._closed = True
 
     def _on_frame_done(self, callback, _time):
+        """Signal that the compositor is ready for the next frame.
+
+        The ``wl_surface.frame`` callback fires after the compositor has
+        consumed the previous buffer.  This implements frame pacing --
+        ``render_dmabuf`` skips buffer submission while ``_frame_done``
+        is ``False``, preventing the client from outrunning the display
+        refresh rate.
+        """
         self._frame_done = True
         callback._destroy()
 
     def _get_or_create_buffer(self, fd: int) -> WlBuffer:
-        """Get a cached wl_buffer or create one from a DMA-BUF fd."""
+        """Return a ``wl_buffer`` for *fd*, creating one on first use.
+
+        On a cache miss the method uses ``zwp_linux_dmabuf_v1`` to wrap
+        the DMA-BUF file descriptor in a ``wl_buffer``:
+
+        1. ``create_params()`` -- allocate a ``zwp_linux_buffer_params_v1``.
+        2. ``params.add(fd, plane=0, offset=0, stride, ...)`` -- describe
+           a single RGBA plane with stride = ``width * 4`` bytes.
+        3. ``params.create_immed(...)`` -- import synchronously as
+           ``DRM_FORMAT_ABGR8888``.
+
+        The resulting ``wl_buffer`` is cached by *fd* so that repeated
+        renders of the same canvas buffer skip the import path entirely.
+
+        Args:
+            fd: DMA-BUF file descriptor for an RGBA buffer whose
+                dimensions match ``self.width`` x ``self.height``.
+
+        Returns:
+            A ``wl_buffer`` backed by the DMA-BUF.
+        """
         buf = self._buffer_cache.get(fd)
         if buf is not None:
             return buf
@@ -170,7 +245,24 @@ class WaylandDisplay:
         return buf
 
     def render_dmabuf(self, fd: int) -> bool:
-        """Submit a DMA-BUF RGBA buffer to the compositor."""
+        """Submit a DMA-BUF RGBA buffer to the compositor.
+
+        Implements frame-paced display:
+
+        * If the previous frame callback has not yet fired the submission
+          is skipped and the method returns immediately.  This avoids
+          queuing frames faster than the display can present them.
+        * Otherwise the buffer is attached, the full surface is marked
+          as damaged, a new frame callback is registered, and the
+          surface is committed.
+
+        Args:
+            fd: DMA-BUF file descriptor for the RGBA canvas to display.
+
+        Returns:
+            ``True`` if the window is still open (the caller should
+            continue rendering), ``False`` if the window was closed.
+        """
         self._display.dispatch(block=False)
 
         if self._closed:
@@ -195,11 +287,24 @@ class WaylandDisplay:
         return True
 
     def is_open(self) -> bool:
+        """Dispatch pending Wayland events and return window liveness.
+
+        Performs a non-blocking event dispatch so that close events from
+        the compositor are processed before checking ``_closed``.
+
+        Returns:
+            ``True`` if the window is still open.
+        """
         self._display.dispatch(block=False)
         self._display.flush()
         return not self._closed
 
     def destroy(self):
+        """Disconnect from the Wayland display server.
+
+        Releases the connection; cached ``wl_buffer`` objects are
+        invalidated by the disconnect.  Safe to call more than once.
+        """
         if self._display:
             self._display.disconnect()
             self._display = None
@@ -209,9 +314,25 @@ class WaylandDisplay:
 
 
 def normalize_shape(raw: tuple[int, int, int]) -> list[int]:
-    """Normalize an ARA-2 output shape for the HAL decoder.
+    """Normalize an ARA-2 output tensor shape for the HAL decoder.
 
-    ARA-2 reports 3D shapes [C, H, W].  Strip trailing 1s, prepend batch=1.
+    ARA-2 reports output shapes as 3-D ``(C, H, W)`` with trailing
+    dimensions of 1 used as padding.  The HAL decoder expects a batch
+    dimension and no trailing padding, so this function strips trailing
+    1s and prepends ``batch=1``.
+
+    Examples::
+
+        (80, 8400, 1) -> [1, 80, 8400]
+        (32, 160, 160) -> [1, 32, 160, 160]
+        (1, 8400, 1)  -> [1, 1, 8400]
+
+    Args:
+        raw: 3-D shape tuple ``(C, H, W)`` as returned by
+            ``model.output_shape()``.
+
+    Returns:
+        Shape list with ``batch=1`` prepended and trailing 1s removed.
     """
     shape = list(raw)
     while len(shape) > 1 and shape[-1] == 1:
@@ -223,7 +344,26 @@ def normalize_shape(raw: tuple[int, int, int]) -> list[int]:
 def compute_letterbox(
     src_w: int, src_h: int, dst_w: int, dst_h: int
 ) -> tuple[hal.Rect, tuple[float, float, float, float]]:
-    """Fit *src* into *dst* preserving aspect ratio (YOLO gray-114 padding)."""
+    """Compute a letterbox transform that fits *src* into *dst*.
+
+    Preserves the source aspect ratio and centres the image within the
+    destination rectangle.  The remaining border is filled with YOLO's
+    standard gray-114 padding by the caller.
+
+    Args:
+        src_w: Source (camera) width in pixels.
+        src_h: Source (camera) height in pixels.
+        dst_w: Destination (model input) width in pixels.
+        dst_h: Destination (model input) height in pixels.
+
+    Returns:
+        A 2-tuple of:
+
+        * ``hal.Rect(x, y, w, h)`` -- pixel-coordinate crop rectangle
+          for ``processor.convert()``.
+        * ``(x0, y0, x1, y1)`` -- the same rectangle normalised to
+          ``[0, 1]`` for ``processor.draw_masks(letterbox=...)``.
+    """
     scale = min(dst_w / src_w, dst_h / src_h)
     new_w = int(src_w * scale)
     new_h = int(src_h * scale)
@@ -235,7 +375,15 @@ def compute_letterbox(
 
 
 def output_dtype(bpp: int, signed: bool) -> str:
-    """Map ARA-2 output tensor bpp/signed flags to a HAL dtype string."""
+    """Map ARA-2 output tensor bit-width and sign to a HAL dtype string.
+
+    Args:
+        bpp: Bytes per element (1 for 8-bit tensors, 2 for 16-bit).
+        signed: Whether the tensor uses signed integers.
+
+    Returns:
+        One of ``"int8"``, ``"uint8"``, ``"int16"``, or ``"uint16"``.
+    """
     if bpp == 1:
         return "int8" if signed else "uint8"
     return "int16" if signed else "uint16"
@@ -248,7 +396,35 @@ def build_decoder(
     threshold: float,
     iou: float,
 ) -> hal.Decoder:
-    """Build a HAL Decoder from model output metadata."""
+    """Build a HAL YOLOv8 decoder from model output metadata.
+
+    Classifies each output tensor into one of four roles based on its
+    shape, so that the HAL decoder knows how to interpret the raw NPU
+    output:
+
+    * **Protos** (4-D, e.g. ``[1, 32, 160, 160]``) -- segmentation
+      prototype masks.
+    * **Boxes** (3-D with ``dim[1] == 4``) -- bounding-box coordinates.
+      The quantization scale is normalised by *input_dim* so that
+      coordinates are returned in ``[0, 1]``.
+    * **Mask coefficients** (3-D with ``dim[1] == n_proto_channels``) --
+      per-detection coefficients that combine with the protos.
+    * **Scores** (everything else) -- class confidence scores.
+
+    Args:
+        shapes: Normalised output shapes (batch-prefixed) from
+            ``normalize_shape``.
+        quants: Per-output quantization parameters from
+            ``model.output_quants()``.
+        input_dim: Largest model input dimension (used to normalise box
+            coordinates).
+        threshold: Minimum score to keep a detection.
+        iou: IoU threshold for non-maximum suppression.
+
+    Returns:
+        A configured ``hal.Decoder`` ready for
+        ``processor.draw_masks()``.
+    """
     proto_shape = next((s for s in shapes if len(s) == 4), None)
     n_proto_ch = proto_shape[1] if proto_shape else None
 
@@ -294,6 +470,13 @@ class FrameCache:
     """
 
     def __init__(self, capacity: int) -> None:
+        """Pre-allocate a fixed-size cache for imported camera buffers.
+
+        Args:
+            capacity: Number of slots, must equal the number of buffers
+                allocated by ``libcamera.FrameBufferAllocator``.  Each
+                slot maps 1:1 to a libcamera buffer index (cookie).
+        """
         self._entries: list[hal.Tensor | None] = [None] * capacity
 
     def get_or_import(
@@ -305,6 +488,35 @@ class FrameCache:
         height: int,
         fmt: hal.PixelFormat = hal.PixelFormat.Nv12,
     ) -> hal.Tensor:
+        """Return a cached HAL tensor, importing the DMA-BUF on first use.
+
+        libcamera's ``FrameBufferAllocator`` pre-allocates a fixed pool
+        of buffers whose DMA-BUF file descriptors remain stable for the
+        lifetime of the camera.  On the first call for a given *index*
+        the buffer is imported into the HAL (a relatively expensive
+        ``import_image`` call); subsequent calls return the cached
+        tensor immediately.
+
+        For semi-planar formats like NV12 the luma (Y) and chroma (UV)
+        planes may live in separate DMA-BUFs or at different offsets
+        within the same allocation.  When a second plane exists and the
+        format is NV12 the chroma fd and offset are passed through so
+        that ``import_image`` can map both planes correctly.
+
+        Args:
+            index: Buffer index (the libcamera request cookie), used as
+                the cache key.
+            processor: HAL image processor used to import the DMA-BUF.
+            framebuffer: The ``libcamera.FrameBuffer`` whose planes
+                provide the DMA-BUF fds.
+            width:  Frame width in pixels.
+            height: Frame height in pixels.
+            fmt: Pixel format of the camera buffer (default NV12).
+
+        Returns:
+            A ``hal.Tensor`` wrapping the imported DMA-BUF, suitable for
+            passing to ``processor.convert()`` or ``draw_masks()``.
+        """
         tensor = self._entries[index]
         if tensor is None:
             planes = framebuffer.planes
@@ -325,6 +537,7 @@ class FrameCache:
         return tensor
 
     def __len__(self) -> int:
+        """Return the number of slots that have been imported so far."""
         return sum(1 for e in self._entries if e is not None)
 
 
@@ -332,6 +545,30 @@ class FrameCache:
 
 
 def main() -> None:
+    """Run the YOLOv8 live camera inference pipeline.
+
+    Orchestrates the full lifecycle in numbered stages:
+
+    1. **Model metadata** -- read labels and compilation stats from the
+       ``.dvm`` file for display.
+    3. **ARA-2 session** -- connect to the NPU proxy, load the model,
+       and allocate DMA-BUF tensors.
+    4. **Decoder** -- build the HAL post-processor from output shapes
+       and quantization parameters.
+    5. **HAL processor** -- import the model's input tensor and set up
+       the letterbox transform for aspect-ratio-preserving resize.
+    6. **Output canvas** -- allocate a single RGBA DMA-BUF that
+       ``draw_masks`` renders into and the compositor displays.
+    7. **libcamera** -- configure the camera, allocate frame buffers,
+       and populate the frame cache.
+    8. **Wayland display** -- create the window for DMA-BUF presentation.
+    9. **Start camera** -- begin streaming and register a SIGINT handler.
+    10. **Warmup** -- run one full inference pass to JIT-compile any
+        GPU shaders before the timed loop.
+    11. **Live loop** -- capture, infer, draw, and display in a tight
+        loop with per-stage timing.
+    12. **Shutdown** -- stop the camera and release resources.
+    """
     ap = argparse.ArgumentParser(
         description="YOLOv8 live camera inference on ARA-2 with Wayland display",
         formatter_class=argparse.RawDescriptionHelpFormatter,

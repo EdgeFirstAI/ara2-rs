@@ -209,12 +209,6 @@ auto-white-balance (e.g. when lighting changes or an object moves close
 to the lens).  A raw `libcamerasrc ! waylandsink` GStreamer pipeline
 does not exhibit this stutter under the same conditions.
 
-### NV12 DMA-BUF planes
-
-The NeoISP on i.MX 95 produces NV12 frames as two separate DMA-BUF
-memory objects (luma and chroma).  Both examples handle this via
-separate luma/chroma plane descriptors.
-
 ### Debug logging
 
 ```bash
