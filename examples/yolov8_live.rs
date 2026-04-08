@@ -329,31 +329,33 @@ impl FrameCache {
         framebuffer: &FrameBuffer,
         width: usize,
         height: usize,
+        format: PixelFormat,
     ) -> Result<&TensorDyn, Box<dyn std::error::Error>> {
         if self.entries[index].is_none() {
             let planes = framebuffer.planes();
-            let luma_fd = planes.get(0).expect("NV12 requires at least one plane").fd();
+            let fd0 = planes.get(0).expect("buffer requires at least one plane").fd();
             // SAFETY: fds come from libcamera FrameBuffer, valid while request is alive.
             // PlaneDescriptor::new() dups the fd so the cached tensor is independent.
-            let y_desc =
-                PlaneDescriptor::new(unsafe { BorrowedFd::borrow_raw(luma_fd) })?;
+            let primary =
+                PlaneDescriptor::new(unsafe { BorrowedFd::borrow_raw(fd0) })?;
 
-            let uv_desc = if planes.len() >= 2 {
-                let chroma = planes.get(1).unwrap();
-                let mut p =
-                    PlaneDescriptor::new(unsafe { BorrowedFd::borrow_raw(chroma.fd()) })?;
-                if let Some(off) = chroma.offset() {
+            // Semi-planar formats (NV12) may have a separate chroma plane
+            let chroma = if planes.len() >= 2 && format == PixelFormat::Nv12 {
+                let p1 = planes.get(1).unwrap();
+                let mut desc =
+                    PlaneDescriptor::new(unsafe { BorrowedFd::borrow_raw(p1.fd()) })?;
+                if let Some(off) = p1.offset() {
                     if off > 0 {
-                        p = p.with_offset(off);
+                        desc = desc.with_offset(off);
                     }
                 }
-                Some(p)
+                Some(desc)
             } else {
                 None
             };
 
             let tensor =
-                processor.import_image(y_desc, uv_desc, width, height, PixelFormat::Nv12, DType::U8)?;
+                processor.import_image(primary, chroma, width, height, format, DType::U8)?;
             self.entries[index] = Some(tensor);
         }
         Ok(self.entries[index].as_ref().unwrap())
@@ -370,6 +372,7 @@ struct Args {
     height: usize,
     camera_name: Option<String>,
     socket: String,
+    format: String,
 }
 
 fn parse_args() -> Args {
@@ -377,7 +380,8 @@ fn parse_args() -> Args {
     if args.len() < 2 {
         eprintln!(
             "Usage: {} <model.dvm> [--threshold N] [--iou N] \
-             [--width N] [--height N] [--camera-name NAME] [--socket PATH]",
+             [--width N] [--height N] [--camera-name NAME] [--format nv12|yuyv] \
+             [--socket PATH]",
             args[0]
         );
         std::process::exit(1);
@@ -388,11 +392,12 @@ fn parse_args() -> Args {
     let mut height = 1080;
     let mut camera_name = None;
     let mut socket = ara2::DEFAULT_SOCKET.to_string();
+    let mut format = "nv12".to_string();
     let mut i = 2;
     while i < args.len() {
         match args[i].as_str() {
             flag @ ("--threshold" | "--iou" | "--width" | "--height" | "--camera-name"
-            | "--socket") => {
+            | "--socket" | "--format") => {
                 i += 1;
                 if i >= args.len() {
                     eprintln!("Error: {flag} requires a value");
@@ -407,6 +412,7 @@ fn parse_args() -> Args {
                     "--height" => height = args[i].parse().expect("invalid --height value"),
                     "--camera-name" => camera_name = Some(args[i].clone()),
                     "--socket" => socket = args[i].clone(),
+                    "--format" => format = args[i].to_lowercase(),
                     _ => unreachable!(),
                 }
             }
@@ -422,6 +428,7 @@ fn parse_args() -> Args {
         height,
         camera_name,
         socket,
+        format,
     }
 }
 
@@ -603,10 +610,24 @@ fn compute_letterbox(src_w: usize, src_h: usize, dst_w: usize, dst_h: usize) -> 
         .with_dst_color(Some([114, 114, 114, 255]))
 }
 
-// ── NV12 pixel format ───────────────────────────────────────────────────────
+// ── Pixel format mapping ────────────────────────────────────────────────────
 
-const PIXEL_FORMAT_NV12: libcamera::pixel_format::PixelFormat =
+const LIBCAM_NV12: libcamera::pixel_format::PixelFormat =
     libcamera::pixel_format::PixelFormat::new(u32::from_le_bytes([b'N', b'V', b'1', b'2']), 0);
+
+const LIBCAM_YUYV: libcamera::pixel_format::PixelFormat =
+    libcamera::pixel_format::PixelFormat::new(u32::from_le_bytes([b'Y', b'U', b'Y', b'V']), 0);
+
+fn parse_capture_format(name: &str) -> (libcamera::pixel_format::PixelFormat, PixelFormat) {
+    match name {
+        "nv12" => (LIBCAM_NV12, PixelFormat::Nv12),
+        "yuyv" | "yuy2" => (LIBCAM_YUYV, PixelFormat::Yuyv),
+        other => {
+            eprintln!("Unknown format '{other}'. Supported: nv12, yuyv");
+            std::process::exit(1);
+        }
+    }
+}
 
 // ── Main ────────────────────────────────────────────────────────────────────
 
@@ -614,6 +635,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = parse_args();
     let cam_w = args.width;
     let cam_h = args.height;
+    let (libcam_fmt, hal_fmt) = parse_capture_format(&args.format);
 
     // ── 1. Read model metadata ──────────────────────────────────────────
     let dvm_data = std::fs::read(&args.model)?;
@@ -821,7 +843,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .expect("Failed to generate camera configuration");
     {
         let mut cfg = cfgs.get_mut(0).unwrap();
-        cfg.set_pixel_format(PIXEL_FORMAT_NV12);
+        cfg.set_pixel_format(libcam_fmt);
         cfg.set_size(libcamera::geometry::Size {
             width: cam_w as u32,
             height: cam_h as u32,
@@ -889,7 +911,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let idx = req.cookie() as usize;
         let buf: &FrameBuffer = req.buffer(&stream).unwrap();
-        let src = frame_cache.get_or_import(idx, &processor, buf, cam_w, cam_h)?;
+        let src = frame_cache.get_or_import(idx, &processor, buf, cam_w, cam_h, hal_fmt)?;
         req.reuse(ReuseFlag::REUSE_BUFFERS);
         cam.queue_request(req).map_err(|(_, e)| e)?;
 
@@ -944,7 +966,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let idx = req.cookie() as usize;
         let buf: &FrameBuffer = req.buffer(&stream).unwrap();
-        let src = frame_cache.get_or_import(idx, &processor, buf, cam_w, cam_h)?;
+        let src = frame_cache.get_or_import(idx, &processor, buf, cam_w, cam_h, hal_fmt)?;
 
         // Requeue immediately — the cached tensor owns a dup'd fd,
         // so the libcamera buffer can be reused by the camera while

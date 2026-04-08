@@ -303,17 +303,23 @@ class FrameCache:
         framebuffer: libcamera.FrameBuffer,
         width: int,
         height: int,
+        fmt: hal.PixelFormat = hal.PixelFormat.Nv12,
     ) -> hal.Tensor:
         tensor = self._entries[index]
         if tensor is None:
             planes = framebuffer.planes
-            luma_fd = planes[0].fd
-            chroma_fd = planes[1].fd if len(planes) >= 2 else None
-            chroma_offset = planes[1].offset if len(planes) >= 2 else None
+            fd0 = planes[0].fd
+            # Semi-planar formats (NV12) may have a separate chroma plane
+            if len(planes) >= 2 and fmt == hal.PixelFormat.Nv12:
+                chroma_fd = planes[1].fd
+                chroma_offset = planes[1].offset or None
+            else:
+                chroma_fd = None
+                chroma_offset = None
             tensor = processor.import_image(
-                luma_fd, width, height, hal.PixelFormat.Nv12,
+                fd0, width, height, fmt,
                 chroma_fd=chroma_fd,
-                chroma_offset=chroma_offset if chroma_offset else None,
+                chroma_offset=chroma_offset,
             )
             self._entries[index] = tensor
         return tensor
@@ -339,10 +345,21 @@ def main() -> None:
         "--camera-name", default=None,
         help="libcamera camera ID",
     )
+    ap.add_argument(
+        "--format", default="nv12", choices=["nv12", "yuyv"],
+        help="Camera pixel format (default: nv12)",
+    )
     ap.add_argument("--socket", default=ara2.DEFAULT_SOCKET)
     args = ap.parse_args()
 
     cam_w, cam_h = args.width, args.height
+
+    # Map --format to libcamera and HAL pixel formats
+    format_map = {
+        "nv12": (libcamera.formats.NV12, hal.PixelFormat.Nv12),
+        "yuyv": (libcamera.formats.YUYV, hal.PixelFormat.Yuyv),
+    }
+    libcam_fmt, hal_fmt = format_map[args.format]
 
     # ── 1. Read model metadata ───────────────────────────────────────────
     metadata = ara2.read_metadata(args.model)
@@ -443,7 +460,7 @@ def main() -> None:
             [libcamera.StreamRole.VideoRecording]
         )
         stream_cfg = cam_config.at(0)
-        stream_cfg.pixel_format = libcamera.formats.NV12
+        stream_cfg.pixel_format = libcam_fmt
         stream_cfg.size = libcamera.Size(cam_w, cam_h)
         status = cam_config.validate()
         if status == libcamera.CameraConfiguration.Status.Invalid:
@@ -493,7 +510,7 @@ def main() -> None:
         req = ready[0]
         idx = req.cookie
         fb = req.buffers[stream]
-        src = frame_cache.get_or_import(idx, processor, fb, cam_w, cam_h)
+        src = frame_cache.get_or_import(idx, processor, fb, cam_w, cam_h, hal_fmt)
         req.reuse()
         cam_obj.queue_request(req)
         # Requeue any extra ready requests
@@ -545,7 +562,7 @@ def main() -> None:
 
             idx = req.cookie
             fb = req.buffers[stream]
-            src = frame_cache.get_or_import(idx, processor, fb, cam_w, cam_h)
+            src = frame_cache.get_or_import(idx, processor, fb, cam_w, cam_h, hal_fmt)
             req.reuse()
             cam_obj.queue_request(req)
             t2 = time.monotonic()
