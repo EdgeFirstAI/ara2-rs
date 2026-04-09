@@ -403,9 +403,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         task
     };
 
-    let decoder = match task {
-        Task::Detect => {
+    let decoder = match (task, n_outputs) {
+        // Monolithic detection: single output [1, nc+4, N] with normalized boxes
+        (Task::Detect, 1) => {
+            println!("  Layout: monolithic detection [{:?}]", shapes[0]);
+            DecoderBuilder::new()
+                .with_config_yolo_det(
+                    configs::Detection {
+                        decoder: DecoderType::Ultralytics,
+                        quantization: Some(QuantTuple(quants[0].0, quants[0].1)),
+                        shape: shapes[0].clone(),
+                        normalized: Some(true),
+                        ..Default::default()
+                    },
+                    None,
+                )
+                .with_score_threshold(args.threshold)
+                .with_iou_threshold(args.iou)
+                .build()?
+        }
+        // Split detection: separate boxes [1,4,N] + scores [1,nc,N]
+        (Task::Detect, _) => {
             let (bi, si) = identify_det_outputs(&shapes)?;
+            println!("  Layout: split detection (boxes[{bi}] + scores[{si}])");
             DecoderBuilder::new()
                 .with_config_yolo_split_det(
                     configs::Boxes {
@@ -426,7 +446,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .with_iou_threshold(args.iou)
                 .build()?
         }
-        Task::Segment => {
+        (Task::Segment, _) => {
             let (bi, si, mi, pi) = identify_seg_outputs(&shapes)?;
             DecoderBuilder::new()
                 .with_config_yolo_split_segdet(
@@ -574,12 +594,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     println!("\n--- Detections ({}) ---", detections.len());
+    // Decoder produces normalized box coordinates in the letterboxed model
+    // input frame (e.g. 640x640).  To map back to the original image we
+    // must first un-pad, then rescale by 1/letterbox_scale.
+    let letterbox_scale = (in_w as f32 / img_w as f32).min(in_h as f32 / img_h as f32);
+    let new_w = img_w as f32 * letterbox_scale;
+    let new_h = img_h as f32 * letterbox_scale;
+    let pad_x = (in_w as f32 - new_w) / 2.0;
+    let pad_y = (in_h as f32 - new_h) / 2.0;
     for det in &detections {
         let name = labels.get(det.label).unwrap_or(&"?");
-        let x1 = (det.bbox.xmin * img_w as f32).max(0.0);
-        let y1 = (det.bbox.ymin * img_h as f32).max(0.0);
-        let x2 = (det.bbox.xmax * img_w as f32).min(img_w as f32);
-        let y2 = (det.bbox.ymax * img_h as f32).min(img_h as f32);
+        // Normalized letterbox coords -> letterbox pixels
+        let lx1 = det.bbox.xmin * in_w as f32;
+        let ly1 = det.bbox.ymin * in_h as f32;
+        let lx2 = det.bbox.xmax * in_w as f32;
+        let ly2 = det.bbox.ymax * in_h as f32;
+        // Remove padding and rescale to original image pixels
+        let x1 = ((lx1 - pad_x) / letterbox_scale).max(0.0);
+        let y1 = ((ly1 - pad_y) / letterbox_scale).max(0.0);
+        let x2 = ((lx2 - pad_x) / letterbox_scale).min(img_w as f32);
+        let y2 = ((ly2 - pad_y) / letterbox_scale).min(img_h as f32);
         println!(
             "  {name:>12} ({:2}): {:5.1}%  [{:.0}, {:.0}, {:.0}, {:.0}]",
             det.label,
