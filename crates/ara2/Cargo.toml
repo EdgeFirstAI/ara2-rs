@@ -15,24 +15,28 @@ exclude = ["target/", "*.dvm", "*.onnx"]
 [features]
 default = ["hal"]
 hal = ["edgefirst-hal", "image"]
+# Enables the libcamera-based live-inference example (yolov8_live).
+# Off by default so building the library and file-based examples does not
+# require libcamera or Wayland client libraries on the host.
+camera = ["dep:libcamera", "dep:wayland-client", "dep:wayland-protocols"]
 
 [dependencies]
 ara2-sys.workspace = true
 edgefirst-hal = { workspace = true, optional = true }
 image = { workspace = true, optional = true }
+libcamera = { workspace = true, optional = true }
 libloading.workspace = true
 log.workspace = true
 ndarray.workspace = true
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+wayland-client = { workspace = true, optional = true }
+wayland-protocols = { workspace = true, optional = true }
 zip = { version = "2.2", default-features = false }
 
 [dev-dependencies]
 clap.workspace = true
 criterion.workspace = true
-libcamera.workspace = true
-wayland-client.workspace = true
-wayland-protocols.workspace = true
 
 [[bench]]
 name = "model_benchmark"
@@ -49,3 +53,4 @@ path = "../../examples/yolov8.rs"
 [[example]]
 name = "yolov8_live"
 path = "../../examples/yolov8_live.rs"
+required-features = ["camera"]

@@ -38,11 +38,16 @@ jobs:
         with:
           shared-key: lint
 
+      - name: Install libcamera (for camera feature)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcamera-dev libclang-dev
+
       - name: Check formatting
         run: cargo fmt --all -- --check
 
       - name: Run Clippy
-        run: cargo clippy --workspace --exclude ara2-py --all-targets -- -D warnings
+        run: cargo clippy --workspace --exclude ara2-py --all-targets --features camera -- -D warnings
 
   build-check:
     name: Build Check
@@ -61,8 +66,13 @@ jobs:
         with:
           shared-key: build-check
 
-      - name: Check workspace (default features)
-        run: cargo check --workspace --exclude ara2-py --all-targets
+      - name: Install libcamera (for camera feature)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcamera-dev libclang-dev
+
+      - name: Check workspace
+        run: cargo check --workspace --exclude ara2-py --all-targets --features camera
 
   test:
     name: Test (${{ matrix.os }})
