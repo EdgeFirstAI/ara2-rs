@@ -4,9 +4,9 @@
 """
 YOLOv8 live camera inference on ARA-2 NPU with Wayland display.
 
-Captures NV12 frames from a camera via the native libcamera Python
-bindings, runs YOLOv8 detection + instance segmentation on the ARA-2
-NPU, and displays results in a Wayland window using direct DMA-BUF
+Captures NV12 or YUYV frames from a camera via the native libcamera
+Python bindings, runs YOLOv8 detection + instance segmentation on the
+ARA-2 NPU, and displays results in a Wayland window using direct DMA-BUF
 submission (no EGL, OpenGL, GStreamer, or compiled C libraries).
 
 Pipeline::
@@ -14,8 +14,8 @@ Pipeline::
     libcamera capture       HAL / ARA-2                 Wayland display
     ┌──────────────┐    ┌───────────────────┐    ┌──────────────────────┐
     │ libcamera     │    │ cached import     │    │ pywayland            │
-    │ NV12 DMA-BUF  │ →  │ → convert         │ →  │  DMA-BUF → wl_buffer│
-    │               │    │ → NPU inference   │    │  → wl_surface_attach │
+    │ NV12 or YUYV  │ →  │ → convert         │ →  │  DMA-BUF → wl_buffer│
+    │ DMA-BUF       │    │ → NPU inference   │    │  → wl_surface_attach │
     │               │    │ → draw_masks      │    │  → wl_surface_commit │
     └──────────────┘    │ → RGBA canvas     │    └──────────────────────┘
                          └───────────────────┘
@@ -574,6 +574,8 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     ap.add_argument("model", help="Path to compiled .dvm model file")
+    # Higher default (0.50) than yolov8.py (0.25): live video wants fewer
+    # false positives per frame to keep the overlay stable.
     ap.add_argument("--threshold", type=float, default=0.50)
     ap.add_argument("--iou", type=float, default=0.45)
     ap.add_argument("--width", type=int, default=1920, help="Camera width")
@@ -586,6 +588,11 @@ def main() -> None:
         "--format", default="nv12", choices=["nv12", "yuyv"],
         help="Camera pixel format (default: nv12)",
     )
+    ap.add_argument(
+        "--color-mode", default="class",
+        choices=["class", "instance", "track"],
+        help="Segmentation mask color assignment (default: class)",
+    )
     ap.add_argument("--socket", default=ara2.DEFAULT_SOCKET)
     args = ap.parse_args()
 
@@ -597,6 +604,13 @@ def main() -> None:
         "yuyv": (libcamera.formats.YUYV, hal.PixelFormat.Yuyv),
     }
     libcam_fmt, hal_fmt = format_map[args.format]
+
+    # Map --color-mode to the HAL ColorMode enum
+    color_mode = {
+        "class": hal.ColorMode.Class,
+        "instance": hal.ColorMode.Instance,
+        "track": hal.ColorMode.Track,
+    }[args.color_mode]
 
     # ── 1. Read model metadata ───────────────────────────────────────────
     metadata = ara2.read_metadata(args.model)
@@ -766,7 +780,7 @@ def main() -> None:
             dst=canvas,
             background=src,
             letterbox=letterbox_norm,
-            color_mode=hal.ColorMode.Instance,
+            color_mode=color_mode,
         )
         display.render_dmabuf(canvas_fd)
 
@@ -819,7 +833,7 @@ def main() -> None:
                 dst=canvas,
                 background=src,
                 letterbox=letterbox_norm,
-                color_mode=hal.ColorMode.Instance,
+                color_mode=color_mode,
             )
             t5 = time.monotonic()
 

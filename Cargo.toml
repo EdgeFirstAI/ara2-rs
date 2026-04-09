@@ -16,6 +16,7 @@ edition = "2024"
 [workspace.dependencies]
 ara2 = { version = "0.2.0", path = "crates/ara2" }
 ara2-sys = { version = "0.2.0", path = "crates/ara2-sys" }
+clap = { version = "4.5", features = ["derive"] }
 criterion = "0.7.0"
 edgefirst-hal = "0.15.0"
 libcamera = "0.7.0"

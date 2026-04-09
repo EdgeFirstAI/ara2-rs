@@ -49,14 +49,15 @@ yolov8 <model.dvm> <image.jpg> [--save] [--threshold 0.25] [--iou 0.45] [--bench
 | `--threshold` | 0.25 | Detection confidence threshold |
 | `--iou` | 0.45 | NMS IoU threshold |
 | `--benchmark` | 0 | Run N iterations with timing statistics |
+| `--color-mode` | `class` | Mask coloring: `class`, `instance`, or `track` |
 
 ---
 
 ## yolov8_live -- Live Camera Inference (Rust)
 
-Captures NV12 frames from a camera via libcamera, runs YOLOv8 inference on
-the ARA-2 NPU, and displays results in a Wayland window.  This is a
-minimal serial (single-threaded) pipeline.
+Captures NV12 or YUYV frames from a camera via libcamera, runs YOLOv8
+inference on the ARA-2 NPU, and displays results in a Wayland window.
+This is a minimal serial (single-threaded) pipeline.
 
 Display uses the `zwp_linux_dmabuf_v1` Wayland protocol to submit the
 RGBA canvas DMA-BUF directly to the compositor -- no EGL or OpenGL.
@@ -64,9 +65,9 @@ RGBA canvas DMA-BUF directly to the compositor -- no EGL or OpenGL.
 ### Architecture
 
 ```
-libcamera (NV12 DMA-BUF)
+libcamera (NV12 or YUYV DMA-BUF)
   -> HAL import (cached by buffer index)
-  -> HAL convert (NV12 -> PlanarRGB letterbox)
+  -> HAL convert (NV12|YUYV -> PlanarRGB letterbox)
   -> ARA-2 NPU inference
   -> HAL draw_masks (decode + composite -> RGBA canvas)
   -> Wayland display (DMA-BUF -> wl_buffer -> compositor)
@@ -97,27 +98,42 @@ export BINDGEN_EXTRA_CLANG_ARGS="--target=aarch64-poky-linux --sysroot=$SYSROOT 
 cargo build --release --target aarch64-unknown-linux-gnu --example yolov8_live
 ```
 
-### Run
+### Run (imx95-frdm with on-board `os08a20` MIPI-CSI sensor)
 
 ```bash
 export XDG_RUNTIME_DIR=/run/user/0
 export WAYLAND_DISPLAY=wayland-0
-export LIBCAMERA_PIPELINES_MATCH_LIST='nxp/neo,imx8-isi,simple'
+export LIBCAMERA_PIPELINES_MATCH_LIST='nxp/neo'
 
-yolov8_live /root/models/yolov8n-seg_640x640.dvm \
-    --camera-name '/base/soc/bus@42000000/i2c@42540000/os08a20_mipi@36' \
-    --width 1920 --height 1080
+# Default NV12 capture:
+yolov8_live /root/models/yolov8m-seg_640x640.dvm
+
+# YUYV capture:
+yolov8_live /root/models/yolov8m-seg_640x640.dvm --format yuyv
 ```
+
+**`LIBCAMERA_PIPELINES_MATCH_LIST='nxp/neo'` is required on i.MX95.** The
+i.MX95 sensor appears in two media graphs: `mxc-isi` (raw bypass, handled
+by the `imx8-isi` pipeline) and `neoisp` (the NXP Neo ISP, handled by
+`nxp/neo`).  Without this hint libcamera picks `imx8-isi` first, which
+only exposes raw Bayer (`SBGGR10`/`SBGGR12`) and fails with
+`Cannot find a supported YUV/RGB format` for any YUV/RGB request.
+Only the `nxp/neo` pipeline exposes NV12, YUYV, NV16, UYVY, RGB, etc.
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `model` | (required) | Path to `.dvm` model file |
+| `--format` | `nv12` | Capture pixel format: `nv12` or `yuyv` |
 | `--camera-name` | first available | libcamera camera ID |
 | `--width` | 1920 | Camera capture width |
 | `--height` | 1080 | Camera capture height |
 | `--threshold` | 0.50 | Detection confidence threshold |
 | `--iou` | 0.45 | NMS IoU threshold |
+| `--color-mode` | `class` | Mask coloring: `class`, `instance`, or `track` |
 | `--socket` | `/var/run/ara2.sock` | ARA-2 proxy UNIX socket path |
+
+On i.MX95 with the Neo ISP, only `1920x1080` and `3840x2160` are supported
+capture sizes; other values will be silently adjusted.
 
 ---
 
@@ -138,27 +154,35 @@ pip install edgefirst-ara2 edgefirst-hal numpy pywayland
 The `--system-site-packages` flag is required to pick up the libcamera
 Python bindings from system packages.
 
-### Run
+### Run (imx95-frdm with on-board `os08a20` MIPI-CSI sensor)
 
 ```bash
 export XDG_RUNTIME_DIR=/run/user/0
 export WAYLAND_DISPLAY=wayland-0
-export LIBCAMERA_PIPELINES_MATCH_LIST='nxp/neo,imx8-isi,simple'
+export LIBCAMERA_PIPELINES_MATCH_LIST='nxp/neo'
 
 source /root/venv/bin/activate
-python3 yolov8_live.py /root/models/yolov8n-seg_640x640.dvm \
-    --camera-name '/base/soc/bus@42000000/i2c@42540000/os08a20_mipi@36' \
-    --width 1920 --height 1080
+
+# Default NV12 capture:
+python3 yolov8_live.py /root/models/yolov8m-seg_640x640.dvm
+
+# YUYV capture:
+python3 yolov8_live.py /root/models/yolov8m-seg_640x640.dvm --format yuyv
 ```
+
+See the Rust `yolov8_live` section above for why
+`LIBCAMERA_PIPELINES_MATCH_LIST='nxp/neo'` is required on i.MX95.
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `model` | (required) | Path to `.dvm` model file |
+| `--format` | `nv12` | Capture pixel format: `nv12` or `yuyv` |
 | `--camera-name` | first available | libcamera camera ID |
 | `--width` | 1920 | Camera capture width |
 | `--height` | 1080 | Camera capture height |
 | `--threshold` | 0.50 | Detection confidence threshold |
 | `--iou` | 0.45 | NMS IoU threshold |
+| `--color-mode` | `class` | Mask coloring: `class`, `instance`, or `track` |
 | `--socket` | `/var/run/ara2.sock` | ARA-2 proxy UNIX socket path |
 
 ---
@@ -201,6 +225,21 @@ These are serial single-threaded pipelines.  Frame rate is dominated
 by NPU inference time.  Higher frame rates require overlapping capture
 with inference (e.g. a capture thread), which is outside the scope of
 these minimal examples.
+
+### `Cannot find a supported YUV/RGB format` on i.MX95
+
+If you see this libcamera error followed by `Invalid camera configuration`:
+
+```
+WARN  ISI imx8-isi.cpp:301  Cannot find a supported YUV/RGB format
+ERROR ISI imx8-isi.cpp:456  Cannot adjust pixelformat YUYV
+Invalid camera configuration
+```
+
+libcamera picked the `imx8-isi` pipeline handler instead of `nxp/neo`.
+On i.MX95 the `imx8-isi` path only exposes raw Bayer for the `os08a20`
+sensor and has no YUV/RGB output.  Fix by exporting
+`LIBCAMERA_PIPELINES_MATCH_LIST='nxp/neo'` before running the example.
 
 ### ISP adjustment stutter
 
