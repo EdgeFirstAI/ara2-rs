@@ -49,9 +49,7 @@ use edgefirst_hal::{
         ColorMode, Crop, Flip, ImageProcessor, ImageProcessorTrait as _, MaskOverlay, Rect,
         Rotation, load_image, save_jpeg,
     },
-    tensor::{
-        DType, PixelFormat, PlaneDescriptor, TensorDyn, TensorMemory, TensorTrait as _,
-    },
+    tensor::{DType, PixelFormat, PlaneDescriptor, TensorDyn, TensorMemory, TensorTrait as _},
 };
 use std::os::fd::AsFd as _;
 use std::{path::PathBuf, time::Instant};
@@ -244,7 +242,10 @@ fn normalize_shape(raw: [usize; 3]) -> Vec<usize> {
 /// misidentify score tensors from 4-class models.
 fn identify_det_outputs(shapes: &[Vec<usize>]) -> Result<(usize, usize), String> {
     if shapes.len() < 2 {
-        return Err(format!("detection needs >= 2 outputs, got {}", shapes.len()));
+        return Err(format!(
+            "detection needs >= 2 outputs, got {}",
+            shapes.len()
+        ));
     }
     let (mut boxes, mut scores) = (None, None);
     for (i, s) in shapes.iter().enumerate() {
@@ -267,7 +268,10 @@ fn identify_det_outputs(shapes: &[Vec<usize>]) -> Result<(usize, usize), String>
 /// Boxes by `shape[1] == 4`. Mask coefficients by `shape[1] == 32`.
 fn identify_seg_outputs(shapes: &[Vec<usize>]) -> Result<(usize, usize, usize, usize), String> {
     if shapes.len() < 4 {
-        return Err(format!("segmentation needs 4 outputs, got {}", shapes.len()));
+        return Err(format!(
+            "segmentation needs 4 outputs, got {}",
+            shapes.len()
+        ));
     }
     let (mut scores, mut boxes, mut masks, mut protos) = (None, None, None, None);
     for (i, s) in shapes.iter().enumerate() {
@@ -275,7 +279,10 @@ fn identify_seg_outputs(shapes: &[Vec<usize>]) -> Result<(usize, usize, usize, u
             protos = Some(i); // [1, 32, H, W]
         } else if s.len() == 3 && s[1] == 4 {
             boxes = Some(i); // [1, 4, num_boxes]
-        } else if s.len() == 3 && masks.is_none() && protos.is_some_and(|p| shapes[p].get(1) == s.get(1)) {
+        } else if s.len() == 3
+            && masks.is_none()
+            && protos.is_some_and(|p| shapes[p].get(1) == s.get(1))
+        {
             masks = Some(i); // [1, 32, num_boxes]
         } else if scores.is_none() {
             scores = Some(i);
@@ -284,16 +291,20 @@ fn identify_seg_outputs(shapes: &[Vec<usize>]) -> Result<(usize, usize, usize, u
     // Retry mask detection: needed when the proto tensor appears after the mask-coeff
     // tensor in the output list (ARA-2 compiler output ordering is not guaranteed).
     if masks.is_none()
-        && let Some(pi) = protos {
-            for (i, s) in shapes.iter().enumerate() {
-                if s.len() == 3 && s[1] != 4 && Some(i) != scores && Some(i) != boxes
-                    && shapes[pi].get(1) == s.get(1)
-                {
-                    masks = Some(i);
-                    break;
-                }
+        && let Some(pi) = protos
+    {
+        for (i, s) in shapes.iter().enumerate() {
+            if s.len() == 3
+                && s[1] != 4
+                && Some(i) != scores
+                && Some(i) != boxes
+                && shapes[pi].get(1) == s.get(1)
+            {
+                masks = Some(i);
+                break;
             }
         }
+    }
     Ok((
         boxes.ok_or("cannot identify boxes")?,
         scores.ok_or("cannot identify scores")?,
@@ -304,13 +315,22 @@ fn identify_seg_outputs(shapes: &[Vec<usize>]) -> Result<(usize, usize, usize, u
 
 /// Compute a letterbox [`Crop`] that fits `src` into `dst` preserving aspect
 /// ratio, centered with YOLO gray (114, 114, 114) padding.
-#[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
 fn compute_letterbox(src_w: usize, src_h: usize, dst_w: usize, dst_h: usize) -> Crop {
     let scale = (dst_w as f32 / src_w as f32).min(dst_h as f32 / src_h as f32);
     let new_w = (src_w as f32 * scale) as usize;
     let new_h = (src_h as f32 * scale) as usize;
     Crop::new()
-        .with_dst_rect(Some(Rect::new((dst_w - new_w) / 2, (dst_h - new_h) / 2, new_w, new_h)))
+        .with_dst_rect(Some(Rect::new(
+            (dst_w - new_w) / 2,
+            (dst_h - new_h) / 2,
+            new_w,
+            new_h,
+        )))
         .with_dst_color(Some([114, 114, 114, 255]))
 }
 
@@ -343,7 +363,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let task = metadata
         .as_ref()
         .and_then(|m| m.task())
-        .map(|t| if t == "segment" { Task::Segment } else { Task::Detect })
+        .map(|t| {
+            if t == "segment" {
+                Task::Segment
+            } else {
+                Task::Detect
+            }
+        })
         .unwrap_or(Task::Detect);
 
     println!("Task: {task:?}, classes: {}", labels.len());
@@ -497,7 +523,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     drop(cpu_img);
 
     let input_quant = model.input_quants(0);
-    let input_dtype = if input_quant.is_signed { DType::I8 } else { DType::U8 };
+    let input_dtype = if input_quant.is_signed {
+        DType::I8
+    } else {
+        DType::U8
+    };
 
     let input_fd = model.input_tensor(0).clone_fd()?;
     let plane = PlaneDescriptor::new(input_fd.as_fd())?;
@@ -634,7 +664,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut warmup_boxes = Vec::with_capacity(100);
             processor.convert(&src, &mut dst, Rotation::None, Flip::None, letterbox)?;
             model.run()?;
-            let proto = decoder.decode_proto(&output_refs, &mut warmup_boxes)
+            let proto = decoder
+                .decode_proto(&output_refs, &mut warmup_boxes)
                 .map_err(|e| format!("decode_proto: {e:#?}"))?;
             let masks: Vec<Segmentation> = if let Some(ref pd) = proto {
                 processor.materialize_masks(&warmup_boxes, pd, letterbox_norm)?

@@ -63,10 +63,10 @@ use std::time::{Duration, Instant};
 
 use wayland_client::protocol::{wl_buffer, wl_callback, wl_compositor, wl_registry, wl_surface};
 use wayland_client::{Connection, Dispatch, EventQueue, QueueHandle, delegate_noop};
-use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 use wayland_protocols::wp::linux_dmabuf::zv1::client::{
     zwp_linux_buffer_params_v1, zwp_linux_dmabuf_v1,
 };
+use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 
 // ── Wayland display (direct DMA-BUF submission, no EGL/GL) ──────────────────
 
@@ -129,8 +129,8 @@ impl WaylandDisplay {
     /// Returns an error if any required global is missing (e.g. the compositor
     /// does not support the DMA-BUF protocol).
     fn new(width: usize, height: usize, title: &str) -> Result<Self, String> {
-        let conn = Connection::connect_to_env()
-            .map_err(|e| format!("No Wayland compositor: {e}"))?;
+        let conn =
+            Connection::connect_to_env().map_err(|e| format!("No Wayland compositor: {e}"))?;
 
         let mut state = DisplayState {
             compositor: None,
@@ -151,7 +151,9 @@ impl WaylandDisplay {
         display.get_registry(&qh, ());
 
         // Roundtrip to bind globals
-        queue.roundtrip(&mut state).map_err(|e| format!("roundtrip: {e}"))?;
+        queue
+            .roundtrip(&mut state)
+            .map_err(|e| format!("roundtrip: {e}"))?;
 
         if state.compositor.is_none() {
             return Err("Missing wl_compositor".into());
@@ -165,7 +167,11 @@ impl WaylandDisplay {
 
         // Create surface + xdg shell window
         let surface = state.compositor.as_ref().unwrap().create_surface(&qh, ());
-        let xdg_surface = state.wm_base.as_ref().unwrap().get_xdg_surface(&surface, &qh, ());
+        let xdg_surface = state
+            .wm_base
+            .as_ref()
+            .unwrap()
+            .get_xdg_surface(&surface, &qh, ());
         let toplevel = xdg_surface.get_toplevel(&qh, ());
         toplevel.set_title(title.to_string());
         toplevel.set_app_id("ara2-demo".to_string());
@@ -175,7 +181,8 @@ impl WaylandDisplay {
 
         // Wait for configure
         while !state.configured {
-            queue.blocking_dispatch(&mut state)
+            queue
+                .blocking_dispatch(&mut state)
                 .map_err(|e| format!("dispatch: {e}"))?;
         }
 
@@ -266,19 +273,21 @@ impl Dispatch<wl_registry::WlRegistry, ()> for DisplayState {
         _: &Connection,
         qh: &QueueHandle<Self>,
     ) {
-        if let wl_registry::Event::Global { name, interface, version } = event {
+        if let wl_registry::Event::Global {
+            name,
+            interface,
+            version,
+        } = event
+        {
             match interface.as_str() {
                 "wl_compositor" => {
-                    state.compositor =
-                        Some(registry.bind(name, version.min(4), qh, ()));
+                    state.compositor = Some(registry.bind(name, version.min(4), qh, ()));
                 }
                 "xdg_wm_base" => {
-                    state.wm_base =
-                        Some(registry.bind(name, version.min(1), qh, ()));
+                    state.wm_base = Some(registry.bind(name, version.min(1), qh, ()));
                 }
                 "zwp_linux_dmabuf_v1" => {
-                    state.dmabuf =
-                        Some(registry.bind(name, version.min(3), qh, ()));
+                    state.dmabuf = Some(registry.bind(name, version.min(3), qh, ()));
                 }
                 _ => {}
             }
@@ -404,21 +413,23 @@ impl FrameCache {
     ) -> Result<&TensorDyn, Box<dyn std::error::Error>> {
         if self.entries[index].is_none() {
             let planes = framebuffer.planes();
-            let fd0 = planes.get(0).expect("buffer requires at least one plane").fd();
+            let fd0 = planes
+                .get(0)
+                .expect("buffer requires at least one plane")
+                .fd();
             // SAFETY: fds come from libcamera FrameBuffer, valid while request is alive.
             // PlaneDescriptor::new() dups the fd so the cached tensor is independent.
-            let primary =
-                PlaneDescriptor::new(unsafe { BorrowedFd::borrow_raw(fd0) })?;
+            let primary = PlaneDescriptor::new(unsafe { BorrowedFd::borrow_raw(fd0) })?;
 
             // Semi-planar formats (NV12) may have a separate chroma plane
             let chroma = if planes.len() >= 2 && format == PixelFormat::Nv12 {
                 let p1 = planes.get(1).unwrap();
-                let mut desc =
-                    PlaneDescriptor::new(unsafe { BorrowedFd::borrow_raw(p1.fd()) })?;
+                let mut desc = PlaneDescriptor::new(unsafe { BorrowedFd::borrow_raw(p1.fd()) })?;
                 if let Some(off) = p1.offset()
-                    && off > 0 {
-                        desc = desc.with_offset(off);
-                    }
+                    && off > 0
+                {
+                    desc = desc.with_offset(off);
+                }
                 Some(desc)
             } else {
                 None
@@ -644,7 +655,10 @@ fn normalize_shape(raw: [usize; 3]) -> Vec<usize> {
 /// Returns `(boxes_index, scores_index)`.
 fn identify_det_outputs(shapes: &[Vec<usize>]) -> Result<(usize, usize), String> {
     if shapes.len() < 2 {
-        return Err(format!("detection needs >= 2 outputs, got {}", shapes.len()));
+        return Err(format!(
+            "detection needs >= 2 outputs, got {}",
+            shapes.len()
+        ));
     }
     let (mut boxes, mut scores) = (None, None);
     for (i, s) in shapes.iter().enumerate() {
@@ -676,7 +690,10 @@ fn identify_det_outputs(shapes: &[Vec<usize>]) -> Result<(usize, usize), String>
 /// Returns `(boxes_index, scores_index, masks_index, protos_index)`.
 fn identify_seg_outputs(shapes: &[Vec<usize>]) -> Result<(usize, usize, usize, usize), String> {
     if shapes.len() < 4 {
-        return Err(format!("segmentation needs 4 outputs, got {}", shapes.len()));
+        return Err(format!(
+            "segmentation needs 4 outputs, got {}",
+            shapes.len()
+        ));
     }
     let (mut scores, mut boxes, mut masks, mut protos) = (None, None, None, None);
     for (i, s) in shapes.iter().enumerate() {
@@ -695,19 +712,20 @@ fn identify_seg_outputs(shapes: &[Vec<usize>]) -> Result<(usize, usize, usize, u
     }
     // Retry mask detection when proto tensor appears after mask-coeff tensor.
     if masks.is_none()
-        && let Some(pi) = protos {
-            for (i, s) in shapes.iter().enumerate() {
-                if s.len() == 3
-                    && s[1] != 4
-                    && Some(i) != scores
-                    && Some(i) != boxes
-                    && shapes[pi].get(1) == s.get(1)
-                {
-                    masks = Some(i);
-                    break;
-                }
+        && let Some(pi) = protos
+    {
+        for (i, s) in shapes.iter().enumerate() {
+            if s.len() == 3
+                && s[1] != 4
+                && Some(i) != scores
+                && Some(i) != boxes
+                && shapes[pi].get(1) == s.get(1)
+            {
+                masks = Some(i);
+                break;
             }
         }
+    }
     Ok((
         boxes.ok_or("cannot identify boxes")?,
         scores.ok_or("cannot identify scores")?,
@@ -727,13 +745,22 @@ fn identify_seg_outputs(shapes: &[Vec<usize>]) -> Result<(usize, usize, usize, u
 ///
 /// Returns a [`Crop`] with the `dst_rect` and `dst_color` configured for
 /// the HAL `convert` operation.
-#[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
 fn compute_letterbox(src_w: usize, src_h: usize, dst_w: usize, dst_h: usize) -> Crop {
     let scale = (dst_w as f32 / src_w as f32).min(dst_h as f32 / src_h as f32);
     let new_w = (src_w as f32 * scale) as usize;
     let new_h = (src_h as f32 * scale) as usize;
     Crop::new()
-        .with_dst_rect(Some(Rect::new((dst_w - new_w) / 2, (dst_h - new_h) / 2, new_w, new_h)))
+        .with_dst_rect(Some(Rect::new(
+            (dst_w - new_w) / 2,
+            (dst_h - new_h) / 2,
+            new_w,
+            new_h,
+        )))
         .with_dst_color(Some([114, 114, 114, 255]))
 }
 
@@ -784,21 +811,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let task = metadata
         .as_ref()
         .and_then(|m| m.task())
-        .map(|t| if t == "segment" { Task::Segment } else { Task::Detect })
+        .map(|t| {
+            if t == "segment" {
+                Task::Segment
+            } else {
+                Task::Detect
+            }
+        })
         .unwrap_or(Task::Detect);
 
     if let Some(ref m) = metadata {
         println!("Model: {}", args.model.display());
         println!("Task: {task:?}, Classes: {}", labels.len());
         if let Some(ref comp) = m.compilation
-            && let Some(ref ppa) = comp.ppa {
-                println!(
-                    "Target: {:?}, IPS: {:.0}, Power: {:.0} mW",
-                    comp.target,
-                    ppa.ips.unwrap_or(0.0),
-                    ppa.power_mw.unwrap_or(0.0)
-                );
-            }
+            && let Some(ref ppa) = comp.ppa
+        {
+            println!(
+                "Target: {:?}, IPS: {:.0}, Power: {:.0} mW",
+                comp.target,
+                ppa.ips.unwrap_or(0.0),
+                ppa.power_mw.unwrap_or(0.0)
+            );
+        }
     }
 
     // ── 2. Connect to ARA-2 and load model ──────────────────────────────
@@ -922,7 +956,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut processor = ImageProcessor::new()?;
 
     let input_quant = model.input_quants(0);
-    let input_dtype = if input_quant.is_signed { DType::I8 } else { DType::U8 };
+    let input_dtype = if input_quant.is_signed {
+        DType::I8
+    } else {
+        DType::U8
+    };
     let input_fd = model.input_tensor(0).clone_fd()?;
     let plane = PlaneDescriptor::new(input_fd.as_fd())?;
     let mut model_input =
@@ -949,8 +987,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Allocate a DMA-BUF-backed RGBA canvas at camera resolution. This is
     // the final render target: draw_masks composites the camera frame with
     // detection overlays into this buffer, which is then submitted to Wayland.
-    let mut canvas =
-        processor.create_image(cam_w, cam_h, PixelFormat::Rgba, DType::U8, None)?;
+    let mut canvas = processor.create_image(cam_w, cam_h, PixelFormat::Rgba, DType::U8, None)?;
     let canvas_fd = canvas.clone_fd()?;
     let canvas_raw_fd = canvas_fd.as_raw_fd();
 
@@ -1075,7 +1112,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         processor.draw_masks(&decoder, &output_refs, &mut canvas, overlay)?;
 
         if !display.render_dmabuf(canvas_raw_fd) {
-            return Err("DMA-BUF display failed. Compositor may not support zwp_linux_dmabuf_v1.".into());
+            return Err(
+                "DMA-BUF display failed. Compositor may not support zwp_linux_dmabuf_v1.".into(),
+            );
         }
     }
 
