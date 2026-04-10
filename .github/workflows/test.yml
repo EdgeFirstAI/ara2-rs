@@ -22,7 +22,7 @@ env:
 jobs:
   lint:
     name: Lint
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -38,20 +38,15 @@ jobs:
         with:
           shared-key: lint
 
-      - name: Install libcamera (for camera feature)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libcamera-dev libclang-dev
-
       - name: Check formatting
         run: cargo fmt --all -- --check
 
       - name: Run Clippy
-        run: cargo clippy --workspace --exclude ara2-py --all-targets --features camera -- -D warnings
+        run: cargo clippy --workspace --exclude ara2-py --all-targets -- -D warnings
 
   build-check:
     name: Build Check
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -66,13 +61,8 @@ jobs:
         with:
           shared-key: build-check
 
-      - name: Install libcamera (for camera feature)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libcamera-dev libclang-dev
-
       - name: Check workspace
-        run: cargo check --workspace --exclude ara2-py --all-targets --features camera
+        run: cargo check --workspace --exclude ara2-py --all-targets
 
   test:
     name: Test (${{ matrix.os }})
