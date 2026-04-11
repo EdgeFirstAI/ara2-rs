@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-04-11
+
+### Added
+
+- **Rust live-camera example** (`examples/yolov8_live.rs`) — libcamera
+  capture, zero-copy DMA-BUF tensor input, and direct Wayland DMA-BUF
+  display for real-time YOLOv8 inference on NXP i.MX platforms.
+- **3-step segmentation pipeline** — split preprocessing, inference, and
+  postprocessing into discrete HAL steps; reflected in both Rust and
+  Python YOLOv8 examples.
+- **`camera` Cargo feature** on the `ara2` crate that gates the
+  libcamera-based `yolov8_live` example behind optional dependencies
+  (`libcamera`, `wayland-client`, `wayland-protocols`). Building the
+  library and file-based examples no longer requires libcamera on the host.
+- Monolithic YOLO detection decoder path for models with a single
+  `[1, nc+4, N]` output tensor (previously only the split boxes+scores
+  layout was supported).
+- `--format {nv12,yuyv}` CLI flag on live-camera examples for pixel-format
+  performance comparison (YUYV is ~1.3 ms faster than NV12 on imx95-frdm).
+- `--color-mode {class,instance,track}` on all four YOLOv8 examples
+  (previously hardcoded to Instance).
+- `--socket` flag on `examples/yolov8.rs` for parity with the other examples.
+- Comprehensive API documentation (doc comments / docstrings) across all
+  example files.
+
+### Changed
+
+- **Live display backend:** replaced EGL/GL with direct Wayland
+  `zwp_linux_dmabuf_v1` submission — no OpenGL context required, zero-copy
+  from NPU output to compositor.
+- **Python camera capture:** replaced GStreamer with native libcamera
+  Python bindings in `yolov8_live.py` for lower latency and fewer
+  transitive dependencies.
+- **Example CLIs:** migrated Rust YOLOv8 examples to `clap` derive with
+  per-variant `--help` descriptions and typo suggestions.
+
+### Fixed
+
+- **YOLO detection box mapping in `examples/yolov8.rs`:** decoder produces
+  normalized coordinates in the letterboxed model input frame (e.g. 640×640),
+  not the original image. Un-pad and rescale by `1 / letterbox_scale` so
+  boxes are no longer stretched on non-square source images.
+
 ## [0.2.0] - 2026-03-26
 
 ### Added
@@ -115,7 +158,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Requires `edgefirst-hal` for HAL integration
 - Requires `libaraclient.so` runtime library
 
-[Unreleased]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.1.1...v0.1.2
