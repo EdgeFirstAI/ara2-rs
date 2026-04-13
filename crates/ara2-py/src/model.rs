@@ -3,7 +3,8 @@
 
 use crate::error::{self, to_py_err};
 use crate::types::{
-    InputQuantization, InputTensorInfo, ModelTiming, OutputQuantization, OutputTensorInfo,
+    InputPreprocess, InputQuantization, InputTensorInfo, ModelTiming, OutputQuantization,
+    OutputTensorInfo,
 };
 use edgefirst_hal::tensor::{TensorMapTrait as _, TensorMemory, TensorTrait as _};
 use numpy::IntoPyArray as _;
@@ -34,16 +35,28 @@ fn tensor_err(e: impl std::fmt::Display) -> PyErr {
 ///         output = model.get_output_tensor(0)
 #[pyclass(module = "edgefirst_ara2", unsendable)]
 pub struct Model {
-    inner: ara2::Model,
+    inner: Option<ara2::Model>,
     tensors_allocated: bool,
 }
 
 impl Model {
     pub fn new(inner: ara2::Model) -> Self {
         Model {
-            inner,
+            inner: Some(inner),
             tensors_allocated: false,
         }
+    }
+
+    fn inner_ref(&self) -> PyResult<&ara2::Model> {
+        self.inner
+            .as_ref()
+            .ok_or_else(|| error::Ara2Error::new_err("model is closed"))
+    }
+
+    fn inner_mut(&mut self) -> PyResult<&mut ara2::Model> {
+        self.inner
+            .as_mut()
+            .ok_or_else(|| error::Ara2Error::new_err("model is closed"))
     }
 
     fn check_allocated(&self) -> PyResult<()> {
@@ -56,20 +69,22 @@ impl Model {
     }
 
     fn check_input_index(&self, index: usize) -> PyResult<()> {
-        if index >= self.inner.n_inputs() {
+        let m = self.inner_ref()?;
+        if index >= m.n_inputs() {
             return Err(pyo3::exceptions::PyIndexError::new_err(format!(
                 "input index {index} out of range (model has {} inputs)",
-                self.inner.n_inputs()
+                m.n_inputs()
             )));
         }
         Ok(())
     }
 
     fn check_output_index(&self, index: usize) -> PyResult<()> {
-        if index >= self.inner.n_outputs() {
+        let m = self.inner_ref()?;
+        if index >= m.n_outputs() {
             return Err(pyo3::exceptions::PyIndexError::new_err(format!(
                 "output index {index} out of range (model has {} outputs)",
-                self.inner.n_outputs()
+                m.n_outputs()
             )));
         }
         Ok(())
@@ -105,7 +120,7 @@ impl Model {
                 )));
             }
         };
-        self.inner.allocate_tensors(mem).map_err(to_py_err)?;
+        self.inner_mut()?.allocate_tensors(mem).map_err(to_py_err)?;
         self.tensors_allocated = true;
         Ok(())
     }
@@ -114,8 +129,9 @@ impl Model {
     ///
     /// Args:
     ///     timeout_ms: Timeout in milliseconds (default: 1000)
-    fn set_timeout_ms(&mut self, timeout_ms: i32) {
-        self.inner.set_timeout_ms(timeout_ms);
+    fn set_timeout_ms(&mut self, timeout_ms: i32) -> PyResult<()> {
+        self.inner_mut()?.set_timeout_ms(timeout_ms);
+        Ok(())
     }
 
     /// Run inference on the model.
@@ -130,7 +146,7 @@ impl Model {
     ///     TensorError: If tensors have not been allocated
     fn run(&mut self) -> PyResult<ModelTiming> {
         self.check_allocated()?;
-        let timing = self.inner.run().map_err(to_py_err)?;
+        let timing = self.inner_mut()?.run().map_err(to_py_err)?;
         Ok(ModelTiming::from(timing))
     }
 
@@ -142,8 +158,11 @@ impl Model {
     ///
     /// Args:
     ///     index: Input tensor index (0-based)
-    ///     data: numpy ``uint8`` array with data to copy. The total byte
-    ///           count must match the tensor size.
+    ///     data: numpy array whose total byte count matches the tensor
+    ///           size. Any dtype (uint8, int8, uint16, int16, float32,
+    ///           etc.) is accepted; the underlying buffer is copied
+    ///           verbatim into the tensor, so the dtype must already
+    ///           match what the model expects.
     ///
     /// Raises:
     ///     IndexError: If index is out of range
@@ -152,85 +171,198 @@ impl Model {
         self.check_allocated()?;
         self.check_input_index(index)?;
 
-        let arr: numpy::PyReadonlyArrayDyn<'_, u8> = data.extract()?;
-        let src = arr.as_slice().map_err(tensor_err)?;
+        // Accept any numpy array by calling its ``tobytes()`` method. This
+        // materializes a fresh C-contiguous bytes object — NumPy always
+        // allocates a new buffer, even when the source is already
+        // contiguous — so this path costs one extra copy beyond the
+        // ``copy_from_slice`` into the tensor below. We accept that cost
+        // here for simplicity and dtype-uniformity: a zero-copy buffer
+        // protocol path would need to handle every possible element
+        // format (uint8, int8, uint16, int16, float32, …) and
+        // stride/alignment combination, whereas ``tobytes()`` collapses
+        // all of that into a single well-defined byte stream.
+        let bytes_obj = data.call_method0("tobytes")?;
+        let bytes: &[u8] = bytes_obj.downcast::<pyo3::types::PyBytes>()?.as_bytes();
 
-        let tensor = self.inner.input_tensor(index);
+        let m = self.inner_mut()?;
+        let tensor = m.input_tensor(index);
         let mut map = tensor.map().map_err(tensor_err)?;
         let dest = map.as_mut_slice();
 
-        if src.len() != dest.len() {
+        if bytes.len() != dest.len() {
             return Err(error::TensorError::new_err(format!(
-                "input data size {} does not match tensor size {}",
-                src.len(),
+                "input data size {} bytes does not match tensor size {} bytes",
+                bytes.len(),
                 dest.len()
             )));
         }
 
-        dest.copy_from_slice(src);
+        dest.copy_from_slice(bytes);
         Ok(())
     }
 
-    /// Get output tensor data as a numpy ``uint8`` array.
+    /// Get output tensor data as a typed numpy array.
+    ///
+    /// The dtype is derived from the tensor's quantization metadata:
+    ///
+    /// - ``bpp == 1`` and ``is_signed`` → ``int8``
+    /// - ``bpp == 1`` and not signed → ``uint8``
+    /// - ``bpp == 2`` and ``is_signed`` → ``int16``
+    /// - ``bpp == 2`` and not signed → ``uint16``
+    /// - ``bpp == 4`` → ``float32``
+    ///
+    /// The returned array is reshaped to the tensor's declared shape
+    /// ``(channels, height, width)``; callers that need the legacy flat
+    /// layout can call ``.ravel()``.
     ///
     /// Args:
     ///     index: Output tensor index (0-based)
     ///
     /// Returns:
-    ///     numpy.ndarray: Flat ``uint8`` array containing the raw output bytes
+    ///     numpy.ndarray: Shaped, typed view of the output tensor data
     ///
     /// Raises:
     ///     IndexError: If index is out of range
-    ///     TensorError: If tensors are not allocated
+    ///     TensorError: If tensors are not allocated or have an unsupported bpp
     fn get_output_tensor<'py>(&self, py: Python<'py>, index: usize) -> PyResult<PyObject> {
         self.check_allocated()?;
         self.check_output_index(index)?;
 
-        let tensor = self.inner.output_tensor(index);
+        let m = self.inner_ref()?;
+        let tensor = m.output_tensor(index);
         let map = tensor.map().map_err(tensor_err)?;
-        let data = map.as_slice().to_vec();
-        let arr = ArrayD::<u8>::from_shape_vec(IxDyn(&[data.len()]), data).map_err(tensor_err)?;
-        Ok(arr.into_pyarray(py).into_any().unbind())
+        let bytes = map.as_slice();
+
+        let quant = m.output_quants(index).map_err(to_py_err)?;
+        let bpp = m.output_bpp(index);
+        let [c, h, w] = m.output_shape(index);
+        let shape = IxDyn(&[c, h, w]);
+
+        let obj: PyObject = match (bpp, quant.is_signed) {
+            (1, false) => {
+                let data: Vec<u8> = bytes.to_vec();
+                ArrayD::<u8>::from_shape_vec(shape, data)
+                    .map_err(tensor_err)?
+                    .into_pyarray(py)
+                    .into_any()
+                    .unbind()
+            }
+            (1, true) => {
+                let data: Vec<i8> = bytes.iter().map(|&b| b as i8).collect();
+                ArrayD::<i8>::from_shape_vec(shape, data)
+                    .map_err(tensor_err)?
+                    .into_pyarray(py)
+                    .into_any()
+                    .unbind()
+            }
+            (2, false) => {
+                let data: Vec<u16> = bytes
+                    .chunks_exact(2)
+                    .map(|ch| u16::from_le_bytes([ch[0], ch[1]]))
+                    .collect();
+                ArrayD::<u16>::from_shape_vec(shape, data)
+                    .map_err(tensor_err)?
+                    .into_pyarray(py)
+                    .into_any()
+                    .unbind()
+            }
+            (2, true) => {
+                let data: Vec<i16> = bytes
+                    .chunks_exact(2)
+                    .map(|ch| i16::from_le_bytes([ch[0], ch[1]]))
+                    .collect();
+                ArrayD::<i16>::from_shape_vec(shape, data)
+                    .map_err(tensor_err)?
+                    .into_pyarray(py)
+                    .into_any()
+                    .unbind()
+            }
+            (4, _) => {
+                let data: Vec<f32> = bytes
+                    .chunks_exact(4)
+                    .map(|ch| f32::from_le_bytes([ch[0], ch[1], ch[2], ch[3]]))
+                    .collect();
+                ArrayD::<f32>::from_shape_vec(shape, data)
+                    .map_err(tensor_err)?
+                    .into_pyarray(py)
+                    .into_any()
+                    .unbind()
+            }
+            (other, _) => {
+                return Err(error::TensorError::new_err(format!(
+                    "unsupported output bpp={other} for index {index}"
+                )));
+            }
+        };
+
+        Ok(obj)
     }
 
     /// Dequantize an output tensor to ``float32``.
+    ///
+    /// Uses the model's quantization mode (read from input 0) and the
+    /// output tensor's ``(qn, offset)`` pair. Currently only qmode 9
+    /// (asymmetric) is supported; other modes raise ``Ara2Error``.
+    /// The returned array has the tensor's declared ``(C, H, W)`` shape.
     ///
     /// Args:
     ///     index: Output tensor index (0-based)
     ///
     /// Returns:
-    ///     numpy.ndarray: Flat ``float32`` array with dequantized values
+    ///     numpy.ndarray: ``float32`` array reshaped to ``(C, H, W)``
     ///
     /// Raises:
     ///     IndexError: If index is out of range
-    ///     TensorError: If tensors are not allocated or quantization is invalid
+    ///     TensorError: If tensors are not allocated
+    ///     Ara2Error: If the model uses an unsupported qmode
     fn dequantize<'py>(&self, py: Python<'py>, index: usize) -> PyResult<PyObject> {
         self.check_allocated()?;
         self.check_output_index(index)?;
 
-        let output = self.inner.output_tensor(index);
-        let quant = self.inner.output_quants(index).map_err(to_py_err)?;
+        let m = self.inner_ref()?;
+        let quant = m.output_quants(index).map_err(to_py_err)?;
+        let qmode = m.input_quants(0).qmode;
+        let (scale, offset) = quant.effective(qmode).map_err(to_py_err)?;
 
-        if quant.qn == 0.0 {
-            return Err(error::TensorError::new_err(
-                "output tensor quantization scale (qn) is zero; cannot dequantize",
-            ));
-        }
-
+        let output = m.output_tensor(index);
         let map = output.map().map_err(tensor_err)?;
-        let qn = 1.0 / quant.qn;
+        let bytes = map.as_slice();
 
-        let f32_data: Vec<f32> = if quant.is_signed {
-            map.as_slice()
+        let bpp = m.output_bpp(index);
+        let [c, h, w] = m.output_shape(index);
+        let shape = IxDyn(&[c, h, w]);
+
+        let data: Vec<f32> = match (bpp, quant.is_signed) {
+            (1, false) => bytes
                 .iter()
-                .map(|&x| x as i8 as f32 * qn)
-                .collect()
-        } else {
-            map.as_slice().iter().map(|&x| x as f32 * qn).collect()
+                .map(|&b| (b as i32 - offset) as f32 * scale)
+                .collect(),
+            (1, true) => bytes
+                .iter()
+                .map(|&b| (b as i8 as i32 - offset) as f32 * scale)
+                .collect(),
+            (2, false) => bytes
+                .chunks_exact(2)
+                .map(|ch| {
+                    let v = u16::from_le_bytes([ch[0], ch[1]]) as i32;
+                    (v - offset) as f32 * scale
+                })
+                .collect(),
+            (2, true) => bytes
+                .chunks_exact(2)
+                .map(|ch| {
+                    let v = i16::from_le_bytes([ch[0], ch[1]]) as i32;
+                    (v - offset) as f32 * scale
+                })
+                .collect(),
+            (other, _) => {
+                return Err(error::TensorError::new_err(format!(
+                    "unsupported output bpp={other} for dequantize on index {index}"
+                )));
+            }
         };
 
-        let arr = ArrayD::<f32>::from_shape_vec(IxDyn(&[f32_data.len()]), f32_data)
-            .map_err(tensor_err)?;
+        let arr = ArrayD::<f32>::from_shape_vec(shape, data).map_err(tensor_err)?;
         Ok(arr.into_pyarray(py).into_any().unbind())
     }
 
@@ -259,7 +391,8 @@ impl Model {
         self.check_allocated()?;
         self.check_input_index(index)?;
 
-        let tensor = self.inner.input_tensor(index);
+        let m = self.inner_mut()?;
+        let tensor = m.input_tensor(index);
         let fd = tensor.clone_fd().map_err(tensor_err)?;
         Ok(fd.into_raw_fd())
     }
@@ -283,7 +416,8 @@ impl Model {
         self.check_allocated()?;
         self.check_output_index(index)?;
 
-        let tensor = self.inner.output_tensor(index);
+        let m = self.inner_ref()?;
+        let tensor = m.output_tensor(index);
         let fd = tensor.clone_fd().map_err(tensor_err)?;
         Ok(fd.into_raw_fd())
     }
@@ -302,7 +436,8 @@ impl Model {
     fn input_tensor_memory(&mut self, index: usize) -> PyResult<&str> {
         self.check_allocated()?;
         self.check_input_index(index)?;
-        Ok(memory_type_str(self.inner.input_tensor(index).memory()))
+        let m = self.inner_mut()?;
+        Ok(memory_type_str(m.input_tensor(index).memory()))
     }
 
     /// Get the memory type of an output tensor.
@@ -319,7 +454,8 @@ impl Model {
     fn output_tensor_memory(&self, index: usize) -> PyResult<&str> {
         self.check_allocated()?;
         self.check_output_index(index)?;
-        Ok(memory_type_str(self.inner.output_tensor(index).memory()))
+        let m = self.inner_ref()?;
+        Ok(memory_type_str(m.output_tensor(index).memory()))
     }
 
     // ========================================================================
@@ -328,14 +464,14 @@ impl Model {
 
     /// Number of input tensors.
     #[getter]
-    fn n_inputs(&self) -> usize {
-        self.inner.n_inputs()
+    fn n_inputs(&self) -> PyResult<usize> {
+        Ok(self.inner_ref()?.n_inputs())
     }
 
     /// Number of output tensors.
     #[getter]
-    fn n_outputs(&self) -> usize {
-        self.inner.n_outputs()
+    fn n_outputs(&self) -> PyResult<usize> {
+        Ok(self.inner_ref()?.n_outputs())
     }
 
     /// Get the shape of an input tensor as (channels, height, width).
@@ -344,7 +480,7 @@ impl Model {
     ///     IndexError: If index is out of range
     fn input_shape(&self, index: usize) -> PyResult<(usize, usize, usize)> {
         self.check_input_index(index)?;
-        let s = self.inner.input_shape(index);
+        let s = self.inner_ref()?.input_shape(index);
         Ok((s[0], s[1], s[2]))
     }
 
@@ -354,7 +490,7 @@ impl Model {
     ///     IndexError: If index is out of range
     fn output_shape(&self, index: usize) -> PyResult<(usize, usize, usize)> {
         self.check_output_index(index)?;
-        let s = self.inner.output_shape(index);
+        let s = self.inner_ref()?.output_shape(index);
         Ok((s[0], s[1], s[2]))
     }
 
@@ -364,7 +500,7 @@ impl Model {
     ///     IndexError: If index is out of range
     fn input_size(&self, index: usize) -> PyResult<usize> {
         self.check_input_index(index)?;
-        Ok(self.inner.input_size(index))
+        Ok(self.inner_ref()?.input_size(index))
     }
 
     /// Get the size in bytes of an output tensor.
@@ -373,7 +509,7 @@ impl Model {
     ///     IndexError: If index is out of range
     fn output_size(&self, index: usize) -> PyResult<usize> {
         self.check_output_index(index)?;
-        Ok(self.inner.output_size(index))
+        Ok(self.inner_ref()?.output_size(index))
     }
 
     /// Get the bytes per element for an input tensor.
@@ -382,7 +518,7 @@ impl Model {
     ///     IndexError: If index is out of range
     fn input_bpp(&self, index: usize) -> PyResult<usize> {
         self.check_input_index(index)?;
-        Ok(self.inner.input_bpp(index))
+        Ok(self.inner_ref()?.input_bpp(index))
     }
 
     /// Get the bytes per element for an output tensor.
@@ -391,7 +527,7 @@ impl Model {
     ///     IndexError: If index is out of range
     fn output_bpp(&self, index: usize) -> PyResult<usize> {
         self.check_output_index(index)?;
-        Ok(self.inner.output_bpp(index))
+        Ok(self.inner_ref()?.output_bpp(index))
     }
 
     /// Get detailed information about an input tensor.
@@ -400,7 +536,7 @@ impl Model {
     ///     IndexError: If index is out of range
     fn input_info(&self, index: usize) -> PyResult<InputTensorInfo> {
         self.check_input_index(index)?;
-        Ok(InputTensorInfo::from(self.inner.input_info(index)))
+        Ok(InputTensorInfo::from(self.inner_ref()?.input_info(index)))
     }
 
     /// Get detailed information about an output tensor.
@@ -409,7 +545,7 @@ impl Model {
     ///     IndexError: If index is out of range
     fn output_info(&self, index: usize) -> PyResult<OutputTensorInfo> {
         self.check_output_index(index)?;
-        let info = self.inner.output_info(index).map_err(to_py_err)?;
+        let info = self.inner_ref()?.output_info(index).map_err(to_py_err)?;
         Ok(OutputTensorInfo::from(info))
     }
 
@@ -419,7 +555,24 @@ impl Model {
     ///     IndexError: If index is out of range
     fn input_quants(&self, index: usize) -> PyResult<InputQuantization> {
         self.check_input_index(index)?;
-        Ok(InputQuantization::from(self.inner.input_quants(index)))
+        Ok(InputQuantization::from(
+            self.inner_ref()?.input_quants(index),
+        ))
+    }
+
+    /// Get preprocessing parameters for an input tensor.
+    ///
+    /// Returns the per-channel ``mean`` and ``scale`` used to normalize
+    /// float input data before quantization, plus layout-affecting flags
+    /// (``bgr_to_rgb``, ``aspect_resize``, ``mirror``, ``center_crop``).
+    ///
+    /// Raises:
+    ///     IndexError: If index is out of range
+    fn input_preprocess(&self, index: usize) -> PyResult<InputPreprocess> {
+        self.check_input_index(index)?;
+        Ok(InputPreprocess::from(
+            self.inner_ref()?.input_preprocess(index),
+        ))
     }
 
     /// Get quantization parameters for an output tensor.
@@ -428,16 +581,28 @@ impl Model {
     ///     IndexError: If index is out of range
     fn output_quants(&self, index: usize) -> PyResult<OutputQuantization> {
         self.check_output_index(index)?;
-        let q = self.inner.output_quants(index).map_err(to_py_err)?;
+        let q = self.inner_ref()?.output_quants(index).map_err(to_py_err)?;
         Ok(OutputQuantization::from(q))
     }
 
+    /// Unload the model and release its resources.
+    ///
+    /// After calling ``close()``, any further method call raises
+    /// ``Ara2Error``. Safe to call multiple times.
+    fn close(&mut self) {
+        self.inner = None;
+        self.tensors_allocated = false;
+    }
+
     fn __repr__(&self) -> String {
-        format!(
-            "Model(n_inputs={}, n_outputs={})",
-            self.inner.n_inputs(),
-            self.inner.n_outputs()
-        )
+        match &self.inner {
+            Some(m) => format!(
+                "Model(n_inputs={}, n_outputs={})",
+                m.n_inputs(),
+                m.n_outputs()
+            ),
+            None => "Model(closed)".to_string(),
+        }
     }
 
     fn __enter__(slf: Py<Self>) -> Py<Self> {
@@ -446,11 +611,12 @@ impl Model {
 
     #[allow(unused_variables)]
     fn __exit__(
-        &self,
+        &mut self,
         exc_type: Option<&Bound<'_, pyo3::PyAny>>,
         exc_val: Option<&Bound<'_, pyo3::PyAny>>,
         exc_tb: Option<&Bound<'_, pyo3::PyAny>>,
     ) -> bool {
+        self.close();
         false
     }
 }

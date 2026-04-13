@@ -106,6 +106,12 @@ impl DvmMetadata {
         self.0.compilation.clone().map(CompilationInfo)
     }
 
+    /// ARA-2 / Kinara-specific metadata (quantization mode, etc.)
+    #[getter]
+    fn ara2(&self) -> Option<Ara2Info> {
+        self.0.ara2.clone().map(Ara2Info::from)
+    }
+
     /// Decoder version string (e.g., "yolov8").
     #[getter]
     fn decoder_version(&self) -> Option<&str> {
@@ -322,6 +328,35 @@ impl OutputSpec {
             "OutputSpec(name={:?}, type={:?}, shape={:?})",
             self.0.name, self.0.output_type, self.0.shape
         )
+    }
+}
+
+/// Kinara ARA-2 specific metadata section.
+#[pyclass(module = "edgefirst_ara2")]
+#[derive(Clone, Debug)]
+pub struct Ara2Info {
+    inner: ara2::Ara2Info,
+}
+
+impl From<ara2::Ara2Info> for Ara2Info {
+    fn from(inner: ara2::Ara2Info) -> Self {
+        Ara2Info { inner }
+    }
+}
+
+#[pymethods]
+impl Ara2Info {
+    /// Kinara quantization mode (9 = asymmetric, the production default).
+    #[getter]
+    fn qmode(&self) -> Option<i32> {
+        self.inner.qmode
+    }
+
+    fn __repr__(&self) -> String {
+        match self.inner.qmode {
+            Some(q) => format!("Ara2Info(qmode={q})"),
+            None => "Ara2Info(qmode=None)".to_string(),
+        }
     }
 }
 

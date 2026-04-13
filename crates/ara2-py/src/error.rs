@@ -48,6 +48,7 @@ pub fn to_py_err(err: ara2::Error) -> PyErr {
         | ara2::Error::Image(_)
         | ara2::Error::ShapeError(_) => TensorError::new_err(msg),
         ara2::Error::Zip(_) | ara2::Error::Json(_) => MetadataError::new_err(msg),
+        ara2::Error::UnsupportedQmode(_) => Ara2Error::new_err(msg),
         #[allow(unreachable_patterns)]
         _ => Ara2Error::new_err(msg),
     }
