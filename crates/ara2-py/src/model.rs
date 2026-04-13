@@ -171,12 +171,16 @@ impl Model {
         self.check_allocated()?;
         self.check_input_index(index)?;
 
-        // Accept any numpy array by calling its `tobytes()` method. This
-        // returns a C-contiguous bytes object regardless of the source
-        // dtype, so the raw buffer layout matches what the NPU tensor
-        // memory expects. For already-contiguous arrays NumPy returns the
-        // underlying buffer; for non-contiguous ones it makes a contiguous
-        // copy — both cases are safe and produce the same semantic result.
+        // Accept any numpy array by calling its ``tobytes()`` method. This
+        // materializes a fresh C-contiguous bytes object — NumPy always
+        // allocates a new buffer, even when the source is already
+        // contiguous — so this path costs one extra copy beyond the
+        // ``copy_from_slice`` into the tensor below. We accept that cost
+        // here for simplicity and dtype-uniformity: a zero-copy buffer
+        // protocol path would need to handle every possible element
+        // format (uint8, int8, uint16, int16, float32, …) and
+        // stride/alignment combination, whereas ``tobytes()`` collapses
+        // all of that into a single well-defined byte stream.
         let bytes_obj = data.call_method0("tobytes")?;
         let bytes: &[u8] = bytes_obj.downcast::<pyo3::types::PyBytes>()?.as_bytes();
 

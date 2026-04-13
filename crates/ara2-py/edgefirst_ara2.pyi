@@ -297,11 +297,15 @@ class Session:
         ...
 
     def close(self) -> None:
-        """Close the session and release the underlying connection.
+        """Close this Python session handle.
 
-        After calling ``close()`` any further method call on this
-        Session raises ``Ara2Error``. Safe to call multiple times
-        (idempotent).
+        After calling ``close()``, any further method call on this
+        Session raises ``Ara2Error``. This only drops this Python
+        handle; the underlying proxy connection may remain open while
+        other objects created from this session (such as ``Endpoint``
+        or ``Model``) are still alive. The underlying connection is
+        released when the last handle referencing it is dropped. Safe
+        to call multiple times (idempotent).
         """
         ...
 

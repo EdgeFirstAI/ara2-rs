@@ -470,6 +470,30 @@ impl Model {
         let src = output_map.as_slice();
         let dst = tensor_map.as_mut_slice();
 
+        // Reject unsupported element sizes early so the length check below
+        // has a well-defined expected byte count. Only 1- and 2-byte
+        // elements are implemented.
+        if !matches!(bpp, 1 | 2) {
+            return Err(Error::UnsupportedTypeSize(bpp));
+        }
+
+        // Up-front length check: every branch below assumes
+        // src.len() == dst.len() * bpp. Without this check a mismatch
+        // would panic inside the parallel loop on out-of-bounds indexing.
+        let expected = dst
+            .len()
+            .checked_mul(bpp)
+            .ok_or(Error::TensorSizeMismatch {
+                expected: usize::MAX,
+                got: src.len(),
+            })?;
+        if src.len() != expected {
+            return Err(Error::TensorSizeMismatch {
+                expected,
+                got: src.len(),
+            });
+        }
+
         match (bpp, quant.is_signed) {
             (1, false) => {
                 dst.par_iter_mut().enumerate().for_each(|(i, out)| {
@@ -491,9 +515,8 @@ impl Model {
                     *out = dequant_i16_le(src[2 * i], src[2 * i + 1], offset, scale);
                 });
             }
-            (other, _) => {
-                return Err(Error::UnsupportedTypeSize(other));
-            }
+            // bpp already validated above.
+            _ => unreachable!(),
         }
 
         Ok(())
@@ -941,5 +964,17 @@ mod quant_tests {
         assert!((dequant_i16_le(0x00, 0x80, 0, 1.0) - (-32768.0)).abs() < 1e-3);
         // 0x7F7F LE = 32639
         assert!((dequant_i16_le(0x7F, 0x7F, 0, 1.0) - 32639.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn tensor_size_mismatch_error_displays_byte_counts() {
+        let err = Error::TensorSizeMismatch {
+            expected: 1024,
+            got: 512,
+        };
+        let msg = format!("{err}");
+        assert!(msg.contains("1024"));
+        assert!(msg.contains("512"));
+        assert!(msg.contains("mismatch"));
     }
 }

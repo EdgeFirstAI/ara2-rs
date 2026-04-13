@@ -21,6 +21,10 @@ pub enum Error {
     Zip(zip::result::ZipError),
     Json(serde_json::Error),
     UnsupportedQmode(i32),
+    TensorSizeMismatch {
+        expected: usize,
+        got: usize,
+    },
 }
 
 impl From<std::io::Error> for Error {
@@ -104,6 +108,10 @@ impl std::fmt::Display for Error {
             Error::UnsupportedQmode(q) => write!(
                 f,
                 "unsupported quantization mode: qmode={q} (only qmode 9 is supported)"
+            ),
+            Error::TensorSizeMismatch { expected, got } => write!(
+                f,
+                "tensor size mismatch: expected {expected} bytes, got {got} bytes"
             ),
         }
     }
