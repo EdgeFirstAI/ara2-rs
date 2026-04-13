@@ -17,8 +17,17 @@ use std::{collections::HashMap, net::Ipv4Addr, path::PathBuf, str::FromStr};
 ///     >>> session = edgefirst_ara2.Session.create_via_unix_socket("/var/run/ara2.sock")
 ///     >>> versions = session.versions()
 ///     >>> endpoints = session.list_endpoints()
+///     >>> session.close()
 #[pyclass(module = "edgefirst_ara2")]
-pub struct Session(pub(crate) ara2::Session);
+pub struct Session(pub(crate) Option<ara2::Session>);
+
+impl Session {
+    fn inner(&self) -> PyResult<&ara2::Session> {
+        self.0
+            .as_ref()
+            .ok_or_else(|| crate::error::Ara2Error::new_err("session is closed"))
+    }
+}
 
 #[pymethods]
 impl Session {
@@ -36,9 +45,9 @@ impl Session {
     #[staticmethod]
     fn create_via_unix_socket(socket_path: PathBuf) -> PyResult<Self> {
         let path_str = socket_path.to_string_lossy();
-        Ok(Session(
+        Ok(Session(Some(
             ara2::Session::create_via_unix_socket(&path_str).map_err(to_py_err)?,
-        ))
+        )))
     }
 
     /// Create a session connected via TCP/IPv4 socket.
@@ -53,9 +62,9 @@ impl Session {
     fn create_via_tcp_ipv4_socket(ip: &str, port: u16) -> PyResult<Self> {
         let ip_addr = Ipv4Addr::from_str(ip)
             .map_err(|e| crate::error::Ara2Error::new_err(format!("Invalid IP address: {e}")))?;
-        Ok(Session(
+        Ok(Session(Some(
             ara2::Session::create_via_tcp_ipv4_socket(ip_addr, port).map_err(to_py_err)?,
-        ))
+        )))
     }
 
     /// Get version information for all components.
@@ -63,7 +72,7 @@ impl Session {
     /// Returns:
     ///     dict: Dictionary mapping component names to version strings
     fn versions(&self) -> PyResult<HashMap<String, String>> {
-        self.0.versions().map_err(to_py_err)
+        self.inner()?.versions().map_err(to_py_err)
     }
 
     /// List all available endpoints.
@@ -71,21 +80,32 @@ impl Session {
     /// Returns:
     ///     list[Endpoint]: List of available ARA-2 endpoints
     fn list_endpoints(&self) -> PyResult<Vec<Endpoint>> {
-        let endpoints = self.0.list_endpoints().map_err(to_py_err)?;
+        let endpoints = self.inner()?.list_endpoints().map_err(to_py_err)?;
         Ok(endpoints.into_iter().map(Endpoint).collect())
     }
 
     /// Get the socket type used for this session.
     #[getter]
-    fn socket_type(&self) -> &str {
-        match self.0.socket_type() {
+    fn socket_type(&self) -> PyResult<&str> {
+        Ok(match self.inner()?.socket_type() {
             ara2::SocketType::Unix => "unix",
             ara2::SocketType::Tcp => "tcp",
-        }
+        })
+    }
+
+    /// Close the session and release the underlying connection.
+    ///
+    /// After calling ``close()`` any further method call on this
+    /// Session raises ``Ara2Error``. Safe to call multiple times.
+    fn close(&mut self) {
+        self.0 = None;
     }
 
     fn __repr__(&self) -> String {
-        format!("Session(socket_type={:?})", self.0.socket_type())
+        match &self.0 {
+            Some(inner) => format!("Session(socket_type={:?})", inner.socket_type()),
+            None => "Session(closed)".to_string(),
+        }
     }
 
     fn __str__(&self) -> String {
@@ -98,11 +118,12 @@ impl Session {
 
     #[allow(unused_variables)]
     fn __exit__(
-        &self,
+        &mut self,
         exc_type: Option<&Bound<'_, pyo3::PyAny>>,
         exc_val: Option<&Bound<'_, pyo3::PyAny>>,
         exc_tb: Option<&Bound<'_, pyo3::PyAny>>,
     ) -> bool {
+        self.close();
         false
     }
 }

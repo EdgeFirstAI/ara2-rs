@@ -19,6 +19,17 @@ pub const METADATA_FILENAME: &str = "edgefirst.json";
 /// Filename for the class labels.
 pub const LABELS_FILENAME: &str = "labels.txt";
 
+/// Kinara ARA-2 specific metadata section of `edgefirst.json`.
+///
+/// Written by the edgefirst-studio-ara2 converter service. Fields are
+/// optional so older DVMs without this section continue to deserialize.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Ara2Info {
+    /// Kinara quantization mode (9 = asymmetric, the production default).
+    #[serde(default)]
+    pub qmode: Option<i32>,
+}
+
 /// EdgeFirst metadata embedded in a DVM file.
 ///
 /// This struct captures the commonly-used fields. The full metadata
@@ -57,6 +68,10 @@ pub struct DvmMetadata {
     /// Output specifications
     #[serde(default)]
     pub outputs: Vec<OutputSpec>,
+
+    /// ARA-2 / Kinara-specific metadata (quantization mode, etc.)
+    #[serde(default)]
+    pub ara2: Option<Ara2Info>,
 }
 
 impl DvmMetadata {
@@ -480,5 +495,38 @@ mod tests {
             cameraadaptor: None,
         };
         assert_eq!(bad_size.dimensions(), None);
+    }
+
+    #[test]
+    fn ara2_qmode_parses_when_present() {
+        let json = r#"{
+            "ara2": {"qmode": 9},
+            "model": {"model_task": "detect"}
+        }"#;
+        let md: DvmMetadata = serde_json::from_str(json).unwrap();
+        assert_eq!(md.ara2.as_ref().and_then(|a| a.qmode), Some(9));
+    }
+
+    #[test]
+    fn ara2_qmode_absent_is_none() {
+        let json = r#"{"model": {"model_task": "detect"}}"#;
+        let md: DvmMetadata = serde_json::from_str(json).unwrap();
+        assert!(md.ara2.is_none());
+    }
+
+    #[test]
+    fn ara2_section_without_qmode_parses() {
+        let json = r#"{"ara2": {}}"#;
+        let md: DvmMetadata = serde_json::from_str(json).unwrap();
+        assert!(md.ara2.is_some());
+        assert!(md.ara2.unwrap().qmode.is_none());
+    }
+
+    #[test]
+    fn ara2_qmode_rejects_string_value() {
+        // serde should reject a string where an integer is expected.
+        let json = r#"{"ara2": {"qmode": "nine"}}"#;
+        let result: Result<DvmMetadata, _> = serde_json::from_str(json);
+        assert!(result.is_err());
     }
 }

@@ -11,7 +11,7 @@ The actual implementation is in Rust via PyO3.
 from __future__ import annotations
 
 import os
-from typing import Literal
+from typing import Any, Literal
 
 import numpy as np
 import numpy.typing as npt
@@ -132,32 +132,55 @@ class ModelTiming:
 class InputQuantization:
     """Input tensor quantization parameters.
 
-    ARA-2 input tensors are quantized to uint8 (or int8 for signed).
-    The float-to-int conversion is: ``int_val = float_val * qn``.
+    For qmode 9 models (the production default), ``qn`` is the per-tensor
+    scale and ``offset`` is the integer zero-point. Per-channel image
+    preprocessing (mean/scale, BGR swap, etc.) lives on
+    :class:`InputPreprocess` instead.
     """
 
     qn: float
-    """Quantization multiplier. ``int_val = float_val * qn``."""
-    scale: float
-    """Preprocessing scale factor."""
-    mean: float
-    """Per-tensor mean subtracted during preprocessing."""
+    """Per-tensor quantization scale."""
+    offset: int
+    """Integer zero-point offset."""
     is_signed: bool
     """True if the tensor uses signed int8, False for uint8."""
+    qmode: int
+    """Kinara quantization mode (9 = asymmetric, production default)."""
+
+class InputPreprocess:
+    """Image preprocessing parameters for an input tensor.
+
+    Describes how float image data is expected to be normalized before
+    quantization: ``(pixel - mean[c]) * scale[c]``. The per-channel
+    ``mean`` and ``scale`` arrays are indexed by channel (C order after
+    any BGR->RGB swap).
+    """
+
+    mean: tuple[float, float, float]
+    """Per-channel mean subtracted during preprocessing."""
+    scale: tuple[float, float, float]
+    """Per-channel scale applied after mean subtraction."""
+    bgr_to_rgb: bool
+    """True if BGR inputs must be swapped to RGB before normalization."""
+    aspect_resize: bool
+    """True if the source image should be letterboxed to preserve aspect ratio."""
+    mirror: bool
+    """True if the input should be horizontally mirrored."""
+    center_crop: bool
+    """True if the input should be center-cropped to the model's input size."""
 
 class OutputQuantization:
-    """Output tensor quantization parameters.
+    """Output tensor quantization parameters (qmode 9 semantics).
 
     Use ``Model.dequantize()`` for automatic conversion, or apply
-    manually: ``float_val = int_val / qn`` (signed: treat byte as int8 first).
+    manually: ``float_val = (raw - offset) * qn`` where ``raw`` is the
+    signed or unsigned integer sample (per ``is_signed``).
     """
 
     qn: float
-    """Quantization divisor. ``float_val = int_val / qn``."""
-    scale: float
-    """Output scale factor."""
+    """Per-tensor quantization scale. ``float_val = (raw - offset) * qn``."""
     offset: int
-    """Zero-point offset."""
+    """Integer zero-point offset."""
     is_signed: bool
     """True if the tensor uses signed int8, False for uint8."""
 
@@ -181,6 +204,8 @@ class InputTensorInfo:
     """Bytes per element."""
     batch_size: int
     quant: InputQuantization
+    preprocess: InputPreprocess
+    """Image preprocessing parameters (per-channel mean/scale, BGR swap, etc.)."""
 
 class OutputTensorInfo:
     """Detailed information about an output tensor."""
@@ -225,6 +250,7 @@ class Session:
         session = Session.create_via_unix_socket("/var/run/ara2.sock")
         versions = session.versions()
         endpoints = session.list_endpoints()
+        session.close()
     """
 
     @staticmethod
@@ -268,6 +294,15 @@ class Session:
     @property
     def socket_type(self) -> Literal["unix", "tcp"]:
         """Socket type used for this connection."""
+        ...
+
+    def close(self) -> None:
+        """Close the session and release the underlying connection.
+
+        After calling ``close()`` any further method call on this
+        Session raises ``Ara2Error``. Safe to call multiple times
+        (idempotent).
+        """
         ...
 
     def __enter__(self) -> Session: ...
@@ -358,15 +393,35 @@ class Model:
         """
         ...
 
+    def close(self) -> None:
+        """Unload the model and release its resources.
+
+        After calling ``close()``, any further method call raises
+        ``Ara2Error``. Safe to call multiple times (idempotent).
+        """
+        ...
+
     # -- Tensor I/O (numpy) --
 
-    def set_input_tensor(self, index: int, data: npt.NDArray[np.uint8]) -> None:
+    def set_input_tensor(self, index: int, data: npt.NDArray[Any]) -> None:
         """Copy numpy array data into an input tensor.
+
+        The input is dtype-agnostic: any numpy dtype (``uint8``, ``int8``,
+        ``uint16``, ``int16``, ``float32``, etc.) is accepted. Internally
+        the array is flattened to bytes via ``tobytes()`` and copied
+        verbatim into the tensor memory, so the buffer layout must already
+        match what the model expects — this method performs no dtype
+        conversion or reshape.
+
+        The total byte count (``data.nbytes``) must equal
+        ``input_size(index)``; non-contiguous arrays are made contiguous
+        by ``tobytes()`` before the copy.
 
         Args:
             index: Input tensor index (0-based)
-            data: numpy uint8 array. Total byte count must match
-                  ``input_size(index)``.
+            data: numpy array whose raw byte buffer matches the tensor
+                  size. Dtype is not checked beyond its contribution to
+                  ``nbytes``.
 
         Raises:
             IndexError: If index is out of range.
@@ -374,29 +429,57 @@ class Model:
         """
         ...
 
-    def get_output_tensor(self, index: int) -> npt.NDArray[np.uint8]:
-        """Get output tensor data as a flat numpy uint8 array.
+    def get_output_tensor(self, index: int) -> npt.NDArray[Any]:
+        """Get output tensor data as a typed, shaped numpy array.
+
+        The numpy dtype is derived from the tensor's quantization
+        metadata ``(bpp, is_signed)``:
+
+        - ``bpp == 1`` and not signed → ``uint8``
+        - ``bpp == 1`` and ``is_signed`` → ``int8``
+        - ``bpp == 2`` and not signed → ``uint16``
+        - ``bpp == 2`` and ``is_signed`` → ``int16``
+        - ``bpp == 4`` → ``float32``
+
+        The returned array is reshaped to the tensor's declared shape
+        ``(channels, height, width)``; callers that need the legacy flat
+        layout can call ``.ravel()``.
 
         Args:
             index: Output tensor index (0-based)
 
+        Returns:
+            numpy.ndarray: Shaped, typed view of the output tensor data.
+
         Raises:
             IndexError: If index is out of range.
-            TensorError: If tensors are not allocated.
+            TensorError: If tensors are not allocated or the tensor has
+                an unsupported bpp.
         """
         ...
 
     def dequantize(self, index: int) -> npt.NDArray[np.float32]:
-        """Dequantize an output tensor to float32.
+        """Dequantize an output tensor to ``float32``.
 
-        Applies ``float_val = int_val / qn`` (signed: treats byte as int8).
+        Applies ``float_val = (raw - offset) * qn`` using the output
+        tensor's ``(qn, offset)`` pair, where ``raw`` is the signed or
+        unsigned integer sample. Currently only qmode 9 (asymmetric) is
+        supported; the model's qmode is read from input 0 and other modes
+        raise ``Ara2Error``.
+
+        The returned array has the tensor's declared ``(C, H, W)`` shape.
 
         Args:
             index: Output tensor index (0-based)
 
+        Returns:
+            numpy.ndarray: ``float32`` array reshaped to ``(C, H, W)``.
+
         Raises:
             IndexError: If index is out of range.
-            TensorError: If tensors are not allocated or qn is zero.
+            TensorError: If tensors are not allocated or the tensor has
+                an unsupported bpp.
+            Ara2Error: If the model uses an unsupported qmode.
         """
         ...
 
@@ -489,6 +572,18 @@ class Model:
         """Get quantization parameters for an input tensor."""
         ...
 
+    def input_preprocess(self, index: int) -> InputPreprocess:
+        """Get image preprocessing parameters for an input tensor.
+
+        Returns the per-channel ``mean`` and ``scale`` used to normalize
+        float input data before quantization, plus layout-affecting flags
+        (``bgr_to_rgb``, ``aspect_resize``, ``mirror``, ``center_crop``).
+
+        Raises:
+            IndexError: If index is out of range.
+        """
+        ...
+
     def output_quants(self, index: int) -> OutputQuantization:
         """Get quantization parameters for an output tensor."""
         ...
@@ -540,6 +635,10 @@ class DvmMetadata:
     def deployment(self) -> DeploymentInfo | None: ...
     @property
     def compilation(self) -> CompilationInfo | None: ...
+    @property
+    def ara2(self) -> Ara2Info | None:
+        """Kinara ARA-2 specific metadata section (quantization mode, etc.)."""
+        ...
     @property
     def decoder_version(self) -> str | None:
         """Decoder version string (e.g., "yolov8")."""
@@ -676,6 +775,23 @@ class PpaMetrics:
         """DDR bandwidth in MB/s."""
         ...
 
+class Ara2Info:
+    """Kinara-specific metadata from the ``ara2`` section of ``edgefirst.json``.
+
+    Exposes ARA-2 / Kinara-specific fields carried in the DVM's
+    EdgeFirst metadata. Currently only the quantization mode is
+    surfaced, but more fields may be added in future releases.
+    """
+
+    @property
+    def qmode(self) -> int | None:
+        """Kinara quantization mode (9 = asymmetric, the production default).
+
+        Returns ``None`` if the DVM's metadata does not carry a
+        ``qmode`` field in its ``ara2`` section.
+        """
+        ...
+
 __all__ = [
     # Constants
     "DEFAULT_SOCKET",
@@ -694,6 +810,7 @@ __all__ = [
     "DramStatistics",
     "ModelTiming",
     "InputQuantization",
+    "InputPreprocess",
     "OutputQuantization",
     "InputTensorInfo",
     "OutputTensorInfo",
@@ -706,6 +823,7 @@ __all__ = [
     "read_labels",
     "has_metadata",
     "DvmMetadata",
+    "Ara2Info",
     "DatasetInfo",
     "ModelInfo",
     "DeploymentInfo",

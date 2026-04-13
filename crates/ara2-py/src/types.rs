@@ -110,22 +110,26 @@ impl ModelTiming {
 }
 
 /// Input tensor quantization parameters.
+///
+/// For qmode 9 models (the production default), ``qn`` is the per-tensor
+/// scale and ``offset`` is the integer zero-point. Per-channel image
+/// preprocessing lives on :class:`InputPreprocess` instead.
 #[pyclass(module = "edgefirst_ara2", get_all)]
 #[derive(Clone, Debug)]
 pub struct InputQuantization {
     pub qn: f32,
-    pub scale: f32,
-    pub mean: f32,
+    pub offset: i32,
     pub is_signed: bool,
+    pub qmode: i32,
 }
 
 impl From<ara2::InputQuantization> for InputQuantization {
     fn from(q: ara2::InputQuantization) -> Self {
         InputQuantization {
             qn: q.qn,
-            scale: q.scale,
-            mean: q.mean,
+            offset: q.offset,
             is_signed: q.is_signed,
+            qmode: q.qmode,
         }
     }
 }
@@ -134,18 +138,61 @@ impl From<ara2::InputQuantization> for InputQuantization {
 impl InputQuantization {
     fn __repr__(&self) -> String {
         format!(
-            "InputQuantization(qn={}, scale={}, mean={}, is_signed={})",
-            self.qn, self.scale, self.mean, self.is_signed
+            "InputQuantization(qn={}, offset={}, is_signed={}, qmode={})",
+            self.qn, self.offset, self.is_signed, self.qmode
         )
     }
 }
 
-/// Output tensor quantization parameters.
+/// Image preprocessing parameters for an input tensor.
+///
+/// Describes how float image data is expected to be normalized before
+/// quantization: ``(pixel - mean[c]) * scale[c]``.
+#[pyclass(module = "edgefirst_ara2", get_all)]
+#[derive(Clone, Debug)]
+pub struct InputPreprocess {
+    pub mean: (f32, f32, f32),
+    pub scale: (f32, f32, f32),
+    pub bgr_to_rgb: bool,
+    pub aspect_resize: bool,
+    pub mirror: bool,
+    pub center_crop: bool,
+}
+
+impl From<ara2::InputPreprocess> for InputPreprocess {
+    fn from(p: ara2::InputPreprocess) -> Self {
+        InputPreprocess {
+            mean: (p.mean[0], p.mean[1], p.mean[2]),
+            scale: (p.scale[0], p.scale[1], p.scale[2]),
+            bgr_to_rgb: p.bgr_to_rgb,
+            aspect_resize: p.aspect_resize,
+            mirror: p.mirror,
+            center_crop: p.center_crop,
+        }
+    }
+}
+
+#[pymethods]
+impl InputPreprocess {
+    fn __repr__(&self) -> String {
+        format!(
+            "InputPreprocess(mean={:?}, scale={:?}, bgr_to_rgb={}, \
+             aspect_resize={}, mirror={}, center_crop={})",
+            self.mean,
+            self.scale,
+            self.bgr_to_rgb,
+            self.aspect_resize,
+            self.mirror,
+            self.center_crop
+        )
+    }
+}
+
+/// Output tensor quantization parameters (qmode 9 semantics).
 #[pyclass(module = "edgefirst_ara2", get_all)]
 #[derive(Clone, Debug)]
 pub struct OutputQuantization {
     pub qn: f32,
-    pub scale: f32,
     pub offset: i32,
     pub is_signed: bool,
 }
@@ -154,7 +201,6 @@ impl From<ara2::OutputQuantization> for OutputQuantization {
     fn from(q: ara2::OutputQuantization) -> Self {
         OutputQuantization {
             qn: q.qn,
-            scale: q.scale,
             offset: q.offset,
             is_signed: q.is_signed,
         }
@@ -165,8 +211,8 @@ impl From<ara2::OutputQuantization> for OutputQuantization {
 impl OutputQuantization {
     fn __repr__(&self) -> String {
         format!(
-            "OutputQuantization(qn={}, scale={}, offset={}, is_signed={})",
-            self.qn, self.scale, self.offset, self.is_signed
+            "OutputQuantization(qn={}, offset={}, is_signed={})",
+            self.qn, self.offset, self.is_signed
         )
     }
 }
@@ -220,6 +266,7 @@ pub struct InputTensorInfo {
     pub bpp: usize,
     pub batch_size: usize,
     pub quant: InputQuantization,
+    pub preprocess: InputPreprocess,
 }
 
 impl From<ara2::InputTensor> for InputTensorInfo {
@@ -238,6 +285,7 @@ impl From<ara2::InputTensor> for InputTensorInfo {
             bpp: t.bpp,
             batch_size: t.batch_size,
             quant: t.quant.into(),
+            preprocess: t.preprocess.into(),
         }
     }
 }

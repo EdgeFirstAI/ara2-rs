@@ -42,6 +42,7 @@ fn init(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<types::DramStatistics>()?;
     m.add_class::<types::ModelTiming>()?;
     m.add_class::<types::InputQuantization>()?;
+    m.add_class::<types::InputPreprocess>()?;
     m.add_class::<types::OutputQuantization>()?;
     m.add_class::<types::ModelOutputType>()?;
     m.add_class::<types::InputTensorInfo>()?;
@@ -56,6 +57,7 @@ fn init(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<metadata::OutputSpec>()?;
     m.add_class::<metadata::CompilationInfo>()?;
     m.add_class::<metadata::PpaMetrics>()?;
+    m.add_class::<metadata::Ara2Info>()?;
 
     // Metadata functions
     m.add_function(wrap_pyfunction!(metadata::read_metadata, m)?)?;

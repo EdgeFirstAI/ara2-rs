@@ -7,15 +7,15 @@ mod model;
 mod session;
 
 pub use dvm_metadata::{
-    CompilationInfo, DatasetInfo, DeploymentInfo, DvmMetadata, InputSpec, ModelInfo, OutputSpec,
-    PpaMetrics, has_metadata, read_labels, read_labels_from_file, read_metadata,
+    Ara2Info, CompilationInfo, DatasetInfo, DeploymentInfo, DvmMetadata, InputSpec, ModelInfo,
+    OutputSpec, PpaMetrics, has_metadata, read_labels, read_labels_from_file, read_metadata,
     read_metadata_from_file,
 };
 pub use endpoint::{DramStatistics, Endpoint, State};
 pub use error::Error;
 pub use model::{
-    DEFAULT_TIMEOUT_MS, InputQuantization, InputTensor, Model, ModelOutputType, ModelTiming,
-    OutputQuantization, OutputTensor,
+    DEFAULT_TIMEOUT_MS, InputPreprocess, InputQuantization, InputTensor, Model, ModelOutputType,
+    ModelTiming, OutputQuantization, OutputTensor,
 };
 pub use session::{Session, SocketType};
 

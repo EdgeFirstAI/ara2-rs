@@ -5,8 +5,7 @@ use ara2_sys::{
 use edgefirst_hal::tensor::{Tensor, TensorMapTrait as _, TensorMemory, TensorTrait};
 use log::debug;
 use ndarray::parallel::prelude::{
-    IndexedParallelIterator as _, IntoParallelRefIterator as _, IntoParallelRefMutIterator as _,
-    ParallelIterator as _,
+    IndexedParallelIterator as _, IntoParallelRefMutIterator as _, ParallelIterator as _,
 };
 use std::{ops::Add, os::fd::AsRawFd, sync::Arc, time::Duration};
 
@@ -326,18 +325,39 @@ impl Model {
         self.input_info(idx).quant
     }
 
+    /// Get the preprocessing parameters for an input tensor.
+    pub fn input_preprocess(&self, idx: usize) -> InputPreprocess {
+        self.input_info(idx).preprocess
+    }
+
     /// Get detailed information about an input tensor.
     pub fn input_info(&self, idx: usize) -> InputTensor {
         let input = unsafe { (*self.ptr).input_param.add(idx) };
 
         let params = unsafe { (*input).preprocess_param };
+
+        // Safe per-channel mean/scale arrays: the C FFI exposes these as
+        // pointers that may be null when nch > 3. Compute once under a
+        // single null guard and reuse for both the debug log and the
+        // struct construction so the log cannot UB on a null pointer.
+        let (mean_arr, scale_arr) = unsafe {
+            if (*input).nch as usize <= 3 && !(*params).mean.is_null() && !(*params).scale.is_null()
+            {
+                let m = std::slice::from_raw_parts((*params).mean, 3);
+                let s = std::slice::from_raw_parts((*params).scale, 3);
+                ([m[0], m[1], m[2]], [s[0], s[1], s[2]])
+            } else {
+                ([0.0; 3], [1.0; 3])
+            }
+        };
+
         unsafe {
             debug!(
                 "input_{} qn: {:?} scale: {:?} mean: {:?} is_signed: {:?}",
                 idx,
                 (*params).qn,
-                std::slice::from_raw_parts((*params).scale, 3),
-                std::slice::from_raw_parts((*params).mean, 3),
+                scale_arr,
+                mean_arr,
                 (*params).is_signed
             )
         };
@@ -366,9 +386,17 @@ impl Model {
                 batch_size: (*input).batch_size as usize,
                 quant: InputQuantization {
                     qn: (*params).qn,
-                    scale: *(*params).scale,
-                    mean: *(*params).mean,
+                    offset: (*params).offset,
                     is_signed: (*params).is_signed,
+                    qmode: (*params).qmode,
+                },
+                preprocess: InputPreprocess {
+                    mean: mean_arr,
+                    scale: scale_arr,
+                    bgr_to_rgb: (*params).bgr_to_rgb,
+                    aspect_resize: (*params).aspect_resize,
+                    mirror: (*params).mirror,
+                    center_crop: (*params).center_crop,
                 },
             }
         }
@@ -419,32 +447,52 @@ impl Model {
     /// Dequantize an output tensor to f32.
     ///
     /// Reads the quantized output at `idx` and writes dequantized f32 values
-    /// into `tensor`. The tensor must be pre-allocated with the correct size.
+    /// into `tensor`. The tensor must be pre-allocated with `C * H * W`
+    /// f32 elements.
+    ///
+    /// Supported tensor element sizes: 1 byte (uint8/int8) and 2 bytes
+    /// (uint16/int16). Other bpp values return
+    /// [`Error::UnsupportedTypeSize`].
+    ///
+    /// The dequantization formula is `(raw - offset) * scale`, where the
+    /// effective scale and offset are derived from the model's `qmode` via
+    /// [`OutputQuantization::effective`]. Currently only qmode 9 is
+    /// supported; other modes return [`Error::UnsupportedQmode`].
     pub fn dequantize(&self, idx: usize, tensor: &Tensor<f32>) -> Result<(), Error> {
         let output = self.output_tensor(idx);
         let quant = self.output_quants(idx)?;
-        let qn = 1.0 / quant.qn;
+        let qmode = self.input_quants(0).qmode;
+        let (scale, offset) = quant.effective(qmode)?;
+        let bpp = self.output_bpp(idx);
+
         let mut tensor_map = tensor.map()?;
         let output_map = output.map()?;
+        let src = output_map.as_slice();
+        let dst = tensor_map.as_mut_slice();
 
-        match quant.is_signed {
-            true => {
-                output_map
-                    .as_slice()
-                    .par_iter()
-                    .zip(tensor_map.as_mut_slice().par_iter_mut())
-                    .for_each(|(&x, out)| {
-                        *out = x as i8 as f32 * qn;
-                    });
+        match (bpp, quant.is_signed) {
+            (1, false) => {
+                dst.par_iter_mut().enumerate().for_each(|(i, out)| {
+                    *out = dequant_u8(src[i], offset, scale);
+                });
             }
-            false => {
-                output_map
-                    .as_slice()
-                    .par_iter()
-                    .zip(tensor_map.as_mut_slice().par_iter_mut())
-                    .for_each(|(&x, out)| {
-                        *out = x as f32 * qn;
-                    });
+            (1, true) => {
+                dst.par_iter_mut().enumerate().for_each(|(i, out)| {
+                    *out = dequant_i8(src[i], offset, scale);
+                });
+            }
+            (2, false) => {
+                dst.par_iter_mut().enumerate().for_each(|(i, out)| {
+                    *out = dequant_u16_le(src[2 * i], src[2 * i + 1], offset, scale);
+                });
+            }
+            (2, true) => {
+                dst.par_iter_mut().enumerate().for_each(|(i, out)| {
+                    *out = dequant_i16_le(src[2 * i], src[2 * i + 1], offset, scale);
+                });
+            }
+            (other, _) => {
+                return Err(Error::UnsupportedTypeSize(other));
             }
         }
 
@@ -504,7 +552,6 @@ impl Model {
                 max_dynamic_id: (*output).max_dynamic_id,
                 quant: OutputQuantization {
                     qn: (*params).qn,
-                    scale: (*params).output_scale,
                     offset: (*params).offset,
                     is_signed: (*params).is_signed,
                 },
@@ -550,6 +597,8 @@ pub struct InputTensor {
     pub batch_size: usize,
     /// Quantization parameters.
     pub quant: InputQuantization,
+    /// Image preprocessing parameters.
+    pub preprocess: InputPreprocess,
 }
 
 /// Detailed information about an output tensor from the model.
@@ -591,22 +640,103 @@ pub struct OutputTensor {
     pub quant: OutputQuantization,
 }
 
-/// Quantization parameters for input tensors.
-#[derive(Debug, Clone, Copy)]
+/// Input tensor quantization parameters.
+///
+/// For all supported models today (qmode 9, asymmetric), `qn` is the
+/// per-tensor scale factor and `offset` is the integer zero-point.
+/// Per-channel preprocessing (mean/std normalization, BGR-to-RGB) lives
+/// on [`InputPreprocess`], queried separately.
+#[derive(Debug, Copy, Clone)]
 pub struct InputQuantization {
+    /// Per-tensor quantization scale (qmode 9: direct scale; other qmodes: 1/scale).
     pub qn: f32,
-    pub scale: f32,
-    pub mean: f32,
+    /// Integer zero-point (asymmetric quantization).
+    pub offset: i32,
+    /// Whether the tensor uses signed storage (`i8`/`i16` vs `u8`/`u16`).
+    pub is_signed: bool,
+    /// Kinara quantization mode. `9` = asymmetric (the only production-tested mode).
+    pub qmode: i32,
+}
+
+/// Image preprocessing parameters for an input tensor.
+///
+/// These describe how the compiler expects float image data to be
+/// normalized before quantization: `(pixel - mean[c]) * scale[c]`. They
+/// are independent of the quantization parameters on [`InputQuantization`].
+#[derive(Debug, Copy, Clone)]
+pub struct InputPreprocess {
+    /// Per-channel normalization mean (RGB ordering after any BGR→RGB swap).
+    pub mean: [f32; 3],
+    /// Per-channel normalization scale.
+    pub scale: [f32; 3],
+    /// Whether the compiler inserted a BGR→RGB swap before normalization.
+    pub bgr_to_rgb: bool,
+    /// Whether aspect-ratio preserving resize is applied.
+    pub aspect_resize: bool,
+    /// Whether horizontal mirroring is applied.
+    pub mirror: bool,
+    /// Whether center-cropping is applied.
+    pub center_crop: bool,
+}
+
+/// Output tensor quantization parameters (qmode 9 semantics).
+#[derive(Debug, Clone, Copy)]
+pub struct OutputQuantization {
+    /// Per-tensor quantization scale.
+    pub qn: f32,
+    /// Integer zero-point.
+    pub offset: i32,
+    /// Whether the tensor uses signed storage.
     pub is_signed: bool,
 }
 
-/// Quantization parameters for output tensors.
-#[derive(Debug, Clone, Copy)]
-pub struct OutputQuantization {
-    pub qn: f32,
-    pub scale: f32,
-    pub offset: i32,
-    pub is_signed: bool,
+impl OutputQuantization {
+    /// Return the normalized `(scale, offset)` pair for dequantization.
+    ///
+    /// The Kinara DVM format documents different dequantization formulas
+    /// per quantization mode (see `dv_model_input_preprocess_param` docs
+    /// in the C header). This helper normalizes them:
+    ///
+    /// - **qmode 9** (asymmetric, production default): returns `(qn, offset)`
+    ///   directly. Dequantized value = `(raw - offset) * scale`.
+    /// - **Other qmodes**: returns [`Error::UnsupportedQmode`]. Support
+    ///   will be added only when a testable model using that qmode is
+    ///   available.
+    pub fn effective(&self, qmode: i32) -> Result<(f32, i32), Error> {
+        match qmode {
+            9 => Ok((self.qn, self.offset)),
+            other => Err(Error::UnsupportedQmode(other)),
+        }
+    }
+}
+
+/// Dequantize a single unsigned-byte quantized value.
+#[inline]
+fn dequant_u8(raw: u8, offset: i32, scale: f32) -> f32 {
+    (raw as i32 - offset) as f32 * scale
+}
+
+/// Dequantize a single signed-byte quantized value.
+///
+/// The raw buffer is `&[u8]` at the C FFI boundary; for signed outputs
+/// we reinterpret each byte as `i8` before the offset subtraction.
+#[inline]
+fn dequant_i8(raw: u8, offset: i32, scale: f32) -> f32 {
+    (raw as i8 as i32 - offset) as f32 * scale
+}
+
+/// Dequantize a single unsigned-16-bit quantized value from two
+/// little-endian bytes.
+#[inline]
+fn dequant_u16_le(lo: u8, hi: u8, offset: i32, scale: f32) -> f32 {
+    (u16::from_le_bytes([lo, hi]) as i32 - offset) as f32 * scale
+}
+
+/// Dequantize a single signed-16-bit quantized value from two
+/// little-endian bytes.
+#[inline]
+fn dequant_i16_le(lo: u8, hi: u8, offset: i32, scale: f32) -> f32 {
+    (i16::from_le_bytes([lo, hi]) as i32 - offset) as f32 * scale
 }
 
 /// The type of output produced by a model layer.
@@ -701,5 +831,115 @@ mod tests {
 
         let timing = model.run().expect("inference should succeed");
         assert!(timing.run_time.as_micros() > 0, "run_time should be > 0");
+    }
+}
+
+#[cfg(test)]
+mod quant_tests {
+    use super::*;
+
+    #[test]
+    fn input_quant_exposes_qmode_and_offset() {
+        let q = InputQuantization {
+            qn: 0.0039,
+            offset: 128,
+            is_signed: false,
+            qmode: 9,
+        };
+        assert_eq!(q.qmode, 9);
+        assert_eq!(q.offset, 128);
+    }
+
+    #[test]
+    fn input_preprocess_exposes_per_channel_arrays() {
+        let p = InputPreprocess {
+            mean: [127.5, 127.5, 127.5],
+            scale: [0.00784, 0.00784, 0.00784],
+            bgr_to_rgb: false,
+            aspect_resize: true,
+            mirror: false,
+            center_crop: false,
+        };
+        assert_eq!(p.mean[0], 127.5);
+        assert_eq!(p.scale.len(), 3);
+    }
+
+    #[test]
+    fn effective_qmode9_returns_direct_scale_and_offset() {
+        let q = OutputQuantization {
+            qn: 0.0039,
+            offset: 128,
+            is_signed: false,
+        };
+        let (scale, offset) = q.effective(9).unwrap();
+        assert!((scale - 0.0039).abs() < 1e-9);
+        assert_eq!(offset, 128);
+    }
+
+    #[test]
+    fn effective_rejects_unsupported_qmode() {
+        let q = OutputQuantization {
+            qn: 256.0,
+            offset: 0,
+            is_signed: false,
+        };
+        let err = q.effective(0).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("qmode"));
+        assert!(msg.contains("9"));
+    }
+
+    #[test]
+    fn dequantize_formula_on_qmode9_sample_values() {
+        // (raw - offset) * scale
+        // raw=255, offset=128, scale=0.0039 → (127)*0.0039 ≈ 0.4953
+        let q = OutputQuantization {
+            qn: 0.0039,
+            offset: 128,
+            is_signed: false,
+        };
+        let (scale, offset) = q.effective(9).unwrap();
+        let dequant = |raw: u8| -> f32 { (raw as i32 - offset) as f32 * scale };
+        assert!((dequant(255) - 0.4953).abs() < 1e-3);
+        assert!((dequant(128) - 0.0).abs() < 1e-6);
+        assert!((dequant(0) - (-0.4992)).abs() < 1e-3);
+    }
+
+    #[test]
+    fn dequant_u8_formula() {
+        // (raw - offset) * scale with offset=128, scale=0.0039
+        assert!((dequant_u8(255, 128, 0.0039) - 0.4953).abs() < 1e-3);
+        assert!((dequant_u8(128, 128, 0.0039) - 0.0).abs() < 1e-6);
+        assert!((dequant_u8(0, 128, 0.0039) - (-0.4992)).abs() < 1e-3);
+    }
+
+    #[test]
+    fn dequant_i8_formula() {
+        // raw bytes are interpreted as i8 first
+        // 0xFF → -1, 0x00 → 0, 0x7F → 127, 0x80 → -128
+        assert!((dequant_i8(0xFF, 0, 0.0039) - (-0.0039)).abs() < 1e-6);
+        assert!((dequant_i8(0x00, 0, 0.0039) - 0.0).abs() < 1e-6);
+        assert!((dequant_i8(0x7F, 0, 0.0039) - (127.0 * 0.0039)).abs() < 1e-6);
+        assert!((dequant_i8(0x80, 0, 0.0039) - (-128.0 * 0.0039)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn dequant_u16_le_formula() {
+        // 0x0100 little-endian = 256; (256 - 0) * 1.0 = 256.0
+        assert!((dequant_u16_le(0x00, 0x01, 0, 1.0) - 256.0).abs() < 1e-6);
+        // 0xFFFF = 65535
+        assert!((dequant_u16_le(0xFF, 0xFF, 0, 0.0001) - 6.5535).abs() < 1e-3);
+        // with offset
+        assert!((dequant_u16_le(0x0A, 0x00, 5, 1.0) - 5.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn dequant_i16_le_formula() {
+        // 0xFFFF LE = -1 as i16
+        assert!((dequant_i16_le(0xFF, 0xFF, 0, 1.0) - (-1.0)).abs() < 1e-6);
+        // 0x8000 LE = -32768
+        assert!((dequant_i16_le(0x00, 0x80, 0, 1.0) - (-32768.0)).abs() < 1e-3);
+        // 0x7F7F LE = 32639
+        assert!((dequant_i16_le(0x7F, 0x7F, 0, 1.0) - 32639.0).abs() < 1e-3);
     }
 }

@@ -20,6 +20,7 @@ pub enum Error {
     ShapeError(ndarray::ShapeError),
     Zip(zip::result::ZipError),
     Json(serde_json::Error),
+    UnsupportedQmode(i32),
 }
 
 impl From<std::io::Error> for Error {
@@ -100,6 +101,10 @@ impl std::fmt::Display for Error {
             Error::ShapeError(e) => write!(f, "Shape error: {e:?}"),
             Error::Zip(e) => write!(f, "ZIP error: {e}"),
             Error::Json(e) => write!(f, "JSON error: {e}"),
+            Error::UnsupportedQmode(q) => write!(
+                f,
+                "unsupported quantization mode: qmode={q} (only qmode 9 is supported)"
+            ),
         }
     }
 }
