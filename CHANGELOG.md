@@ -17,11 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **libloading** upgraded from 0.8 to 0.9. Internal FFI loading adjusted
   for the new `AsFilename` trait bound.
 - **PyO3** upgraded from 0.24 to 0.28; **numpy** from 0.24 to 0.28.
-  All `#[pyclass]` types now opt-in to `from_py_object`. Return types
-  migrated from `PyObject` to `Bound<'py, PyAny>`.
+  Selected `#[pyclass]` value types now opt-in to `from_py_object` as
+  part of the migration. Return types migrated from `PyObject` to
+  `Bound<'py, PyAny>`.
 - **criterion** upgraded from 0.7 to 0.8.
 - **clap** upgraded from 4.5 to 4.6.
-- Minor dependency bumps: image 0.25.10, log 0.4.29, zip 2.4.
+- Minor dependency bumps: image, log, zip and transitive dependencies.
 
 ## [0.4.0] - 2026-04-12
 
