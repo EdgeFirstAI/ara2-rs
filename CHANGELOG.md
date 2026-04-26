@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-04-26
+
+### Changed
+
+- **edgefirst-hal** upgraded from 0.15 to 0.18.0. The `materialize_masks`
+  API now takes an explicit `MaskResolution` parameter; the `yolov8`
+  example passes `MaskResolution::Proto` for unchanged behaviour.
+- **libloading** upgraded from 0.8 to 0.9. Internal FFI loading adjusted
+  for the new `AsFilename` trait bound.
+- **PyO3** upgraded from 0.24 to 0.28; **numpy** from 0.24 to 0.28.
+  Selected `#[pyclass]` value types now opt-in to `from_py_object` as
+  part of the migration. Return types migrated from `PyObject` to
+  `Bound<'py, PyAny>`.
+- **criterion** upgraded from 0.7 to 0.8.
+- **clap** upgraded from 4.5 to 4.6.
+- Minor dependency bumps: image, log, zip and transitive dependencies.
+
 ## [0.4.0] - 2026-04-12
 
 ### Added
@@ -244,7 +261,8 @@ Non-qmode-9 DVMs now raise `Ara2Error("unsupported quantization mode: qmode=N ..
 - Requires `edgefirst-hal` for HAL integration
 - Requires `libaraclient.so` runtime library
 
-[Unreleased]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.1.3...v0.2.0

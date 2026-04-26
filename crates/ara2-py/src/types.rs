@@ -4,7 +4,7 @@
 use pyo3::prelude::*;
 
 /// Endpoint state enum.
-#[pyclass(module = "edgefirst_ara2", eq)]
+#[pyclass(module = "edgefirst_ara2", eq, from_py_object)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum State {
     Init,
@@ -46,7 +46,7 @@ impl State {
 }
 
 /// DRAM statistics for an endpoint.
-#[pyclass(module = "edgefirst_ara2", get_all)]
+#[pyclass(module = "edgefirst_ara2", get_all, from_py_object)]
 #[derive(Clone, Debug)]
 pub struct DramStatistics {
     pub dram_size: u64,
@@ -81,7 +81,7 @@ impl DramStatistics {
 }
 
 /// Timing information from a model inference run.
-#[pyclass(module = "edgefirst_ara2", get_all)]
+#[pyclass(module = "edgefirst_ara2", get_all, from_py_object)]
 #[derive(Clone, Copy, Debug)]
 pub struct ModelTiming {
     pub run_time_us: u64,
@@ -114,7 +114,7 @@ impl ModelTiming {
 /// For qmode 9 models (the production default), ``qn`` is the per-tensor
 /// scale and ``offset`` is the integer zero-point. Per-channel image
 /// preprocessing lives on :class:`InputPreprocess` instead.
-#[pyclass(module = "edgefirst_ara2", get_all)]
+#[pyclass(module = "edgefirst_ara2", get_all, from_py_object)]
 #[derive(Clone, Debug)]
 pub struct InputQuantization {
     pub qn: f32,
@@ -148,7 +148,7 @@ impl InputQuantization {
 ///
 /// Describes how float image data is expected to be normalized before
 /// quantization: ``(pixel - mean[c]) * scale[c]``.
-#[pyclass(module = "edgefirst_ara2", get_all)]
+#[pyclass(module = "edgefirst_ara2", get_all, from_py_object)]
 #[derive(Clone, Debug)]
 pub struct InputPreprocess {
     pub mean: (f32, f32, f32),
@@ -189,7 +189,7 @@ impl InputPreprocess {
 }
 
 /// Output tensor quantization parameters (qmode 9 semantics).
-#[pyclass(module = "edgefirst_ara2", get_all)]
+#[pyclass(module = "edgefirst_ara2", get_all, from_py_object)]
 #[derive(Clone, Debug)]
 pub struct OutputQuantization {
     pub qn: f32,
@@ -218,7 +218,7 @@ impl OutputQuantization {
 }
 
 /// The type of output produced by a model layer.
-#[pyclass(module = "edgefirst_ara2", eq, eq_int)]
+#[pyclass(module = "edgefirst_ara2", eq, eq_int, from_py_object)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ModelOutputType {
     Classification = 0,
@@ -250,7 +250,7 @@ impl ModelOutputType {
 }
 
 /// Detailed information about an input tensor.
-#[pyclass(module = "edgefirst_ara2", get_all)]
+#[pyclass(module = "edgefirst_ara2", get_all, from_py_object)]
 #[derive(Clone, Debug)]
 pub struct InputTensorInfo {
     pub layer_id: i32,
@@ -301,7 +301,7 @@ impl InputTensorInfo {
 }
 
 /// Detailed information about an output tensor.
-#[pyclass(module = "edgefirst_ara2", get_all)]
+#[pyclass(module = "edgefirst_ara2", get_all, from_py_object)]
 #[derive(Clone, Debug)]
 pub struct OutputTensorInfo {
     pub layer_id: i32,
