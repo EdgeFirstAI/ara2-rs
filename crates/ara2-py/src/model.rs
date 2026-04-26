@@ -182,7 +182,7 @@ impl Model {
         // stride/alignment combination, whereas ``tobytes()`` collapses
         // all of that into a single well-defined byte stream.
         let bytes_obj = data.call_method0("tobytes")?;
-        let bytes: &[u8] = bytes_obj.downcast::<pyo3::types::PyBytes>()?.as_bytes();
+        let bytes: &[u8] = bytes_obj.cast::<pyo3::types::PyBytes>()?.as_bytes();
 
         let m = self.inner_mut()?;
         let tensor = m.input_tensor(index);
@@ -224,7 +224,7 @@ impl Model {
     /// Raises:
     ///     IndexError: If index is out of range
     ///     TensorError: If tensors are not allocated or have an unsupported bpp
-    fn get_output_tensor<'py>(&self, py: Python<'py>, index: usize) -> PyResult<PyObject> {
+    fn get_output_tensor<'py>(&self, py: Python<'py>, index: usize) -> PyResult<Bound<'py, PyAny>> {
         self.check_allocated()?;
         self.check_output_index(index)?;
 
@@ -238,14 +238,13 @@ impl Model {
         let [c, h, w] = m.output_shape(index);
         let shape = IxDyn(&[c, h, w]);
 
-        let obj: PyObject = match (bpp, quant.is_signed) {
+        let obj: Bound<'py, PyAny> = match (bpp, quant.is_signed) {
             (1, false) => {
                 let data: Vec<u8> = bytes.to_vec();
                 ArrayD::<u8>::from_shape_vec(shape, data)
                     .map_err(tensor_err)?
                     .into_pyarray(py)
                     .into_any()
-                    .unbind()
             }
             (1, true) => {
                 let data: Vec<i8> = bytes.iter().map(|&b| b as i8).collect();
@@ -253,7 +252,6 @@ impl Model {
                     .map_err(tensor_err)?
                     .into_pyarray(py)
                     .into_any()
-                    .unbind()
             }
             (2, false) => {
                 let data: Vec<u16> = bytes
@@ -264,7 +262,6 @@ impl Model {
                     .map_err(tensor_err)?
                     .into_pyarray(py)
                     .into_any()
-                    .unbind()
             }
             (2, true) => {
                 let data: Vec<i16> = bytes
@@ -275,7 +272,6 @@ impl Model {
                     .map_err(tensor_err)?
                     .into_pyarray(py)
                     .into_any()
-                    .unbind()
             }
             (4, _) => {
                 let data: Vec<f32> = bytes
@@ -286,7 +282,6 @@ impl Model {
                     .map_err(tensor_err)?
                     .into_pyarray(py)
                     .into_any()
-                    .unbind()
             }
             (other, _) => {
                 return Err(error::TensorError::new_err(format!(
@@ -315,7 +310,7 @@ impl Model {
     ///     IndexError: If index is out of range
     ///     TensorError: If tensors are not allocated
     ///     Ara2Error: If the model uses an unsupported qmode
-    fn dequantize<'py>(&self, py: Python<'py>, index: usize) -> PyResult<PyObject> {
+    fn dequantize<'py>(&self, py: Python<'py>, index: usize) -> PyResult<Bound<'py, PyAny>> {
         self.check_allocated()?;
         self.check_output_index(index)?;
 
@@ -363,7 +358,7 @@ impl Model {
         };
 
         let arr = ArrayD::<f32>::from_shape_vec(shape, data).map_err(tensor_err)?;
-        Ok(arr.into_pyarray(py).into_any().unbind())
+        Ok(arr.into_pyarray(py).into_any())
     }
 
     // ========================================================================

@@ -32,7 +32,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 wayland-client = { workspace = true, optional = true }
 wayland-protocols = { workspace = true, optional = true }
-zip = { version = "2.2", default-features = false }
+zip = { version = "2.4", default-features = false }
 
 [dev-dependencies]
 clap.workspace = true

@@ -332,7 +332,7 @@ impl OutputSpec {
 }
 
 /// Kinara ARA-2 specific metadata section.
-#[pyclass(module = "edgefirst_ara2")]
+#[pyclass(module = "edgefirst_ara2", from_py_object)]
 #[derive(Clone, Debug)]
 pub struct Ara2Info {
     inner: ara2::Ara2Info,

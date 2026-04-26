@@ -46,8 +46,8 @@ use edgefirst_hal::{
         configs::{self, DecoderType, QuantTuple},
     },
     image::{
-        ColorMode, Crop, Flip, ImageProcessor, ImageProcessorTrait as _, MaskOverlay, Rect,
-        Rotation, load_image, save_jpeg,
+        ColorMode, Crop, Flip, ImageProcessor, ImageProcessorTrait as _, MaskOverlay,
+        MaskResolution, Rect, Rotation, load_image, save_jpeg,
     },
     tensor::{DType, PixelFormat, PlaneDescriptor, TensorDyn, TensorMemory, TensorTrait as _},
 };
@@ -592,7 +592,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // bitmap per detection in output-image space. No-op for detection-only models.
     let t_mat = Instant::now();
     let masks: Vec<Segmentation> = if let Some(ref proto_data) = proto {
-        processor.materialize_masks(&detections, proto_data, letterbox_norm)?
+        processor.materialize_masks(&detections, proto_data, letterbox_norm, MaskResolution::Proto)?
     } else {
         Vec::new()
     };
@@ -668,7 +668,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .decode_proto(&output_refs, &mut warmup_boxes)
                 .map_err(|e| format!("decode_proto: {e:#?}"))?;
             let masks: Vec<Segmentation> = if let Some(ref pd) = proto {
-                processor.materialize_masks(&warmup_boxes, pd, letterbox_norm)?
+                processor.materialize_masks(&warmup_boxes, pd, letterbox_norm, MaskResolution::Proto)?
             } else {
                 Vec::new()
             };
@@ -713,7 +713,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             // Step 2 — Materialize: CPU dot-product → per-detection bitmaps.
             let masks: Vec<Segmentation> = if let Some(ref proto_data) = proto {
-                processor.materialize_masks(&boxes, proto_data, letterbox_norm)?
+                processor.materialize_masks(&boxes, proto_data, letterbox_norm, MaskResolution::Proto)?
             } else {
                 Vec::new()
             };
