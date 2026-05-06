@@ -28,10 +28,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `edgefirst-hal` and `image` are now mandatory dependencies — the
   `Model` API exposes `Tensor<u8>` and `TensorMemory` in its public
   signatures, so an FFI-only build was never a meaningful
-  configuration. Consumers using `features = ["hal"]` will see a
-  Cargo "unused manifest feature" warning; consumers using
-  `default-features = false` will continue to build, now with HAL
-  unconditionally pulled in.
+  configuration. Consumers using `features = ["hal"]` will now get a
+  Cargo error because `ara2` no longer defines that feature (for
+  example: `package 'ara2' depends on feature 'hal' but 'ara2' does
+  not have that feature`); consumers using `default-features = false`
+  will continue to build, but HAL is now unconditionally pulled in.
 
 ### Migration
 
