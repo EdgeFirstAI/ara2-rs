@@ -26,18 +26,12 @@ Requires [EdgeFirst Yocto Images](https://github.com/EdgeFirstAI/yocto) with ARA
 
 ### Integration with edgefirst-hal
 
-The `ara2` crate integrates with [`edgefirst-hal`](https://crates.io/crates/edgefirst-hal)
-(enabled by default via the `hal` feature) for:
+The `ara2` crate depends on [`edgefirst-hal`](https://crates.io/crates/edgefirst-hal)
+for:
 
 - **Tensor memory management** — DMA-backed tensors for zero-copy NPU transfers
 - **Image preprocessing** — Hardware-accelerated format conversion and scaling
 - **Post-processing** — YOLO decoding, overlay rendering, segmentation masks
-
-Disable the `hal` feature for a minimal FFI-only build:
-
-```bash
-cargo build --no-default-features
-```
 
 ### Python Bindings
 

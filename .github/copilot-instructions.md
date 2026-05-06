@@ -53,12 +53,11 @@ cargo zigbuild --release --target aarch64-unknown-linux-gnu
 
 | Feature | Default | Description |
 |---------|---------|-------------|
-| `hal` | yes | Enable edgefirst-hal for tensor/image operations |
+| `camera` | no | Build the libcamera-based live-inference example (`yolov8_live`) |
 
-Build without HAL (FFI-only):
-```bash
-cargo build --no-default-features
-```
+`edgefirst-hal` is a required dependency — the `Model` API exposes
+`Tensor<u8>` / `TensorMemory` in its public surface, so there is no
+FFI-only build mode.
 
 ### Python Wheel
 
@@ -78,7 +77,7 @@ maturin build --release --features pyo3/abi3-py311
 
 | Dependency | Purpose |
 |-----------|---------|
-| `edgefirst-hal` | Tensor memory management, image processing (optional, feature `hal`) |
+| `edgefirst-hal` | Tensor memory management, image processing |
 | `libloading` | Dynamic loading of libaraclient.so.1 |
 | `ndarray` | N-dimensional array operations for tensor data |
 | `serde` / `serde_json` | DVM metadata parsing |
@@ -207,7 +206,7 @@ All unsafe blocks are in the FFI layer. When adding new FFI calls:
 
 | Workflow | Trigger | What it does |
 |----------|---------|-------------|
-| `test.yml` | Push/PR to main, develop | Lint (fmt, clippy), build check (default + no-default-features), test (dvm_metadata only) |
+| `test.yml` | Push/PR to main, develop | Lint (fmt, clippy), build check, test (dvm_metadata only) |
 | `build.yml` | Push/PR to main, develop | Release build (x86_64, aarch64) |
 | `python.yml` | Push/PR to main, develop | Build Python wheels (x86_64, aarch64) with maturin+zig |
 | `sbom.yml` | Push/PR to main | SBOM generation, license compliance |
