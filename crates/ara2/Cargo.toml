@@ -13,8 +13,6 @@ categories = ["hardware-support", "science", "embedded"]
 exclude = ["target/", "*.dvm", "*.onnx"]
 
 [features]
-default = ["hal"]
-hal = ["edgefirst-hal", "image"]
 # Enables the libcamera-based live-inference example (yolov8_live).
 # Off by default so building the library and file-based examples does not
 # require libcamera or Wayland client libraries on the host.
@@ -22,8 +20,8 @@ camera = ["dep:libcamera", "dep:wayland-client", "dep:wayland-protocols"]
 
 [dependencies]
 ara2-sys.workspace = true
-edgefirst-hal = { workspace = true, optional = true }
-image = { workspace = true, optional = true }
+edgefirst-hal.workspace = true
+image.workspace = true
 libcamera = { workspace = true, optional = true }
 libloading.workspace = true
 log.workspace = true

@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-05-06
+
+### Changed (BREAKING)
+
+- **edgefirst-hal** upgraded from 0.18.0 to 0.19.0. HAL types
+  (`Tensor<u8>`, `TensorMemory`, `edgefirst_hal::tensor::Error`,
+  `edgefirst_hal::image::Error`) appear in the public API surface of
+  `ara2`, so this is a transitive ABI break: downstream crates
+  pinning `edgefirst-hal = "0.18"` must bump in lockstep. No source
+  changes were required in `ara2` itself — all decoder use goes
+  through the high-level `Decoder`/`materialize_masks` facade, which
+  absorbs the 0.19 internals (binary `MaskResolution::Proto` masks,
+  `ProtoData` layout-aware shape, new `pre_nms_top_k` / `max_det`
+  decoder knobs).
+
+### Removed (BREAKING)
+
+- The `hal` Cargo feature on the `ara2` crate has been removed.
+  `edgefirst-hal` and `image` are now mandatory dependencies — the
+  `Model` API exposes `Tensor<u8>` and `TensorMemory` in its public
+  signatures, so an FFI-only build was never a meaningful
+  configuration. Consumers using `features = ["hal"]` will now get a
+  Cargo error because `ara2` no longer defines that feature (for
+  example: `package 'ara2' depends on feature 'hal' but 'ara2' does
+  not have that feature`); consumers using `default-features = false`
+  will continue to build, but HAL is now unconditionally pulled in.
+
+### Migration
+
+| 0.5.x | 0.6.0 |
+|-------|-------|
+| `ara2 = { version = "0.5", features = ["hal"] }` | `ara2 = "0.6"` |
+| `cargo build -p ara2 --no-default-features` | `cargo build -p ara2` |
+| `edgefirst-hal = "0.18"` (downstream pin) | `edgefirst-hal = "0.19"` |
+
 ## [0.5.0] - 2026-04-26
 
 ### Changed
@@ -261,7 +296,8 @@ Non-qmode-9 DVMs now raise `Ara2Error("unsupported quantization mode: qmode=N ..
 - Requires `edgefirst-hal` for HAL integration
 - Requires `libaraclient.so` runtime library
 
-[Unreleased]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.2.0...v0.3.0

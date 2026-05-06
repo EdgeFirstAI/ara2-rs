@@ -3,7 +3,6 @@ use ara2_sys::{DV_ENDPOINT_STATE, DV_LAYER_OUTPUT_TYPE, dv_status_code};
 #[derive(Debug)]
 pub enum Error {
     Io(std::io::Error),
-    #[cfg(feature = "hal")]
     Image(image::ImageError),
     Library(libloading::Error),
     Ara2(dv_status_code),
@@ -13,18 +12,13 @@ pub enum Error {
     UnsupportedLayout(String),
     UnsupportedTypeSize(usize),
     NullPointer(String),
-    #[cfg(feature = "hal")]
     TensorError(edgefirst_hal::tensor::Error),
-    #[cfg(feature = "hal")]
     ImageError(edgefirst_hal::image::Error),
     ShapeError(ndarray::ShapeError),
     Zip(zip::result::ZipError),
     Json(serde_json::Error),
     UnsupportedQmode(i32),
-    TensorSizeMismatch {
-        expected: usize,
-        got: usize,
-    },
+    TensorSizeMismatch { expected: usize, got: usize },
 }
 
 impl From<std::io::Error> for Error {
@@ -33,7 +27,6 @@ impl From<std::io::Error> for Error {
     }
 }
 
-#[cfg(feature = "hal")]
 impl From<image::ImageError> for Error {
     fn from(e: image::ImageError) -> Self {
         Error::Image(e)
@@ -52,14 +45,12 @@ impl From<dv_status_code> for Error {
     }
 }
 
-#[cfg(feature = "hal")]
 impl From<edgefirst_hal::tensor::Error> for Error {
     fn from(e: edgefirst_hal::tensor::Error) -> Self {
         Error::TensorError(e)
     }
 }
 
-#[cfg(feature = "hal")]
 impl From<edgefirst_hal::image::Error> for Error {
     fn from(e: edgefirst_hal::image::Error) -> Self {
         Error::ImageError(e)
@@ -88,7 +79,6 @@ impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Error::Io(e) => write!(f, "{e}"),
-            #[cfg(feature = "hal")]
             Error::Image(e) => write!(f, "{e}"),
             Error::Library(e) => write!(f, "{e}"),
             Error::Ara2(e) => write!(f, "Ara2 error: {e:?}"),
@@ -98,9 +88,7 @@ impl std::fmt::Display for Error {
             Error::UnsupportedLayout(e) => write!(f, "Unsupported layout: {e:?}"),
             Error::UnsupportedTypeSize(e) => write!(f, "Unsupported type size: {e:?}"),
             Error::NullPointer(e) => write!(f, "Null pointer error: {e}"),
-            #[cfg(feature = "hal")]
             Error::TensorError(e) => write!(f, "Tensor error: {e:?}"),
-            #[cfg(feature = "hal")]
             Error::ImageError(e) => write!(f, "Image error: {e:?}"),
             Error::ShapeError(e) => write!(f, "Shape error: {e:?}"),
             Error::Zip(e) => write!(f, "ZIP error: {e}"),
@@ -121,12 +109,9 @@ impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Error::Io(e) => Some(e),
-            #[cfg(feature = "hal")]
             Error::Image(e) => Some(e),
             Error::Library(e) => Some(e),
-            #[cfg(feature = "hal")]
             Error::TensorError(e) => Some(e),
-            #[cfg(feature = "hal")]
             Error::ImageError(e) => Some(e),
             Error::ShapeError(e) => Some(e),
             Error::Zip(e) => Some(e),
