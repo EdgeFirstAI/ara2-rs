@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-05-08
+
+### Changed (BREAKING)
+
+- **edgefirst-hal** upgraded from 0.20.0 to 0.21.0. HAL types
+  (`Tensor<u8>`, `TensorMemory`, `edgefirst_hal::tensor::Error`,
+  `edgefirst_hal::image::Error`) appear in the public API surface of
+  `ara2`, so this is a transitive ABI break: downstream crates
+  pinning `edgefirst-hal = "0.20"` must bump in lockstep. No source
+  changes were required in `ara2` or its examples — the workspace
+  builds cleanly against the new HAL with the pin bump alone.
+- **ndarray** upgraded from 0.16 to 0.17. This aligns with
+  edgefirst-hal 0.21's internal ndarray version, eliminating the
+  previous dual-version situation where numpy pulled ndarray 0.17
+  alongside ara2's ndarray 0.16.
+
+### Migration
+
+| 0.7.x | 0.8.0 |
+|-------|-------|
+| `ara2 = "0.7"` | `ara2 = "0.8"` |
+| `edgefirst-hal = "0.20"` (downstream pin) | `edgefirst-hal = "0.21"` |
+| `ndarray = "0.16"` (if used directly) | `ndarray = "0.17"` |
+
 ## [0.7.0] - 2026-05-07
 
 ### Changed (BREAKING)
@@ -315,7 +339,8 @@ Non-qmode-9 DVMs now raise `Ara2Error("unsupported quantization mode: qmode=N ..
 - Requires `edgefirst-hal` for HAL integration
 - Requires `libaraclient.so` runtime library
 
-[Unreleased]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.4.0...v0.5.0
