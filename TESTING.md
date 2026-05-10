@@ -79,28 +79,36 @@ RUST_LOG=debug cargo test -p ara2 -- --nocapture
 ### Cross-compile and deploy
 
 ```bash
-# Build Rust example
-cargo zigbuild --release --example async_infer --target aarch64-unknown-linux-gnu
+# Build Rust examples
+cargo zigbuild --release --example async_infer --example async_pipeline \
+  --target aarch64-unknown-linux-gnu
 
 # Build Python wheel
 maturin build --release -m crates/ara2-py/Cargo.toml \
   --zig --target aarch64-unknown-linux-gnu --compatibility manylinux2014
 
 # Deploy
-scp target/aarch64-unknown-linux-gnu/release/examples/async_infer <target>:/tmp/
+scp target/aarch64-unknown-linux-gnu/release/examples/async_infer \
+    target/aarch64-unknown-linux-gnu/release/examples/async_pipeline <target>:/tmp/
 scp target/wheels/edgefirst_ara2-*.whl <target>:/tmp/
-scp examples/async_infer.py <target>:/tmp/
+scp examples/async_infer.py examples/async_pipeline.py <target>:/tmp/
 ```
 
 ### Run on target
 
 ```bash
-# Rust
+# Rust — basic async benchmark
 ssh <target> /tmp/async_infer /root/models/yolov8n_640x640.dvm 10
+
+# Rust — pipelined inference with circular buffer (depth=2)
+ssh <target> /tmp/async_pipeline /root/models/yolov8n_640x640.dvm 50 2
 
 # Python
 ssh <target> 'pip install --force-reinstall --no-deps /tmp/edgefirst_ara2-*.whl && \
   python3 /tmp/async_infer.py /root/models/yolov8n_640x640.dvm 10'
+
+# Python — pipelined
+ssh <target> 'python3 /tmp/async_pipeline.py /root/models/yolov8n_640x640.dvm 50 2'
 ```
 
 ## CI

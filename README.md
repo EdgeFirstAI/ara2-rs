@@ -113,7 +113,9 @@ print(f"NPU inference: {timing.run_time_us} µs")
 ```
 
 See the [`async_infer`](examples/async_infer.rs) example for a complete
-benchmark comparing synchronous vs. asynchronous inference.
+benchmark comparing synchronous vs. asynchronous inference, and
+[`async_pipeline`](examples/async_pipeline.rs) for pipelined inference
+with a circular buffer of DMA-BUF tensor sets (2x+ throughput improvement).
 
 ## Runtime Requirements
 
@@ -171,6 +173,8 @@ physical buffers with no CPU copies in the data path.
 | [`yolov8.py`](examples/yolov8.py) | Python — Same 3-step pipeline via `edgefirst-hal` and `edgefirst-ara2` Python packages |
 | [`async_infer.rs`](examples/async_infer.rs) | Rust — Async inference benchmark: sync vs. submit/wait vs. overlap |
 | [`async_infer.py`](examples/async_infer.py) | Python — Same async benchmark via `edgefirst-ara2` |
+| [`async_pipeline.rs`](examples/async_pipeline.rs) | Rust — Pipelined inference with circular DMA-BUF buffer ring (2x+ speedup) |
+| [`async_pipeline.py`](examples/async_pipeline.py) | Python — Same pipeline demo via `edgefirst-ara2` |
 | [`endpoints.py`](examples/endpoints.py) | Python — Connect, list endpoints, check status |
 | [`test_dvm_metadata.rs`](examples/test_dvm_metadata.rs) | Rust — Read and display DVM model metadata |
 

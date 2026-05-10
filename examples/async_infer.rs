@@ -26,6 +26,10 @@ fn main() {
     }
     let model_path = PathBuf::from(&args[1]);
     let iterations: usize = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(10);
+    if iterations == 0 {
+        eprintln!("Error: iterations must be > 0");
+        process::exit(1);
+    }
 
     // ── Connect ─────────────────────────────────────────────────────
     let session = Session::create_via_unix_socket(ara2::DEFAULT_SOCKET)

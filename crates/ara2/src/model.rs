@@ -1,10 +1,11 @@
 use crate::{Error, session::SessionInner};
 use ara2_sys::{
     DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_COMPLETED,
-    DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_FAILED, DV_LAYER_OUTPUT_TYPE, dv_blob, dv_endpoint,
+    DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_FAILED, DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_QUEUED,
+    DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_RUNNING, DV_LAYER_OUTPUT_TYPE, dv_blob, dv_endpoint,
     dv_infer_request, dv_model, dv_shm_descriptor,
 };
-use edgefirst_hal::tensor::{Tensor, TensorMapTrait as _, TensorMemory, TensorTrait};
+use edgefirst_hal::tensor::{Tensor, TensorMap, TensorMapTrait as _, TensorMemory, TensorTrait};
 use log::debug;
 use ndarray::parallel::prelude::{
     IndexedParallelIterator as _, IntoParallelRefMutIterator as _, ParallelIterator as _,
@@ -108,6 +109,9 @@ impl std::fmt::Debug for Model {
 // as inference operations are not thread-safe.
 unsafe impl Send for Model {}
 
+/// Blob descriptors paired with map guards that keep memory mappings alive.
+type BlobsWithGuards = (Vec<dv_blob>, Vec<dv_blob>, Vec<TensorMap<u8>>);
+
 impl Model {
     /// Create a new Model instance.
     pub(crate) fn new(
@@ -135,20 +139,23 @@ impl Model {
 
     /// Build blob descriptors from the pre-allocated tensor buffers.
     ///
-    /// Returns `(input_blobs, output_blobs)`. For SHM/DMA tensors the blob
-    /// references the registered descriptor; for plain memory it references
-    /// the mapped pointer directly.
-    fn build_blobs(&self) -> Result<(Vec<dv_blob>, Vec<dv_blob>), Error> {
+    /// Returns `(input_blobs, output_blobs, map_guards)`. For SHM/DMA
+    /// tensors the blob references the registered descriptor; for plain
+    /// memory it references the mapped pointer directly. The returned
+    /// `map_guards` vector keeps the memory mappings alive — callers must
+    /// hold it until the FFI call using the blobs has completed.
+    fn build_blobs(&self) -> Result<BlobsWithGuards, Error> {
+        let mut map_guards: Vec<TensorMap<u8>> = Vec::new();
+
         let input_blobs = self
             .inputs
             .iter()
             .map(|tensor| {
                 let blob = if tensor.1.is_null() {
                     let map = tensor.0.map()?;
-                    (
-                        map.as_ptr() as *mut std::ffi::c_void,
-                        ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_RAW_POINTER,
-                    )
+                    let ptr = map.as_ptr() as *mut std::ffi::c_void;
+                    map_guards.push(map);
+                    (ptr, ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_RAW_POINTER)
                 } else {
                     (
                         tensor.1 as *mut std::ffi::c_void,
@@ -171,10 +178,9 @@ impl Model {
             .map(|tensor| {
                 let blob = if tensor.1.is_null() {
                     let map = tensor.0.map()?;
-                    (
-                        map.as_ptr() as *mut std::ffi::c_void,
-                        ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_RAW_POINTER,
-                    )
+                    let ptr = map.as_ptr() as *mut std::ffi::c_void;
+                    map_guards.push(map);
+                    (ptr, ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_RAW_POINTER)
                 } else {
                     (
                         tensor.1 as *mut std::ffi::c_void,
@@ -191,7 +197,7 @@ impl Model {
             })
             .collect::<Result<Vec<_>, Error>>()?;
 
-        Ok((input_blobs, output_blobs))
+        Ok((input_blobs, output_blobs, map_guards))
     }
 
     /// Run inference synchronously on the model using the pre-allocated
@@ -218,7 +224,8 @@ impl Model {
     /// # Ok::<(), ara2::Error>(())
     /// ```
     pub fn run(&mut self) -> Result<ModelTiming, Error> {
-        let (mut input_blobs, mut output_blobs) = self.build_blobs()?;
+        // `_map_guards` keeps memory mappings alive through the FFI call.
+        let (mut input_blobs, mut output_blobs, _map_guards) = self.build_blobs()?;
 
         let mut request: *mut dv_infer_request = std::ptr::null_mut();
 
@@ -239,7 +246,7 @@ impl Model {
             return Err(err.into());
         }
 
-        let timing = extract_timing(request);
+        let timing = extract_timing(request)?;
 
         let err = unsafe { self.session.lib.dv_infer_free(request) };
 
@@ -287,7 +294,10 @@ impl Model {
     /// # Ok::<(), ara2::Error>(())
     /// ```
     pub fn submit(&mut self) -> Result<InferRequest, Error> {
-        let (mut input_blobs, mut output_blobs) = self.build_blobs()?;
+        // `_map_guards` keeps memory mappings alive through the FFI call.
+        // For async inference the NPU copies blob data during submission,
+        // so guards only need to survive the `dv_infer_async` call itself.
+        let (mut input_blobs, mut output_blobs, _map_guards) = self.build_blobs()?;
 
         let mut request: *mut dv_infer_request = std::ptr::null_mut();
 
@@ -698,15 +708,26 @@ impl Model {
 /// # Safety
 ///
 /// The `request` pointer must be non-null and point to a valid, completed
-/// `dv_infer_request` whose `stats` field is populated.
-fn extract_timing(request: *mut dv_infer_request) -> ModelTiming {
+/// `dv_infer_request`.
+///
+/// # Errors
+///
+/// Returns [`Error::NullPointer`] if the `stats` field is null, which
+/// indicates the C library did not populate timing data (e.g., statistics
+/// were not enabled).
+fn extract_timing(request: *mut dv_infer_request) -> Result<ModelTiming, Error> {
     unsafe {
         let timing_ptr = (*request).stats;
-        ModelTiming {
+        if timing_ptr.is_null() {
+            return Err(Error::NullPointer(
+                "dv_infer_request.stats is null — timing data unavailable".to_owned(),
+            ));
+        }
+        Ok(ModelTiming {
             run_time: Duration::from_micros((*timing_ptr).inference_execution_time as u64),
             input_time: Duration::from_micros((*timing_ptr).input_transfer_time as u64),
             output_time: Duration::from_micros((*timing_ptr).output_transfer_time as u64),
-        }
+        })
     }
 }
 
@@ -766,18 +787,28 @@ impl InferRequest {
     /// after extracting timing information. Calling `wait` a second time
     /// is not possible since `self` is moved.
     ///
+    /// # Cancellation on error
+    ///
+    /// Because `wait` takes `self` by value, any error (including timeout)
+    /// drops the `InferRequest`, which calls `dv_infer_free` and cancels
+    /// the in-flight request. If you need longer wait times, increase
+    /// `timeout_ms` rather than retrying — the timeout applies per poll
+    /// iteration, not cumulatively.
+    ///
     /// # Arguments
     ///
-    /// * `timeout_ms` - Maximum time in milliseconds to wait. Use
-    ///   [`DEFAULT_TIMEOUT_MS`] for the default (1000 ms). Increase for
-    ///   large models that take longer to execute.
+    /// * `timeout_ms` - Maximum time in milliseconds to wait per poll
+    ///   iteration. Use [`DEFAULT_TIMEOUT_MS`] for the default (1000 ms).
+    ///   Increase for large models that take longer to execute.
     ///
     /// # Errors
     ///
-    /// - [`Error::Ara2`] — the wait call itself failed (e.g., timeout)
+    /// - [`Error::Ara2`] — the wait call itself failed (e.g., timeout
+    ///   expired). The request is cancelled on drop.
     /// - [`Error::InferenceFailed`] — the NPU reported a failure
-    /// - [`Error::NullPointer`] — the C API returned a null completed
-    ///   pointer (should not happen in practice)
+    /// - [`Error::InferenceNotCompleted`] — the request reached an
+    ///   unexpected terminal state (e.g., UNKNOWN)
+    /// - [`Error::NullPointer`] — the C API returned a null pointer
     ///
     /// # Example
     ///
@@ -796,9 +827,9 @@ impl InferRequest {
         let mut completed: *mut dv_infer_request = std::ptr::null_mut();
         let mut list = [self.ptr];
 
-        // Loop until the request reaches a terminal state (COMPLETED or
-        // FAILED). The C API's `dv_infer_wait_for_completion` returns
-        // whenever a request's status changes, which may be an
+        // Loop until the request reaches a terminal state (COMPLETED,
+        // FAILED, or UNKNOWN). The C API's `dv_infer_wait_for_completion`
+        // returns whenever a request's status changes, which may be an
         // intermediate transition (e.g., QUEUED → RUNNING). We re-call
         // with the same timeout each iteration — the proxy tracks
         // elapsed time internally.
@@ -827,15 +858,24 @@ impl InferRequest {
             }
 
             let status = unsafe { (*completed).status };
-            if status == DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_COMPLETED {
-                return Ok(extract_timing(completed));
-                // Drop runs here, calling dv_infer_free
+            match status {
+                DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_COMPLETED => {
+                    return extract_timing(completed);
+                    // Drop runs here, calling dv_infer_free
+                }
+                DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_FAILED => {
+                    return Err(Error::InferenceFailed);
+                }
+                DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_QUEUED
+                | DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_RUNNING => {
+                    // Intermediate status — loop and wait for terminal state.
+                }
+                _ => {
+                    // UNKNOWN or any unexpected status — treat as terminal error
+                    // to avoid infinite loops.
+                    return Err(Error::InferenceNotCompleted(status));
+                }
             }
-            if status == DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_FAILED {
-                return Err(Error::InferenceFailed);
-            }
-            // Intermediate status (QUEUED, RUNNING, etc.) — loop and
-            // wait again for the terminal state.
         }
     }
 
@@ -1162,8 +1202,9 @@ mod tests {
 
         // Submit async inference
         let request = model.submit().expect("submit should succeed");
-        let req_id = request.request_id().expect("should get request id");
-        assert!(req_id > 0, "request_id should be > 0");
+        // Just verify request_id() succeeds — IDs are proxy-assigned and
+        // may start at 0.
+        let _req_id = request.request_id().expect("should get request id");
 
         // Wait for completion
         let timing = request

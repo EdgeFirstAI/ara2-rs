@@ -27,9 +27,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="ARA-2 async inference example")
     parser.add_argument("model", help="Path to a compiled .dvm model file")
     parser.add_argument(
-        "iterations", nargs="?", type=int, default=10, help="Number of iterations"
+        "iterations", nargs="?", type=int, default=10, help="Number of iterations (> 0)"
     )
     args = parser.parse_args()
+    if args.iterations <= 0:
+        parser.error("iterations must be > 0")
 
     import edgefirst_ara2 as ara2
 
