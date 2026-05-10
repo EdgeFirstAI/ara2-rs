@@ -215,7 +215,23 @@ impl Session {
     ///
     /// Returns the count of requests submitted via [`Model::submit`] that
     /// the client library has not yet received a response for from the
-    /// proxy.
+    /// proxy. Useful for monitoring pipeline depth.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use ara2::{Session, DEFAULT_SOCKET, DEFAULT_TIMEOUT_MS};
+    /// # let session = Session::create_via_unix_socket(DEFAULT_SOCKET)?;
+    /// # let endpoints = session.list_endpoints()?;
+    /// # let mut model = endpoints[0].load_model_from_file("m.dvm".as_ref())?;
+    /// # model.allocate_tensors(None)?;
+    /// let request = model.submit()?;
+    /// assert_eq!(session.inflight_count()?, 1);
+    ///
+    /// let _timing = request.wait(DEFAULT_TIMEOUT_MS)?;
+    /// assert_eq!(session.inflight_count()?, 0);
+    /// # Ok::<(), ara2::Error>(())
+    /// ```
     pub fn inflight_count(&self) -> Result<i32, Error> {
         let mut count: i32 = 0;
         let err = unsafe {

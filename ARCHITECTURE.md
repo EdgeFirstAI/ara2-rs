@@ -67,18 +67,35 @@ ara2-rs/
 │   │       ├── lib.rs          # Public API and re-exports
 │   │       ├── session.rs      # Session management
 │   │       ├── endpoint.rs     # Endpoint operations
-│   │       ├── model.rs        # Model loading/inference
+│   │       ├── model.rs        # Model loading/inference (sync + async)
 │   │       ├── error.rs        # Error types
 │   │       └── dvm_metadata.rs # DVM metadata parsing
 │   │
-│   └── ara2-sys/           # FFI bindings
+│   ├── ara2-sys/           # FFI bindings
+│   │   ├── Cargo.toml
+│   │   └── src/
+│   │       ├── lib.rs      # Lint configuration
+│   │       └── ffi.rs      # Generated C bindings (bindgen)
+│   │
+│   └── ara2-py/            # Python bindings (PyO3)
 │       ├── Cargo.toml
+│       ├── pyproject.toml
+│       ├── edgefirst_ara2.pyi  # Type stubs for IDE support
 │       └── src/
-│           ├── lib.rs      # Lint configuration
-│           └── ffi.rs      # Generated C bindings (bindgen)
+│           ├── lib.rs      # Module registration
+│           ├── session.rs  # Session pyclass
+│           ├── endpoint.rs # Endpoint pyclass
+│           ├── model.rs    # Model + InferRequest pyclasses
+│           ├── error.rs    # Exception hierarchy
+│           ├── types.rs    # Data type pyclasses
+│           └── metadata.rs # DVM metadata pyclasses
 │
 └── examples/               # Example applications
     ├── yolov8.rs           # YOLOv8 detection/segmentation
+    ├── yolov8.py           # YOLOv8 Python equivalent
+    ├── async_infer.rs      # Async inference benchmark (Rust)
+    ├── async_infer.py      # Async inference benchmark (Python)
+    ├── endpoints.py        # Endpoint discovery
     └── test_dvm_metadata.rs
 ```
 
@@ -104,6 +121,13 @@ Session ──Arc──▶ SessionInner (lib handle + session ptr)
                    │
                    ▼
                Model ──Arc──▶ SessionInner
+                   │
+                   └─ submit()
+                          │
+                          ▼
+                      InferRequest ──Arc──▶ SessionInner
+                          │
+                          └─ (borrows Model's tensor buffers)
 ```
 
 - **Session**: Cheaply cloneable (reference counted). Multiple handles share
@@ -113,6 +137,10 @@ Session ──Arc──▶ SessionInner (lib handle + session ptr)
   endpoints from the list are dropped.
 - **Model**: NOT cloneable. Owns its loaded NPU resources. Automatically
   unloaded via `dv_model_unload` on drop.
+- **InferRequest**: Created by `Model::submit()`. Holds an `Arc` to the
+  session for the wait call. Borrows the model's tensor buffers (caller must
+  keep the `Model` alive). Freed via `dv_infer_free` on drop (cancels if
+  still pending).
 
 ### Thread Safety
 
@@ -120,6 +148,9 @@ Session ──Arc──▶ SessionInner (lib handle + session ptr)
 - `Endpoint` is `Send + Sync` — can be shared across threads
 - `Model` is `Send` but NOT `Sync` — can be moved between threads but
   inference operations must not be called concurrently
+- `InferRequest` is `Send` — can be moved to another thread and waited on
+  there (e.g., submit from a preprocessing thread, wait from a
+  postprocessing thread)
 
 For multi-model parallelism, load separate `Model` instances per thread.
 
@@ -151,6 +182,8 @@ pub enum Error {
     Library(libloading::Error), // Library loading failures
     Ara2(dv_status_code),       // NPU/proxy error codes
     NullPointer(String),        // Null pointer from FFI
+    InferenceFailed,            // Async inference failed on NPU
+    InferenceNotCompleted(u32), // Unexpected completion status
     // ... HAL-gated variants for tensor/image errors
 }
 ```
@@ -159,6 +192,8 @@ All error variants implement `std::error::Error` with proper `source()`
 chaining for integration with `anyhow` and `eyre`.
 
 ## Inference Pipeline
+
+### Synchronous
 
 ```
 1. Session::create_via_unix_socket()
@@ -182,3 +217,33 @@ chaining for integration with `anyhow` and `eyre`.
 7. Read output data from model.output_tensor(i)
    └─▶ Dequantize and decode results
 ```
+
+### Asynchronous (submit/wait)
+
+Steps 1–5 are identical. Step 6 is replaced with:
+
+```
+6a. model.submit()
+    └─▶ Non-blocking — returns InferRequest immediately
+    └─▶ NPU begins executing inference in the background
+
+6b. CPU work (preprocess next frame, postprocess previous, etc.)
+    └─▶ Overlaps with NPU execution
+
+6c. request.wait(timeout_ms)
+    └─▶ Blocks until NPU finishes, returns ModelTiming
+    └─▶ InferRequest is consumed and freed
+
+7. Read output data from model.output_tensor(i)
+   └─▶ Same as synchronous path
+```
+
+The async path enables pipeline parallelism: while the NPU executes
+inference on frame N, the CPU can preprocess frame N+1 or postprocess
+frame N-1. This is the pattern used by the profiler's pipelining engine.
+
+### Monitoring
+
+`session.inflight_count()` returns the number of submitted requests that
+have not yet completed. Useful for pipeline depth monitoring and
+backpressure.

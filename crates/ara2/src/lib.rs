@@ -1,3 +1,55 @@
+//! Rust client library for the [Kinara](https://kinara.ai) ARA-2 neural
+//! network accelerator.
+//!
+//! Provides session management, endpoint enumeration, model loading, and
+//! inference (both synchronous and asynchronous) on NXP i.MX platforms
+//! equipped with ARA-2 PCIe hardware.
+//!
+//! # Quick Start
+//!
+//! ```no_run
+//! use ara2::{Session, DEFAULT_SOCKET, DEFAULT_TIMEOUT_MS};
+//! use edgefirst_hal::tensor::{TensorMemory, TensorTrait as _};
+//!
+//! // Connect to the ARA-2 proxy service
+//! let session = Session::create_via_unix_socket(DEFAULT_SOCKET)?;
+//! let endpoints = session.list_endpoints()?;
+//!
+//! // Load model and allocate DMA-backed tensors
+//! let mut model = endpoints[0].load_model_from_file("model.dvm".as_ref())?;
+//! model.allocate_tensors(Some(TensorMemory::Dma))?;
+//!
+//! // Synchronous inference
+//! let timing = model.run()?;
+//! println!("NPU inference: {:?}", timing.run_time);
+//! # Ok::<(), ara2::Error>(())
+//! ```
+//!
+//! # Async Inference
+//!
+//! The [`Model::submit`] / [`InferRequest::wait`] API enables overlapping
+//! CPU work with NPU execution — the building block for pipeline
+//! parallelism:
+//!
+//! ```no_run
+//! # use ara2::{Session, DEFAULT_SOCKET, DEFAULT_TIMEOUT_MS};
+//! # let session = Session::create_via_unix_socket(DEFAULT_SOCKET)?;
+//! # let endpoints = session.list_endpoints()?;
+//! # let mut model = endpoints[0].load_model_from_file("m.dvm".as_ref())?;
+//! # model.allocate_tensors(None)?;
+//! // Submit — returns immediately while NPU works
+//! let request = model.submit()?;
+//!
+//! // CPU is free: preprocess next frame, run postprocessing, etc.
+//!
+//! // Wait for result
+//! let timing = request.wait(DEFAULT_TIMEOUT_MS)?;
+//! # Ok::<(), ara2::Error>(())
+//! ```
+//!
+//! See [`InferRequest`] for details on ownership, thread safety, and
+//! error handling.
+
 use ara2_sys::araclient;
 
 pub mod dvm_metadata;

@@ -188,6 +188,38 @@ if metadata:
 labels = edgefirst_ara2.read_labels("model.dvm")
 ```
 
+## Async Inference
+
+The `submit()` / `wait()` API enables overlapping CPU work with NPU
+execution. This is the building block for pipeline parallelism — while
+the NPU runs inference on one frame, the CPU can preprocess the next.
+
+```python
+import edgefirst_ara2 as ara2
+
+session = ara2.Session.create_via_unix_socket(ara2.DEFAULT_SOCKET)
+endpoint = session.list_endpoints()[0]
+model = endpoint.load_model("model.dvm")
+model.allocate_tensors()
+
+# Submit — returns immediately while NPU works
+request = model.submit()
+print(f"Request #{request.request_id} submitted")
+
+# CPU is free to do other work here...
+# The GIL is NOT held during wait(), so other Python threads can run
+
+timing = request.wait()  # blocks until NPU finishes
+print(f"NPU inference: {timing.run_time_us} µs")
+
+# Monitor pipeline depth
+print(f"In-flight: {session.inflight_count()}")
+```
+
+> **Warning:** Do not call `model.allocate_tensors()` while an
+> `InferRequest` is still pending — the NPU is actively reading/writing
+> the tensor buffers.
+
 ## API Reference
 
 ### Session
@@ -201,6 +233,7 @@ Connection to the ARA-2 proxy service.
 **Methods:**
 - `versions() -> dict[str, str]` - Get component versions
 - `list_endpoints() -> list[Endpoint]` - List available endpoints
+- `inflight_count() -> int` - Number of pending async inference requests
 
 **Properties:**
 - `socket_type: str` - "unix" or "tcp"
@@ -221,7 +254,8 @@ Loaded neural network model.
 **Lifecycle:**
 - `allocate_tensors(memory: str | None = None)` - Allocate tensors ("dma", "shm", "mem", or None)
 - `set_timeout_ms(timeout_ms: int)` - Set inference timeout
-- `run() -> ModelTiming` - Execute inference
+- `run() -> ModelTiming` - Execute inference synchronously
+- `submit() -> InferRequest` - Submit inference asynchronously (returns immediately)
 
 **Tensor I/O (numpy):**
 - `set_input_tensor(index: int, data: np.ndarray)` - Copy data into input
@@ -241,6 +275,16 @@ Loaded neural network model.
 - `input_bpp(i) -> int`, `output_bpp(i) -> int` - Bytes per element
 - `input_info(i) -> InputTensorInfo`, `output_info(i) -> OutputTensorInfo`
 - `input_quants(i) -> InputQuantization`, `output_quants(i) -> OutputQuantization`
+
+### InferRequest
+
+Pending asynchronous inference request, created by `Model.submit()`.
+
+**Methods:**
+- `wait(timeout_ms: int = 1000) -> ModelTiming` - Block until complete (GIL released)
+
+**Properties:**
+- `request_id: int` - Proxy-assigned ID for log correlation
 
 ### Metadata Functions
 

@@ -291,6 +291,15 @@ class Session:
         """List all available ARA-2 endpoints."""
         ...
 
+    def inflight_count(self) -> int:
+        """Get the number of in-flight inference requests.
+
+        Returns the count of requests submitted via :meth:`Model.submit`
+        that the client library has not yet received a response for.
+        Useful for monitoring pipeline depth.
+        """
+        ...
+
     @property
     def socket_type(self) -> Literal["unix", "tcp"]:
         """Socket type used for this connection."""
@@ -394,6 +403,31 @@ class Model:
             TensorError: If tensors have not been allocated.
             ModelError: If inference times out (increase with ``set_timeout_ms``).
             HardwareError: If the NPU is in a fault or thermal state.
+        """
+        ...
+
+    def submit(self) -> InferRequest:
+        """Submit inference asynchronously.
+
+        Returns an :class:`InferRequest` handle immediately without
+        blocking. Call :meth:`InferRequest.wait` to retrieve the result
+        once the NPU finishes.
+
+        This enables overlapping CPU work (e.g., preprocessing the next
+        frame) with NPU execution — the key building block for pipeline
+        parallelism.
+
+        The model's tensors must not be reallocated (via
+        ``allocate_tensors()``) while the returned request is pending.
+
+        Example::
+
+            request = model.submit()
+            # ... preprocess next frame while NPU is busy ...
+            timing = request.wait()
+
+        Raises:
+            TensorError: If tensors have not been allocated.
         """
         ...
 
@@ -594,6 +628,64 @@ class Model:
 
     def __enter__(self) -> Model: ...
     def __exit__(self, exc_type: type | None, exc_val: BaseException | None, exc_tb: object) -> bool: ...
+    def __repr__(self) -> str: ...
+
+class InferRequest:
+    """A pending asynchronous inference request.
+
+    Created by :meth:`Model.submit`. Call :meth:`wait` to block until
+    the NPU finishes and retrieve timing information. The GIL is released
+    during ``wait()`` so other Python threads can run concurrently.
+
+    The underlying request is freed automatically when the object is
+    garbage-collected or when ``wait()`` returns.
+
+    Example::
+
+        request = model.submit()
+        # ... preprocess next frame while NPU is busy ...
+        timing = request.wait()
+        print(f"NPU inference: {timing.run_time_us} us")
+
+    Warning:
+        Do not call ``model.allocate_tensors()`` while an InferRequest
+        is still pending — the NPU is reading/writing the tensor buffers.
+    """
+
+    def wait(self, timeout_ms: int = 1000) -> ModelTiming:
+        """Block until the inference completes and return timing.
+
+        The GIL is released during the wait, allowing other Python
+        threads to run concurrently.
+
+        Consumes the request — calling ``wait()`` a second time raises
+        ``Ara2Error``.
+
+        Args:
+            timeout_ms: Maximum wait time in milliseconds (default: 1000).
+                        Increase for large models.
+
+        Returns:
+            ModelTiming: Timing information for the completed inference.
+
+        Raises:
+            Ara2Error: If the request was already consumed, inference
+                       failed, or the wait timed out.
+        """
+        ...
+
+    @property
+    def request_id(self) -> int:
+        """Proxy-assigned request ID for log correlation.
+
+        Each submitted request gets a unique ID from the proxy. Use it
+        to correlate client events with ``journalctl -u ara2`` logs.
+
+        Raises:
+            Ara2Error: If the request has already been consumed.
+        """
+        ...
+
     def __repr__(self) -> str: ...
 
 # =============================================================================
@@ -822,6 +914,7 @@ __all__ = [
     "Session",
     "Endpoint",
     "Model",
+    "InferRequest",
     # Metadata
     "read_metadata",
     "read_labels",

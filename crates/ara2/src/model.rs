@@ -51,6 +51,38 @@ pub const DEFAULT_TIMEOUT_MS: i32 = 1000;
 ///
 /// The model keeps the session alive through reference counting, so it's
 /// safe to drop the original `Session` and `Endpoint` handles after loading.
+///
+/// # Inference Modes
+///
+/// Two inference modes are available:
+///
+/// - **Synchronous** — [`run()`](Self::run) blocks until the NPU finishes
+///   and returns timing. Simplest path for single-inference workloads.
+/// - **Asynchronous** — [`submit()`](Self::submit) returns an
+///   [`InferRequest`] handle immediately, allowing the CPU to do other work
+///   (e.g., preprocessing the next frame) while the NPU executes. Call
+///   [`InferRequest::wait()`] to retrieve the result.
+///
+/// # Example
+///
+/// ```no_run
+/// use ara2::{Session, DEFAULT_SOCKET, DEFAULT_TIMEOUT_MS};
+/// use edgefirst_hal::tensor::TensorMemory;
+///
+/// let session = Session::create_via_unix_socket(DEFAULT_SOCKET)?;
+/// let endpoints = session.list_endpoints()?;
+/// let mut model = endpoints[0].load_model_from_file("model.dvm".as_ref())?;
+/// model.allocate_tensors(Some(TensorMemory::Dma))?;
+///
+/// // Synchronous inference
+/// let timing = model.run()?;
+///
+/// // Asynchronous inference — overlap CPU work with NPU execution
+/// let request = model.submit()?;
+/// // ... do CPU work here while the NPU is busy ...
+/// let timing = request.wait(DEFAULT_TIMEOUT_MS)?;
+/// # Ok::<(), ara2::Error>(())
+/// ```
 pub struct Model {
     session: Arc<SessionInner>,
     endpoint_ptr: *mut dv_endpoint,
@@ -165,8 +197,26 @@ impl Model {
     /// Run inference synchronously on the model using the pre-allocated
     /// tensors.
     ///
-    /// Call `allocate_tensors` before calling this method to set up
-    /// input and output buffers.
+    /// Blocks until the NPU finishes and returns timing statistics. For
+    /// workloads where you want to overlap CPU preprocessing with NPU
+    /// execution, use [`submit()`](Self::submit) instead.
+    ///
+    /// Call [`allocate_tensors`](Self::allocate_tensors) before calling
+    /// this method to set up input and output buffers.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use ara2::{Session, DEFAULT_SOCKET};
+    /// # let session = Session::create_via_unix_socket(DEFAULT_SOCKET)?;
+    /// # let endpoints = session.list_endpoints()?;
+    /// # let mut model = endpoints[0].load_model_from_file("m.dvm".as_ref())?;
+    /// # model.allocate_tensors(None)?;
+    /// let timing = model.run()?;
+    /// println!("NPU: {:?}, DMA in: {:?}, DMA out: {:?}",
+    ///     timing.run_time, timing.input_time, timing.output_time);
+    /// # Ok::<(), ara2::Error>(())
+    /// ```
     pub fn run(&mut self) -> Result<ModelTiming, Error> {
         let (mut input_blobs, mut output_blobs) = self.build_blobs()?;
 
@@ -204,7 +254,8 @@ impl Model {
     ///
     /// Returns an [`InferRequest`] handle immediately without waiting for
     /// the NPU to finish. Call [`InferRequest::wait`] to block until the
-    /// result is ready.
+    /// result is ready. This enables overlapping CPU preprocessing with
+    /// NPU execution — the key building block for pipeline parallelism.
     ///
     /// # Safety contract
     ///
@@ -213,8 +264,28 @@ impl Model {
     /// returned `InferRequest` is still pending. The NPU reads from and
     /// writes to the tensor buffers asynchronously.
     ///
-    /// Call `allocate_tensors` before calling this method to set up
-    /// input and output buffers.
+    /// Call [`allocate_tensors`](Self::allocate_tensors) before calling
+    /// this method to set up input and output buffers.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use ara2::{Session, DEFAULT_SOCKET, DEFAULT_TIMEOUT_MS};
+    /// # let session = Session::create_via_unix_socket(DEFAULT_SOCKET)?;
+    /// # let endpoints = session.list_endpoints()?;
+    /// # let mut model = endpoints[0].load_model_from_file("m.dvm".as_ref())?;
+    /// # model.allocate_tensors(None)?;
+    /// // Submit inference — returns immediately
+    /// let request = model.submit()?;
+    ///
+    /// // CPU is free to do other work while the NPU executes
+    /// println!("Request #{} submitted", request.request_id()?);
+    ///
+    /// // Block until the NPU finishes (up to 1000ms)
+    /// let timing = request.wait(DEFAULT_TIMEOUT_MS)?;
+    /// println!("NPU inference: {:?}", timing.run_time);
+    /// # Ok::<(), ara2::Error>(())
+    /// ```
     pub fn submit(&mut self) -> Result<InferRequest, Error> {
         let (mut input_blobs, mut output_blobs) = self.build_blobs()?;
 
@@ -648,12 +719,36 @@ fn extract_timing(request: *mut dv_infer_request) -> ModelTiming {
 /// `dv_infer_free`. If the request has not completed when it is dropped,
 /// the C library cancels it.
 ///
+/// # Thread safety
+///
+/// `InferRequest` is [`Send`] — it can be moved to another thread and
+/// waited on there. This enables patterns like submitting from a
+/// preprocessing thread and waiting from a postprocessing thread.
+///
 /// # Ownership
 ///
 /// The `InferRequest` borrows the model's tensor buffers. The caller must
 /// keep the originating [`Model`] alive (and must not call
 /// [`allocate_tensors`](Model::allocate_tensors)) until this request is
 /// consumed by [`wait`](Self::wait) or dropped.
+///
+/// # Example
+///
+/// ```no_run
+/// # use ara2::{Session, DEFAULT_SOCKET, DEFAULT_TIMEOUT_MS};
+/// # let session = Session::create_via_unix_socket(DEFAULT_SOCKET)?;
+/// # let endpoints = session.list_endpoints()?;
+/// # let mut model = endpoints[0].load_model_from_file("m.dvm".as_ref())?;
+/// # model.allocate_tensors(None)?;
+/// let request = model.submit()?;
+/// let id = request.request_id()?;
+///
+/// // Do preprocessing for the next frame while NPU is busy...
+///
+/// let timing = request.wait(DEFAULT_TIMEOUT_MS)?;
+/// println!("Request {id}: NPU={:?}", timing.run_time);
+/// # Ok::<(), ara2::Error>(())
+/// ```
 pub struct InferRequest {
     session: Arc<SessionInner>,
     ptr: *mut dv_infer_request,
@@ -667,12 +762,36 @@ unsafe impl Send for InferRequest {}
 impl InferRequest {
     /// Block until this inference request completes and return timing.
     ///
-    /// # Arguments
-    /// * `timeout_ms` - Maximum time in milliseconds to wait. Use
-    ///   [`DEFAULT_TIMEOUT_MS`] for the default (1000 ms).
-    ///
     /// Consumes the request handle — the underlying C object is freed
-    /// after extracting timing information.
+    /// after extracting timing information. Calling `wait` a second time
+    /// is not possible since `self` is moved.
+    ///
+    /// # Arguments
+    ///
+    /// * `timeout_ms` - Maximum time in milliseconds to wait. Use
+    ///   [`DEFAULT_TIMEOUT_MS`] for the default (1000 ms). Increase for
+    ///   large models that take longer to execute.
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::Ara2`] — the wait call itself failed (e.g., timeout)
+    /// - [`Error::InferenceFailed`] — the NPU reported a failure
+    /// - [`Error::InferenceNotCompleted`] — the request finished with an
+    ///   unexpected status code
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use ara2::{Session, DEFAULT_SOCKET, DEFAULT_TIMEOUT_MS};
+    /// # let session = Session::create_via_unix_socket(DEFAULT_SOCKET)?;
+    /// # let endpoints = session.list_endpoints()?;
+    /// # let mut model = endpoints[0].load_model_from_file("m.dvm".as_ref())?;
+    /// # model.allocate_tensors(None)?;
+    /// let request = model.submit()?;
+    /// let timing = request.wait(DEFAULT_TIMEOUT_MS)?;
+    /// println!("Inference took {:?}", timing.run_time);
+    /// # Ok::<(), ara2::Error>(())
+    /// ```
     pub fn wait(self, timeout_ms: i32) -> Result<ModelTiming, Error> {
         let mut completed: *mut dv_infer_request = std::ptr::null_mut();
         let mut list = [self.ptr];
@@ -704,6 +823,23 @@ impl InferRequest {
     }
 
     /// Get the proxy-assigned request ID for log correlation.
+    ///
+    /// Each submitted inference request is assigned a unique ID by the
+    /// proxy service. This can be used to correlate client-side events
+    /// with proxy-side logs (e.g., `journalctl -u ara2`).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use ara2::{Session, DEFAULT_SOCKET};
+    /// # let session = Session::create_via_unix_socket(DEFAULT_SOCKET)?;
+    /// # let endpoints = session.list_endpoints()?;
+    /// # let mut model = endpoints[0].load_model_from_file("m.dvm".as_ref())?;
+    /// # model.allocate_tensors(None)?;
+    /// let request = model.submit()?;
+    /// println!("Submitted request #{}", request.request_id()?);
+    /// # Ok::<(), ara2::Error>(())
+    /// ```
     pub fn request_id(&self) -> Result<u64, Error> {
         let mut req_id: u64 = 0;
         let err = unsafe { self.session.lib.dv_infer_get_req_id(self.ptr, &mut req_id) };

@@ -84,6 +84,17 @@ impl Session {
         Ok(endpoints.into_iter().map(Endpoint).collect())
     }
 
+    /// Get the number of in-flight inference requests for this session.
+    ///
+    /// Returns the count of requests submitted via :meth:`Model.submit`
+    /// that the client library has not yet received a response for.
+    ///
+    /// Returns:
+    ///     int: Number of pending inference requests
+    fn inflight_count(&self) -> PyResult<i32> {
+        self.inner()?.inflight_count().map_err(to_py_err)
+    }
+
     /// Get the socket type used for this session.
     #[getter]
     fn socket_type(&self) -> PyResult<&str> {
