@@ -14,8 +14,8 @@ pub use dvm_metadata::{
 pub use endpoint::{DramStatistics, Endpoint, State};
 pub use error::Error;
 pub use model::{
-    DEFAULT_TIMEOUT_MS, InputPreprocess, InputQuantization, InputTensor, Model, ModelOutputType,
-    ModelTiming, OutputQuantization, OutputTensor,
+    DEFAULT_TIMEOUT_MS, InferRequest, InputPreprocess, InputQuantization, InputTensor, Model,
+    ModelOutputType, ModelTiming, OutputQuantization, OutputTensor,
 };
 pub use session::{Session, SocketType};
 

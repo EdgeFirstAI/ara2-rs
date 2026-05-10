@@ -210,6 +210,24 @@ impl Session {
     pub fn socket_type(&self) -> SocketType {
         self.inner.socket_type
     }
+
+    /// Get the number of in-flight inference requests for this session.
+    ///
+    /// Returns the count of requests submitted via [`Model::submit`] that
+    /// the client library has not yet received a response for from the
+    /// proxy.
+    pub fn inflight_count(&self) -> Result<i32, Error> {
+        let mut count: i32 = 0;
+        let err = unsafe {
+            self.inner
+                .lib
+                .dv_infer_get_inflight_count(self.inner.ptr, &mut count)
+        };
+        if err != 0 {
+            return Err(err.into());
+        }
+        Ok(count)
+    }
 }
 
 /// Shared ownership of the C-allocated endpoint list buffer.

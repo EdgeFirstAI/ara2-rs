@@ -52,3 +52,7 @@ path = "../../examples/yolov8.rs"
 name = "yolov8_live"
 path = "../../examples/yolov8_live.rs"
 required-features = ["camera"]
+
+[[example]]
+name = "async_infer"
+path = "../../examples/async_infer.rs"

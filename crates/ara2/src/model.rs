@@ -1,6 +1,8 @@
 use crate::{Error, session::SessionInner};
 use ara2_sys::{
-    DV_LAYER_OUTPUT_TYPE, dv_blob, dv_endpoint, dv_infer_request, dv_model, dv_shm_descriptor,
+    DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_COMPLETED,
+    DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_FAILED, DV_LAYER_OUTPUT_TYPE, dv_blob, dv_endpoint,
+    dv_infer_request, dv_model, dv_shm_descriptor,
 };
 use edgefirst_hal::tensor::{Tensor, TensorMapTrait as _, TensorMemory, TensorTrait};
 use log::debug;
@@ -99,72 +101,74 @@ impl Model {
         self.timeout_ms = timeout_ms;
     }
 
-    /// Run inference on the model using the pre-allocated tensors.
+    /// Build blob descriptors from the pre-allocated tensor buffers.
+    ///
+    /// Returns `(input_blobs, output_blobs)`. For SHM/DMA tensors the blob
+    /// references the registered descriptor; for plain memory it references
+    /// the mapped pointer directly.
+    fn build_blobs(&self) -> Result<(Vec<dv_blob>, Vec<dv_blob>), Error> {
+        let input_blobs = self
+            .inputs
+            .iter()
+            .map(|tensor| {
+                let blob = if tensor.1.is_null() {
+                    let map = tensor.0.map()?;
+                    (
+                        map.as_ptr() as *mut std::ffi::c_void,
+                        ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_RAW_POINTER,
+                    )
+                } else {
+                    (
+                        tensor.1 as *mut std::ffi::c_void,
+                        ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_SHM_DESCRIPTOR,
+                    )
+                };
+
+                Ok(dv_blob {
+                    handle: blob.0,
+                    offset: 0,
+                    size: tensor.0.size() as u64,
+                    blob_type: blob.1,
+                })
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
+
+        let output_blobs = self
+            .outputs
+            .iter()
+            .map(|tensor| {
+                let blob = if tensor.1.is_null() {
+                    let map = tensor.0.map()?;
+                    (
+                        map.as_ptr() as *mut std::ffi::c_void,
+                        ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_RAW_POINTER,
+                    )
+                } else {
+                    (
+                        tensor.1 as *mut std::ffi::c_void,
+                        ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_SHM_DESCRIPTOR,
+                    )
+                };
+
+                Ok(dv_blob {
+                    handle: blob.0,
+                    offset: 0,
+                    size: tensor.0.size() as u64,
+                    blob_type: blob.1,
+                })
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
+
+        Ok((input_blobs, output_blobs))
+    }
+
+    /// Run inference synchronously on the model using the pre-allocated
+    /// tensors.
     ///
     /// Call `allocate_tensors` before calling this method to set up
     /// input and output buffers.
     pub fn run(&mut self) -> Result<ModelTiming, Error> {
-        let input_maps = self
-            .inputs
-            .iter()
-            .map(|t| t.0.map())
-            .collect::<Result<Vec<_>, _>>()?;
-        let mut input_blobs = self
-            .inputs
-            .iter()
-            .zip(input_maps.iter())
-            .map(|(tensor, map)| {
-                let blob = if tensor.1.is_null() {
-                    (
-                        map.as_ptr() as *mut std::ffi::c_void,
-                        ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_RAW_POINTER,
-                    )
-                } else {
-                    (
-                        tensor.1 as *mut std::ffi::c_void,
-                        ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_SHM_DESCRIPTOR,
-                    )
-                };
-
-                dv_blob {
-                    handle: blob.0,
-                    offset: 0,
-                    size: tensor.0.size() as u64,
-                    blob_type: blob.1,
-                }
-            })
-            .collect::<Vec<_>>();
-
-        let output_maps = self
-            .outputs
-            .iter()
-            .map(|t| t.0.map())
-            .collect::<Result<Vec<_>, _>>()?;
-        let mut output_blobs = self
-            .outputs
-            .iter()
-            .zip(output_maps.iter())
-            .map(|(tensor, map)| {
-                let blob = if tensor.1.is_null() {
-                    (
-                        map.as_ptr() as *mut std::ffi::c_void,
-                        ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_RAW_POINTER,
-                    )
-                } else {
-                    (
-                        tensor.1 as *mut std::ffi::c_void,
-                        ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_SHM_DESCRIPTOR,
-                    )
-                };
-
-                dv_blob {
-                    handle: blob.0,
-                    offset: 0,
-                    size: tensor.0.size() as u64,
-                    blob_type: blob.1,
-                }
-            })
-            .collect::<Vec<_>>();
+        let (mut input_blobs, mut output_blobs) = self.build_blobs()?;
 
         let mut request: *mut dv_infer_request = std::ptr::null_mut();
 
@@ -185,14 +189,7 @@ impl Model {
             return Err(err.into());
         }
 
-        let timing: ModelTiming = unsafe {
-            let timing_ptr = (*request).stats;
-            ModelTiming {
-                run_time: Duration::from_micros((*timing_ptr).inference_execution_time as u64),
-                input_time: Duration::from_micros((*timing_ptr).input_transfer_time as u64),
-                output_time: Duration::from_micros((*timing_ptr).output_transfer_time as u64),
-            }
-        };
+        let timing = extract_timing(request);
 
         let err = unsafe { self.session.lib.dv_infer_free(request) };
 
@@ -201,6 +198,48 @@ impl Model {
         }
 
         Ok(timing)
+    }
+
+    /// Submit inference asynchronously.
+    ///
+    /// Returns an [`InferRequest`] handle immediately without waiting for
+    /// the NPU to finish. Call [`InferRequest::wait`] to block until the
+    /// result is ready.
+    ///
+    /// # Safety contract
+    ///
+    /// The caller **must not** drop or reallocate this model's tensors
+    /// (via [`allocate_tensors`](Self::allocate_tensors)) while the
+    /// returned `InferRequest` is still pending. The NPU reads from and
+    /// writes to the tensor buffers asynchronously.
+    ///
+    /// Call `allocate_tensors` before calling this method to set up
+    /// input and output buffers.
+    pub fn submit(&mut self) -> Result<InferRequest, Error> {
+        let (mut input_blobs, mut output_blobs) = self.build_blobs()?;
+
+        let mut request: *mut dv_infer_request = std::ptr::null_mut();
+
+        let err = unsafe {
+            self.session.lib.dv_infer_async(
+                self.session.ptr,
+                self.endpoint_ptr,
+                self.ptr,
+                input_blobs.as_mut_ptr(),
+                output_blobs.as_mut_ptr(),
+                true,
+                &mut request,
+            )
+        };
+
+        if err != 0 {
+            return Err(err.into());
+        }
+
+        Ok(InferRequest {
+            session: Arc::clone(&self.session),
+            ptr: request,
+        })
     }
 
     /// Get a mutable reference to an input tensor.
@@ -579,6 +618,106 @@ impl Model {
                     is_signed: (*params).is_signed,
                 },
             })
+        }
+    }
+}
+
+/// Extract [`ModelTiming`] from a completed inference request.
+///
+/// # Safety
+///
+/// The `request` pointer must be non-null and point to a valid, completed
+/// `dv_infer_request` whose `stats` field is populated.
+fn extract_timing(request: *mut dv_infer_request) -> ModelTiming {
+    unsafe {
+        let timing_ptr = (*request).stats;
+        ModelTiming {
+            run_time: Duration::from_micros((*timing_ptr).inference_execution_time as u64),
+            input_time: Duration::from_micros((*timing_ptr).input_transfer_time as u64),
+            output_time: Duration::from_micros((*timing_ptr).output_transfer_time as u64),
+        }
+    }
+}
+
+/// A pending asynchronous inference request.
+///
+/// Created by [`Model::submit`]. Call [`wait`](Self::wait) to block until
+/// the NPU finishes and retrieve timing statistics.
+///
+/// The underlying C request is freed automatically on drop via
+/// `dv_infer_free`. If the request has not completed when it is dropped,
+/// the C library cancels it.
+///
+/// # Ownership
+///
+/// The `InferRequest` borrows the model's tensor buffers. The caller must
+/// keep the originating [`Model`] alive (and must not call
+/// [`allocate_tensors`](Model::allocate_tensors)) until this request is
+/// consumed by [`wait`](Self::wait) or dropped.
+pub struct InferRequest {
+    session: Arc<SessionInner>,
+    ptr: *mut dv_infer_request,
+}
+
+// Safety: The C library is internally synchronized for inference
+// request operations. The pointer is only used through the library
+// handle.
+unsafe impl Send for InferRequest {}
+
+impl InferRequest {
+    /// Block until this inference request completes and return timing.
+    ///
+    /// # Arguments
+    /// * `timeout_ms` - Maximum time in milliseconds to wait. Use
+    ///   [`DEFAULT_TIMEOUT_MS`] for the default (1000 ms).
+    ///
+    /// Consumes the request handle — the underlying C object is freed
+    /// after extracting timing information.
+    pub fn wait(self, timeout_ms: i32) -> Result<ModelTiming, Error> {
+        let mut completed: *mut dv_infer_request = std::ptr::null_mut();
+        let mut list = [self.ptr];
+
+        let err = unsafe {
+            self.session.lib.dv_infer_wait_for_completion(
+                self.session.ptr,
+                list.as_mut_ptr(),
+                1,
+                timeout_ms,
+                &mut completed,
+            )
+        };
+
+        if err != 0 {
+            return Err(err.into());
+        }
+
+        let status = unsafe { (*self.ptr).status };
+        if status == DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_FAILED {
+            return Err(Error::InferenceFailed);
+        }
+        if status != DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_COMPLETED {
+            return Err(Error::InferenceNotCompleted(status));
+        }
+
+        Ok(extract_timing(self.ptr))
+        // Drop runs here, calling dv_infer_free
+    }
+
+    /// Get the proxy-assigned request ID for log correlation.
+    pub fn request_id(&self) -> Result<u64, Error> {
+        let mut req_id: u64 = 0;
+        let err = unsafe { self.session.lib.dv_infer_get_req_id(self.ptr, &mut req_id) };
+        if err != 0 {
+            return Err(err.into());
+        }
+        Ok(req_id)
+    }
+}
+
+impl Drop for InferRequest {
+    fn drop(&mut self) {
+        unsafe {
+            self.session.lib.dv_infer_free(self.ptr);
         }
     }
 }

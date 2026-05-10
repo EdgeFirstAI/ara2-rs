@@ -36,6 +36,7 @@ fn init(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<session::Session>()?;
     m.add_class::<endpoint::Endpoint>()?;
     m.add_class::<model::Model>()?;
+    m.add_class::<model::InferRequest>()?;
 
     // Type classes
     m.add_class::<types::State>()?;
