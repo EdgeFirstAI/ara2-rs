@@ -294,10 +294,11 @@ impl Model {
     /// # Ok::<(), ara2::Error>(())
     /// ```
     pub fn submit(&mut self) -> Result<InferRequest, Error> {
-        // `_map_guards` keeps memory mappings alive through the FFI call.
-        // For async inference the NPU copies blob data during submission,
-        // so guards only need to survive the `dv_infer_async` call itself.
-        let (mut input_blobs, mut output_blobs, _map_guards) = self.build_blobs()?;
+        // Map guards keep DMA-BUF memory mappings alive. For RAW_POINTER
+        // blobs the NPU references the mapped pointers throughout
+        // execution, so guards are stored in InferRequest and dropped
+        // only after wait() or cancellation.
+        let (mut input_blobs, mut output_blobs, map_guards) = self.build_blobs()?;
 
         let mut request: *mut dv_infer_request = std::ptr::null_mut();
 
@@ -317,9 +318,16 @@ impl Model {
             return Err(err.into());
         }
 
+        if request.is_null() {
+            return Err(Error::NullPointer(
+                "dv_infer_async returned null request pointer".to_owned(),
+            ));
+        }
+
         Ok(InferRequest {
             session: Arc::clone(&self.session),
             ptr: request,
+            _map_guards: map_guards,
         })
     }
 
@@ -773,11 +781,18 @@ fn extract_timing(request: *mut dv_infer_request) -> Result<ModelTiming, Error> 
 pub struct InferRequest {
     session: Arc<SessionInner>,
     ptr: *mut dv_infer_request,
+    /// Keeps DMA-BUF memory mappings alive until the request completes.
+    /// For `RAW_POINTER` blobs the NPU references the mapped pointers
+    /// throughout execution, so these guards must not be dropped until
+    /// after `wait()` or cancellation via `Drop`.
+    _map_guards: Vec<TensorMap<u8>>,
 }
 
 // Safety: The C library is internally synchronized for inference
-// request operations. The pointer is only used through the library
-// handle.
+// request operations. InferRequest is Send (movable between threads)
+// but not Sync (not shared). The pointer is only used through the
+// library handle. See `request_id()` docs for thread-safety notes
+// on `dv_infer_get_req_id`.
 unsafe impl Send for InferRequest {}
 
 impl InferRequest {
@@ -884,6 +899,15 @@ impl InferRequest {
     /// Each submitted inference request is assigned a unique ID by the
     /// proxy service. This can be used to correlate client-side events
     /// with proxy-side logs (e.g., `journalctl -u ara2`).
+    ///
+    /// # Thread safety
+    ///
+    /// The underlying C function `dv_infer_get_req_id` is documented as
+    /// not thread-safe. Although `InferRequest` is [`Send`], it is not
+    /// [`Sync`], so a single request cannot be shared across threads.
+    /// Calling `request_id()` on *different* `InferRequest` handles from
+    /// different threads is safe in practice (the C function reads from
+    /// per-request state, not global state).
     ///
     /// # Example
     ///
