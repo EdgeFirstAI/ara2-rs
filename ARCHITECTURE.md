@@ -44,7 +44,7 @@ ARA-2 neural network accelerator devices via the ARA-2 proxy service.
               │
               ▼
 ┌───────────────────────────┐
-│       ARA-2 Proxy         │
+│    ARA-2 Proxy (dvproxy)  │
 │    (System Service)       │
 └─────────────┬─────────────┘
               │

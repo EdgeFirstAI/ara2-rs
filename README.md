@@ -120,7 +120,9 @@ benchmark comparing synchronous vs. asynchronous inference.
 The following must be present on the target system:
 
 - **`libaraclient.so.1`** — Kinara client library (from the ARA-2 SDK)
-- **`ara2-proxy`** — System service providing NPU access, must be running
+- **`ara2-proxy` / `dvproxy`** — System service providing NPU access, must be running
+  (systemd unit name is platform-dependent: `ara2.service` on EdgeFirst Yocto images,
+  `dvproxy.service` on other platforms)
 - **ARA-2 hardware** — PCIe accelerator card visible via `lspci`
 
 ## Building

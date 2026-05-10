@@ -15,9 +15,10 @@ Python Application ──(UNIX/TCP socket)──▶ ara2-proxy ──(PCIe)─�
 edgefirst-hal ──(DMA-BUF fd)──▶ GPU preprocessing (zero-copy)
 ```
 
-Your Python code connects to the `ara2-proxy` system service (not directly
+Your Python code connects to the `dvproxy` system service (not directly
 to the hardware). The proxy manages device access and must be running before
-your application starts.
+your application starts. The systemd unit name is platform-dependent:
+`ara2.service` on EdgeFirst Yocto images, `dvproxy.service` on other platforms.
 
 ## Installation
 

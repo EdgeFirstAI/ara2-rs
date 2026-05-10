@@ -776,8 +776,8 @@ impl InferRequest {
     ///
     /// - [`Error::Ara2`] — the wait call itself failed (e.g., timeout)
     /// - [`Error::InferenceFailed`] — the NPU reported a failure
-    /// - [`Error::InferenceNotCompleted`] — the request finished with an
-    ///   unexpected status code
+    /// - [`Error::NullPointer`] — the C API returned a null completed
+    ///   pointer (should not happen in practice)
     ///
     /// # Example
     ///
@@ -796,30 +796,47 @@ impl InferRequest {
         let mut completed: *mut dv_infer_request = std::ptr::null_mut();
         let mut list = [self.ptr];
 
-        let err = unsafe {
-            self.session.lib.dv_infer_wait_for_completion(
-                self.session.ptr,
-                list.as_mut_ptr(),
-                1,
-                timeout_ms,
-                &mut completed,
-            )
-        };
+        // Loop until the request reaches a terminal state (COMPLETED or
+        // FAILED). The C API's `dv_infer_wait_for_completion` returns
+        // whenever a request's status changes, which may be an
+        // intermediate transition (e.g., QUEUED → RUNNING). We re-call
+        // with the same timeout each iteration — the proxy tracks
+        // elapsed time internally.
+        loop {
+            let err = unsafe {
+                self.session.lib.dv_infer_wait_for_completion(
+                    self.session.ptr,
+                    list.as_mut_ptr(),
+                    1,
+                    timeout_ms,
+                    &mut completed,
+                )
+            };
 
-        if err != 0 {
-            return Err(err.into());
-        }
+            if err != 0 {
+                return Err(err.into());
+            }
 
-        let status = unsafe { (*self.ptr).status };
-        if status == DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_FAILED {
-            return Err(Error::InferenceFailed);
-        }
-        if status != DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_COMPLETED {
-            return Err(Error::InferenceNotCompleted(status));
-        }
+            // Use the `completed` out-parameter to read status — this is
+            // the request whose state actually changed, as documented by
+            // the C API.
+            if completed.is_null() {
+                return Err(Error::NullPointer(
+                    "dv_infer_wait_for_completion returned null completed pointer".to_owned(),
+                ));
+            }
 
-        Ok(extract_timing(self.ptr))
-        // Drop runs here, calling dv_infer_free
+            let status = unsafe { (*completed).status };
+            if status == DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_COMPLETED {
+                return Ok(extract_timing(completed));
+                // Drop runs here, calling dv_infer_free
+            }
+            if status == DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_FAILED {
+                return Err(Error::InferenceFailed);
+            }
+            // Intermediate status (QUEUED, RUNNING, etc.) — loop and
+            // wait again for the terminal state.
+        }
     }
 
     /// Get the proxy-assigned request ID for log correlation.
@@ -1129,6 +1146,53 @@ mod tests {
 
         let timing = model.run().expect("inference should succeed");
         assert!(timing.run_time.as_micros() > 0, "run_time should be > 0");
+    }
+
+    #[test]
+    fn test_model_submit_and_wait() {
+        let session = crate::tests::test_session();
+        let endpoints = session.list_endpoints().unwrap();
+        let endpoint = &endpoints[0];
+        let model_path = crate::tests::test_model_path();
+
+        let mut model = endpoint.load_model_from_file(&model_path).unwrap();
+        model
+            .allocate_tensors(None)
+            .expect("should allocate tensors");
+
+        // Submit async inference
+        let request = model.submit().expect("submit should succeed");
+        let req_id = request.request_id().expect("should get request id");
+        assert!(req_id > 0, "request_id should be > 0");
+
+        // Wait for completion
+        let timing = request
+            .wait(super::DEFAULT_TIMEOUT_MS)
+            .expect("wait should succeed");
+        assert!(timing.run_time.as_micros() > 0, "run_time should be > 0");
+
+        // No in-flight requests after wait
+        let count = session.inflight_count().expect("should get inflight count");
+        assert_eq!(count, 0, "inflight count should be 0 after wait");
+    }
+
+    #[test]
+    fn test_model_submit_drop_without_wait() {
+        let session = crate::tests::test_session();
+        let endpoints = session.list_endpoints().unwrap();
+        let endpoint = &endpoints[0];
+        let model_path = crate::tests::test_model_path();
+
+        let mut model = endpoint.load_model_from_file(&model_path).unwrap();
+        model.allocate_tensors(None).unwrap();
+
+        // Submit and drop without waiting — should not panic or leak
+        let request = model.submit().expect("submit should succeed");
+        drop(request);
+
+        // Verify we can still run inference after dropping a request
+        let timing = model.run().expect("inference should succeed after drop");
+        assert!(timing.run_time.as_micros() > 0);
     }
 }
 

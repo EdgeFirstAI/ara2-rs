@@ -19,7 +19,7 @@ Usage::
 
 Requirements:
     edgefirst-ara2
-    ARA-2 proxy service running (ara2-proxy / ara2.service)
+    ARA-2 proxy service running (dvproxy — systemd unit: ara2.service or dvproxy.service)
 """
 
 import edgefirst_ara2 as ara2
