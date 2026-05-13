@@ -60,3 +60,7 @@ path = "../../examples/async_infer.rs"
 [[example]]
 name = "async_pipeline"
 path = "../../examples/async_pipeline.rs"
+
+[[example]]
+name = "async_multi_model"
+path = "../../examples/async_multi_model.rs"
