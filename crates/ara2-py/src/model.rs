@@ -593,10 +593,14 @@ impl Model {
     ///
     /// Raises:
     ///     TensorError: If tensors have not been allocated
-    fn submit(&mut self) -> PyResult<InferRequest> {
-        self.check_allocated()?;
-        let req = self.inner_mut()?.submit().map_err(to_py_err)?;
-        Ok(InferRequest(Some(req)))
+    fn submit(slf: &Bound<'_, Self>) -> PyResult<InferRequest> {
+        let mut this = slf.borrow_mut();
+        this.check_allocated()?;
+        let req = this.inner_mut()?.submit().map_err(to_py_err)?;
+        Ok(InferRequest {
+            inner: Some(req),
+            _model: slf.clone().unbind(),
+        })
     }
 
     /// Unload the model and release its resources.
@@ -660,7 +664,13 @@ fn memory_type_str(memory: TensorMemory) -> &'static str {
 ///     # ... pre-process next frame while NPU is busy ...
 ///     timing = request.wait()
 #[pyclass(module = "edgefirst_ara2", unsendable)]
-pub struct InferRequest(Option<ara2::InferRequest>);
+pub struct InferRequest {
+    inner: Option<ara2::InferRequest>,
+    /// Prevent the originating Model from being garbage-collected while
+    /// the request is pending — the NPU references the model's tensor
+    /// buffers asynchronously.
+    _model: Py<Model>,
+}
 
 #[pymethods]
 impl InferRequest {
@@ -681,7 +691,7 @@ impl InferRequest {
     #[pyo3(signature = (timeout_ms=1000))]
     fn wait(&mut self, py: Python<'_>, timeout_ms: i32) -> PyResult<ModelTiming> {
         let req = self
-            .0
+            .inner
             .take()
             .ok_or_else(|| error::Ara2Error::new_err("inference request already consumed"))?;
         let timing = py.detach(|| req.wait(timeout_ms).map_err(to_py_err))?;
@@ -698,14 +708,14 @@ impl InferRequest {
     #[getter]
     fn request_id(&self) -> PyResult<u64> {
         let req = self
-            .0
+            .inner
             .as_ref()
             .ok_or_else(|| error::Ara2Error::new_err("inference request already consumed"))?;
         req.request_id().map_err(to_py_err)
     }
 
     fn __repr__(&self) -> String {
-        match &self.0 {
+        match &self.inner {
             Some(_) => "InferRequest(pending)".to_string(),
             None => "InferRequest(consumed)".to_string(),
         }

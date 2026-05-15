@@ -16,7 +16,7 @@
 //! ```
 
 use ara2::{DEFAULT_TIMEOUT_MS, Session};
-use std::{env, path::PathBuf, process, time::Instant};
+use std::{env, hint::black_box, path::PathBuf, process, time::Instant};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -101,10 +101,11 @@ fn main() {
 
         // Simulate preprocessing work that overlaps with NPU inference.
         let cpu_start = Instant::now();
-        let mut _dummy: u64 = 0;
+        let mut dummy: u64 = 0;
         for j in 0..100_000u64 {
-            _dummy = _dummy.wrapping_add(j);
+            dummy = dummy.wrapping_add(j);
         }
+        black_box(dummy);
         let cpu_time = cpu_start.elapsed();
 
         let timing = request.wait(DEFAULT_TIMEOUT_MS).expect("Wait failed");

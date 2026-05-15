@@ -254,7 +254,7 @@ The GitHub Actions workflows run the following checks:
 
 | Workflow | What runs |
 |----------|-----------|
-| `test.yml` | `cargo fmt --check`, `cargo clippy`, `cargo test -p ara2 dvm_metadata` |
+| `test.yml` | `cargo fmt --all -- --check`, `cargo clippy --workspace --exclude ara2-py --all-targets -- -D warnings`, `cargo nextest run -p ara2 -E 'test(dvm_metadata)'` |
 | `build.yml` | Release build for x86_64 and aarch64 |
 | `python.yml` | Python wheel build with maturin + zig |
 

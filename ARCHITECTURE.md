@@ -95,6 +95,10 @@ ara2-rs/
     ├── yolov8.py           # YOLOv8 Python equivalent
     ├── async_infer.rs      # Async inference benchmark (Rust)
     ├── async_infer.py      # Async inference benchmark (Python)
+    ├── async_pipeline.rs   # Pipelined async inference (Rust)
+    ├── async_pipeline.py   # Pipelined async inference (Python)
+    ├── async_multi_model.rs # Multi-model async pipeline (Rust)
+    ├── async_multi_model.py # Multi-model async pipeline (Python)
     ├── endpoints.py        # Endpoint discovery
     └── test_dvm_metadata.rs
 ```

@@ -67,11 +67,13 @@ fn model_name(path: &std::path::Path) -> String {
 }
 
 /// Print throughput statistics for a benchmark run.
-fn print_stats(label: &str, elapsed: std::time::Duration, iterations: usize) {
+fn print_stats(_label: &str, elapsed: std::time::Duration, iterations: usize) {
     let ms = elapsed.as_secs_f64() * 1000.0;
     let fps = iterations as f64 / elapsed.as_secs_f64();
-    println!("  Total: {ms:.2}ms, Avg: {:.2}ms/iter, Throughput: {fps:.1} fps", ms / iterations as f64);
-    let _ = label;
+    println!(
+        "  Total: {ms:.2}ms, Avg: {:.2}ms/iter, Throughput: {fps:.1} fps",
+        ms / iterations as f64
+    );
 }
 
 fn main() {
@@ -118,8 +120,16 @@ fn main() {
         .allocate_tensors(None)
         .expect("Failed to allocate tensors for B");
 
-    println!("Model A: {name_a} ({} in, {} out)", model_a.n_inputs(), model_a.n_outputs());
-    println!("Model B: {name_b} ({} in, {} out)", model_b.n_inputs(), model_b.n_outputs());
+    println!(
+        "Model A: {name_a} ({} in, {} out)",
+        model_a.n_inputs(),
+        model_a.n_outputs()
+    );
+    println!(
+        "Model B: {name_b} ({} in, {} out)",
+        model_b.n_inputs(),
+        model_b.n_outputs()
+    );
 
     // Warm-up
     model_a.run().expect("Warm-up A failed");
@@ -256,6 +266,8 @@ fn main() {
     );
     println!("╚══════════════════════════════════════════════════════╝");
 
-    let count = session.inflight_count().expect("Failed to get inflight count");
+    let count = session
+        .inflight_count()
+        .expect("Failed to get inflight count");
     println!("In-flight requests remaining: {count}");
 }

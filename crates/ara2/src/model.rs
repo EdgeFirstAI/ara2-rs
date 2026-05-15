@@ -246,12 +246,16 @@ impl Model {
             return Err(err.into());
         }
 
-        let timing = extract_timing(request)?;
+        let timing = extract_timing(request);
 
-        let err = unsafe { self.session.lib.dv_infer_free(request) };
+        // Always free the request, even if extract_timing failed.
+        let free_err = unsafe { self.session.lib.dv_infer_free(request) };
 
-        if err != 0 {
-            return Err(err.into());
+        // Return the timing error first (more informative), then check free.
+        let timing = timing?;
+
+        if free_err != 0 {
+            return Err(free_err.into());
         }
 
         Ok(timing)
@@ -294,10 +298,10 @@ impl Model {
     /// # Ok::<(), ara2::Error>(())
     /// ```
     pub fn submit(&mut self) -> Result<InferRequest, Error> {
-        // Map guards keep DMA-BUF memory mappings alive. For RAW_POINTER
-        // blobs the NPU references the mapped pointers throughout
-        // execution, so guards are stored in InferRequest and dropped
-        // only after wait() or cancellation.
+        // Map guards keep raw-pointer memory mappings alive. For
+        // RAW_POINTER blobs the NPU references the mapped pointers
+        // throughout execution, so guards are stored in InferRequest
+        // and dropped only after wait() or cancellation.
         let (mut input_blobs, mut output_blobs, map_guards) = self.build_blobs()?;
 
         let mut request: *mut dv_infer_request = std::ptr::null_mut();
@@ -781,7 +785,7 @@ fn extract_timing(request: *mut dv_infer_request) -> Result<ModelTiming, Error> 
 pub struct InferRequest {
     session: Arc<SessionInner>,
     ptr: *mut dv_infer_request,
-    /// Keeps DMA-BUF memory mappings alive until the request completes.
+    /// Keeps raw-pointer memory mappings alive until the request completes.
     /// For `RAW_POINTER` blobs the NPU references the mapped pointers
     /// throughout execution, so these guards must not be dropped until
     /// after `wait()` or cancellation via `Drop`.
