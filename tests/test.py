@@ -17,7 +17,7 @@ class TestPublicSurface(unittest.TestCase):
 
     def test_classes_present(self):
         for name in [
-            "Session", "Endpoint", "Model",
+            "Session", "Endpoint", "Model", "InferRequest",
             "InputQuantization", "InputPreprocess", "OutputQuantization",
             "InputTensorInfo", "OutputTensorInfo", "ModelTiming",
             "DvmMetadata", "Ara2Info",

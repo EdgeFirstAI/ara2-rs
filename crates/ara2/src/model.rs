@@ -1,8 +1,11 @@
 use crate::{Error, session::SessionInner};
 use ara2_sys::{
-    DV_LAYER_OUTPUT_TYPE, dv_blob, dv_endpoint, dv_infer_request, dv_model, dv_shm_descriptor,
+    DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_COMPLETED,
+    DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_FAILED, DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_QUEUED,
+    DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_RUNNING, DV_LAYER_OUTPUT_TYPE, dv_blob, dv_endpoint,
+    dv_infer_request, dv_model, dv_shm_descriptor,
 };
-use edgefirst_hal::tensor::{Tensor, TensorMapTrait as _, TensorMemory, TensorTrait};
+use edgefirst_hal::tensor::{Tensor, TensorMap, TensorMapTrait as _, TensorMemory, TensorTrait};
 use log::debug;
 use ndarray::parallel::prelude::{
     IndexedParallelIterator as _, IntoParallelRefMutIterator as _, ParallelIterator as _,
@@ -49,6 +52,38 @@ pub const DEFAULT_TIMEOUT_MS: i32 = 1000;
 ///
 /// The model keeps the session alive through reference counting, so it's
 /// safe to drop the original `Session` and `Endpoint` handles after loading.
+///
+/// # Inference Modes
+///
+/// Two inference modes are available:
+///
+/// - **Synchronous** — [`run()`](Self::run) blocks until the NPU finishes
+///   and returns timing. Simplest path for single-inference workloads.
+/// - **Asynchronous** — [`submit()`](Self::submit) returns an
+///   [`InferRequest`] handle immediately, allowing the CPU to do other work
+///   (e.g., preprocessing the next frame) while the NPU executes. Call
+///   [`InferRequest::wait()`] to retrieve the result.
+///
+/// # Example
+///
+/// ```no_run
+/// use ara2::{Session, DEFAULT_SOCKET, DEFAULT_TIMEOUT_MS};
+/// use edgefirst_hal::tensor::TensorMemory;
+///
+/// let session = Session::create_via_unix_socket(DEFAULT_SOCKET)?;
+/// let endpoints = session.list_endpoints()?;
+/// let mut model = endpoints[0].load_model_from_file("model.dvm".as_ref())?;
+/// model.allocate_tensors(Some(TensorMemory::Dma))?;
+///
+/// // Synchronous inference
+/// let timing = model.run()?;
+///
+/// // Asynchronous inference — overlap CPU work with NPU execution
+/// let request = model.submit()?;
+/// // ... do CPU work here while the NPU is busy ...
+/// let timing = request.wait(DEFAULT_TIMEOUT_MS)?;
+/// # Ok::<(), ara2::Error>(())
+/// ```
 pub struct Model {
     session: Arc<SessionInner>,
     endpoint_ptr: *mut dv_endpoint,
@@ -73,6 +108,9 @@ impl std::fmt::Debug for Model {
 // Model should be Send to allow moving between threads, but not Sync
 // as inference operations are not thread-safe.
 unsafe impl Send for Model {}
+
+/// Blob descriptors paired with map guards that keep memory mappings alive.
+type BlobsWithGuards = (Vec<dv_blob>, Vec<dv_blob>, Vec<TensorMap<u8>>);
 
 impl Model {
     /// Create a new Model instance.
@@ -99,72 +137,95 @@ impl Model {
         self.timeout_ms = timeout_ms;
     }
 
-    /// Run inference on the model using the pre-allocated tensors.
+    /// Build blob descriptors from the pre-allocated tensor buffers.
     ///
-    /// Call `allocate_tensors` before calling this method to set up
-    /// input and output buffers.
+    /// Returns `(input_blobs, output_blobs, map_guards)`. For SHM/DMA
+    /// tensors the blob references the registered descriptor; for plain
+    /// memory it references the mapped pointer directly. The returned
+    /// `map_guards` vector keeps the memory mappings alive — callers must
+    /// hold it until the FFI call using the blobs has completed.
+    fn build_blobs(&self) -> Result<BlobsWithGuards, Error> {
+        let mut map_guards: Vec<TensorMap<u8>> = Vec::new();
+
+        let input_blobs = self
+            .inputs
+            .iter()
+            .map(|tensor| {
+                let blob = if tensor.1.is_null() {
+                    let map = tensor.0.map()?;
+                    let ptr = map.as_ptr() as *mut std::ffi::c_void;
+                    map_guards.push(map);
+                    (ptr, ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_RAW_POINTER)
+                } else {
+                    (
+                        tensor.1 as *mut std::ffi::c_void,
+                        ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_SHM_DESCRIPTOR,
+                    )
+                };
+
+                Ok(dv_blob {
+                    handle: blob.0,
+                    offset: 0,
+                    size: tensor.0.size() as u64,
+                    blob_type: blob.1,
+                })
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
+
+        let output_blobs = self
+            .outputs
+            .iter()
+            .map(|tensor| {
+                let blob = if tensor.1.is_null() {
+                    let map = tensor.0.map()?;
+                    let ptr = map.as_ptr() as *mut std::ffi::c_void;
+                    map_guards.push(map);
+                    (ptr, ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_RAW_POINTER)
+                } else {
+                    (
+                        tensor.1 as *mut std::ffi::c_void,
+                        ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_SHM_DESCRIPTOR,
+                    )
+                };
+
+                Ok(dv_blob {
+                    handle: blob.0,
+                    offset: 0,
+                    size: tensor.0.size() as u64,
+                    blob_type: blob.1,
+                })
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
+
+        Ok((input_blobs, output_blobs, map_guards))
+    }
+
+    /// Run inference synchronously on the model using the pre-allocated
+    /// tensors.
+    ///
+    /// Blocks until the NPU finishes and returns timing statistics. For
+    /// workloads where you want to overlap CPU preprocessing with NPU
+    /// execution, use [`submit()`](Self::submit) instead.
+    ///
+    /// Call [`allocate_tensors`](Self::allocate_tensors) before calling
+    /// this method to set up input and output buffers.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use ara2::{Session, DEFAULT_SOCKET};
+    /// # let session = Session::create_via_unix_socket(DEFAULT_SOCKET)?;
+    /// # let endpoints = session.list_endpoints()?;
+    /// # let mut model = endpoints[0].load_model_from_file("m.dvm".as_ref())?;
+    /// # model.allocate_tensors(None)?;
+    /// let timing = model.run()?;
+    /// println!("NPU: {:?}, DMA in: {:?}, DMA out: {:?}",
+    ///     timing.run_time, timing.input_time, timing.output_time);
+    /// # Ok::<(), ara2::Error>(())
+    /// ```
     pub fn run(&mut self) -> Result<ModelTiming, Error> {
-        let input_maps = self
-            .inputs
-            .iter()
-            .map(|t| t.0.map())
-            .collect::<Result<Vec<_>, _>>()?;
-        let mut input_blobs = self
-            .inputs
-            .iter()
-            .zip(input_maps.iter())
-            .map(|(tensor, map)| {
-                let blob = if tensor.1.is_null() {
-                    (
-                        map.as_ptr() as *mut std::ffi::c_void,
-                        ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_RAW_POINTER,
-                    )
-                } else {
-                    (
-                        tensor.1 as *mut std::ffi::c_void,
-                        ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_SHM_DESCRIPTOR,
-                    )
-                };
-
-                dv_blob {
-                    handle: blob.0,
-                    offset: 0,
-                    size: tensor.0.size() as u64,
-                    blob_type: blob.1,
-                }
-            })
-            .collect::<Vec<_>>();
-
-        let output_maps = self
-            .outputs
-            .iter()
-            .map(|t| t.0.map())
-            .collect::<Result<Vec<_>, _>>()?;
-        let mut output_blobs = self
-            .outputs
-            .iter()
-            .zip(output_maps.iter())
-            .map(|(tensor, map)| {
-                let blob = if tensor.1.is_null() {
-                    (
-                        map.as_ptr() as *mut std::ffi::c_void,
-                        ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_RAW_POINTER,
-                    )
-                } else {
-                    (
-                        tensor.1 as *mut std::ffi::c_void,
-                        ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_SHM_DESCRIPTOR,
-                    )
-                };
-
-                dv_blob {
-                    handle: blob.0,
-                    offset: 0,
-                    size: tensor.0.size() as u64,
-                    blob_type: blob.1,
-                }
-            })
-            .collect::<Vec<_>>();
+        // `_map_guards` keeps memory mappings alive through the FFI call.
+        let (mut input_blobs, mut output_blobs, _map_guards) = self.build_blobs()?;
 
         let mut request: *mut dv_infer_request = std::ptr::null_mut();
 
@@ -185,22 +246,93 @@ impl Model {
             return Err(err.into());
         }
 
-        let timing: ModelTiming = unsafe {
-            let timing_ptr = (*request).stats;
-            ModelTiming {
-                run_time: Duration::from_micros((*timing_ptr).inference_execution_time as u64),
-                input_time: Duration::from_micros((*timing_ptr).input_transfer_time as u64),
-                output_time: Duration::from_micros((*timing_ptr).output_transfer_time as u64),
-            }
-        };
+        let timing = extract_timing(request);
 
-        let err = unsafe { self.session.lib.dv_infer_free(request) };
+        // Always free the request, even if extract_timing failed.
+        let free_err = unsafe { self.session.lib.dv_infer_free(request) };
+
+        // Return the timing error first (more informative), then check free.
+        let timing = timing?;
+
+        if free_err != 0 {
+            return Err(free_err.into());
+        }
+
+        Ok(timing)
+    }
+
+    /// Submit inference asynchronously.
+    ///
+    /// Returns an [`InferRequest`] handle immediately without waiting for
+    /// the NPU to finish. Call [`InferRequest::wait`] to block until the
+    /// result is ready. This enables overlapping CPU preprocessing with
+    /// NPU execution — the key building block for pipeline parallelism.
+    ///
+    /// # Safety contract
+    ///
+    /// The caller **must not** drop or reallocate this model's tensors
+    /// (via [`allocate_tensors`](Self::allocate_tensors)) while the
+    /// returned `InferRequest` is still pending. The NPU reads from and
+    /// writes to the tensor buffers asynchronously.
+    ///
+    /// Call [`allocate_tensors`](Self::allocate_tensors) before calling
+    /// this method to set up input and output buffers.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use ara2::{Session, DEFAULT_SOCKET, DEFAULT_TIMEOUT_MS};
+    /// # let session = Session::create_via_unix_socket(DEFAULT_SOCKET)?;
+    /// # let endpoints = session.list_endpoints()?;
+    /// # let mut model = endpoints[0].load_model_from_file("m.dvm".as_ref())?;
+    /// # model.allocate_tensors(None)?;
+    /// // Submit inference — returns immediately
+    /// let request = model.submit()?;
+    ///
+    /// // CPU is free to do other work while the NPU executes
+    /// println!("Request #{} submitted", request.request_id()?);
+    ///
+    /// // Block until the NPU finishes (up to 1000ms)
+    /// let timing = request.wait(DEFAULT_TIMEOUT_MS)?;
+    /// println!("NPU inference: {:?}", timing.run_time);
+    /// # Ok::<(), ara2::Error>(())
+    /// ```
+    pub fn submit(&mut self) -> Result<InferRequest, Error> {
+        // Map guards keep raw-pointer memory mappings alive. For
+        // RAW_POINTER blobs the NPU references the mapped pointers
+        // throughout execution, so guards are stored in InferRequest
+        // and dropped only after wait() or cancellation.
+        let (mut input_blobs, mut output_blobs, map_guards) = self.build_blobs()?;
+
+        let mut request: *mut dv_infer_request = std::ptr::null_mut();
+
+        let err = unsafe {
+            self.session.lib.dv_infer_async(
+                self.session.ptr,
+                self.endpoint_ptr,
+                self.ptr,
+                input_blobs.as_mut_ptr(),
+                output_blobs.as_mut_ptr(),
+                true,
+                &mut request,
+            )
+        };
 
         if err != 0 {
             return Err(err.into());
         }
 
-        Ok(timing)
+        if request.is_null() {
+            return Err(Error::NullPointer(
+                "dv_infer_async returned null request pointer".to_owned(),
+            ));
+        }
+
+        Ok(InferRequest {
+            session: Arc::clone(&self.session),
+            ptr: request,
+            _map_guards: map_guards,
+        })
     }
 
     /// Get a mutable reference to an input tensor.
@@ -583,6 +715,234 @@ impl Model {
     }
 }
 
+/// Extract [`ModelTiming`] from a completed inference request.
+///
+/// # Safety
+///
+/// The `request` pointer must be non-null and point to a valid, completed
+/// `dv_infer_request`.
+///
+/// # Errors
+///
+/// Returns [`Error::NullPointer`] if the `stats` field is null, which
+/// indicates the C library did not populate timing data (e.g., statistics
+/// were not enabled).
+fn extract_timing(request: *mut dv_infer_request) -> Result<ModelTiming, Error> {
+    unsafe {
+        let timing_ptr = (*request).stats;
+        if timing_ptr.is_null() {
+            return Err(Error::NullPointer(
+                "dv_infer_request.stats is null — timing data unavailable".to_owned(),
+            ));
+        }
+        Ok(ModelTiming {
+            run_time: Duration::from_micros((*timing_ptr).inference_execution_time as u64),
+            input_time: Duration::from_micros((*timing_ptr).input_transfer_time as u64),
+            output_time: Duration::from_micros((*timing_ptr).output_transfer_time as u64),
+        })
+    }
+}
+
+/// A pending asynchronous inference request.
+///
+/// Created by [`Model::submit`]. Call [`wait`](Self::wait) to block until
+/// the NPU finishes and retrieve timing statistics.
+///
+/// The underlying C request is freed automatically on drop via
+/// `dv_infer_free`. If the request has not completed when it is dropped,
+/// the C library cancels it.
+///
+/// # Thread safety
+///
+/// `InferRequest` is [`Send`] — it can be moved to another thread and
+/// waited on there. This enables patterns like submitting from a
+/// preprocessing thread and waiting from a postprocessing thread.
+///
+/// # Ownership
+///
+/// The `InferRequest` borrows the model's tensor buffers. The caller must
+/// keep the originating [`Model`] alive (and must not call
+/// [`allocate_tensors`](Model::allocate_tensors)) until this request is
+/// consumed by [`wait`](Self::wait) or dropped.
+///
+/// # Example
+///
+/// ```no_run
+/// # use ara2::{Session, DEFAULT_SOCKET, DEFAULT_TIMEOUT_MS};
+/// # let session = Session::create_via_unix_socket(DEFAULT_SOCKET)?;
+/// # let endpoints = session.list_endpoints()?;
+/// # let mut model = endpoints[0].load_model_from_file("m.dvm".as_ref())?;
+/// # model.allocate_tensors(None)?;
+/// let request = model.submit()?;
+/// let id = request.request_id()?;
+///
+/// // Do preprocessing for the next frame while NPU is busy...
+///
+/// let timing = request.wait(DEFAULT_TIMEOUT_MS)?;
+/// println!("Request {id}: NPU={:?}", timing.run_time);
+/// # Ok::<(), ara2::Error>(())
+/// ```
+pub struct InferRequest {
+    session: Arc<SessionInner>,
+    ptr: *mut dv_infer_request,
+    /// Keeps raw-pointer memory mappings alive until the request completes.
+    /// For `RAW_POINTER` blobs the NPU references the mapped pointers
+    /// throughout execution, so these guards must not be dropped until
+    /// after `wait()` or cancellation via `Drop`.
+    _map_guards: Vec<TensorMap<u8>>,
+}
+
+// Safety: The C library is internally synchronized for inference
+// request operations. InferRequest is Send (movable between threads)
+// but not Sync (not shared). The pointer is only used through the
+// library handle. See `request_id()` docs for thread-safety notes
+// on `dv_infer_get_req_id`.
+unsafe impl Send for InferRequest {}
+
+impl InferRequest {
+    /// Block until this inference request completes and return timing.
+    ///
+    /// Consumes the request handle — the underlying C object is freed
+    /// after extracting timing information. Calling `wait` a second time
+    /// is not possible since `self` is moved.
+    ///
+    /// # Cancellation on error
+    ///
+    /// Because `wait` takes `self` by value, any error (including timeout)
+    /// drops the `InferRequest`, which calls `dv_infer_free` and cancels
+    /// the in-flight request. If you need longer wait times, increase
+    /// `timeout_ms` rather than retrying — the timeout applies per poll
+    /// iteration, not cumulatively.
+    ///
+    /// # Arguments
+    ///
+    /// * `timeout_ms` - Maximum time in milliseconds to wait per poll
+    ///   iteration. Use [`DEFAULT_TIMEOUT_MS`] for the default (1000 ms).
+    ///   Increase for large models that take longer to execute.
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::Ara2`] — the wait call itself failed (e.g., timeout
+    ///   expired). The request is cancelled on drop.
+    /// - [`Error::InferenceFailed`] — the NPU reported a failure
+    /// - [`Error::InferenceNotCompleted`] — the request reached an
+    ///   unexpected terminal state (e.g., UNKNOWN)
+    /// - [`Error::NullPointer`] — the C API returned a null pointer
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use ara2::{Session, DEFAULT_SOCKET, DEFAULT_TIMEOUT_MS};
+    /// # let session = Session::create_via_unix_socket(DEFAULT_SOCKET)?;
+    /// # let endpoints = session.list_endpoints()?;
+    /// # let mut model = endpoints[0].load_model_from_file("m.dvm".as_ref())?;
+    /// # model.allocate_tensors(None)?;
+    /// let request = model.submit()?;
+    /// let timing = request.wait(DEFAULT_TIMEOUT_MS)?;
+    /// println!("Inference took {:?}", timing.run_time);
+    /// # Ok::<(), ara2::Error>(())
+    /// ```
+    pub fn wait(self, timeout_ms: i32) -> Result<ModelTiming, Error> {
+        let mut completed: *mut dv_infer_request = std::ptr::null_mut();
+        let mut list = [self.ptr];
+
+        // Loop until the request reaches a terminal state (COMPLETED,
+        // FAILED, or UNKNOWN). The C API's `dv_infer_wait_for_completion`
+        // returns whenever a request's status changes, which may be an
+        // intermediate transition (e.g., QUEUED → RUNNING). We re-call
+        // with the same timeout each iteration — the proxy tracks
+        // elapsed time internally.
+        loop {
+            let err = unsafe {
+                self.session.lib.dv_infer_wait_for_completion(
+                    self.session.ptr,
+                    list.as_mut_ptr(),
+                    1,
+                    timeout_ms,
+                    &mut completed,
+                )
+            };
+
+            if err != 0 {
+                return Err(err.into());
+            }
+
+            // Use the `completed` out-parameter to read status — this is
+            // the request whose state actually changed, as documented by
+            // the C API.
+            if completed.is_null() {
+                return Err(Error::NullPointer(
+                    "dv_infer_wait_for_completion returned null completed pointer".to_owned(),
+                ));
+            }
+
+            let status = unsafe { (*completed).status };
+            match status {
+                DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_COMPLETED => {
+                    return extract_timing(completed);
+                    // Drop runs here, calling dv_infer_free
+                }
+                DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_FAILED => {
+                    return Err(Error::InferenceFailed);
+                }
+                DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_QUEUED
+                | DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_RUNNING => {
+                    // Intermediate status — loop and wait for terminal state.
+                }
+                _ => {
+                    // UNKNOWN or any unexpected status — treat as terminal error
+                    // to avoid infinite loops.
+                    return Err(Error::InferenceNotCompleted(status));
+                }
+            }
+        }
+    }
+
+    /// Get the proxy-assigned request ID for log correlation.
+    ///
+    /// Each submitted inference request is assigned a unique ID by the
+    /// proxy service. This can be used to correlate client-side events
+    /// with proxy-side logs (e.g., `journalctl -u ara2`).
+    ///
+    /// # Thread safety
+    ///
+    /// The underlying C function `dv_infer_get_req_id` is documented as
+    /// not thread-safe. Although `InferRequest` is [`Send`], it is not
+    /// [`Sync`], so a single request cannot be shared across threads.
+    /// Calling `request_id()` on *different* `InferRequest` handles from
+    /// different threads is safe in practice (the C function reads from
+    /// per-request state, not global state).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use ara2::{Session, DEFAULT_SOCKET};
+    /// # let session = Session::create_via_unix_socket(DEFAULT_SOCKET)?;
+    /// # let endpoints = session.list_endpoints()?;
+    /// # let mut model = endpoints[0].load_model_from_file("m.dvm".as_ref())?;
+    /// # model.allocate_tensors(None)?;
+    /// let request = model.submit()?;
+    /// println!("Submitted request #{}", request.request_id()?);
+    /// # Ok::<(), ara2::Error>(())
+    /// ```
+    pub fn request_id(&self) -> Result<u64, Error> {
+        let mut req_id: u64 = 0;
+        let err = unsafe { self.session.lib.dv_infer_get_req_id(self.ptr, &mut req_id) };
+        if err != 0 {
+            return Err(err.into());
+        }
+        Ok(req_id)
+    }
+}
+
+impl Drop for InferRequest {
+    fn drop(&mut self) {
+        unsafe {
+            self.session.lib.dv_infer_free(self.ptr);
+        }
+    }
+}
+
 impl Drop for Model {
     fn drop(&mut self) {
         unsafe {
@@ -854,6 +1214,54 @@ mod tests {
 
         let timing = model.run().expect("inference should succeed");
         assert!(timing.run_time.as_micros() > 0, "run_time should be > 0");
+    }
+
+    #[test]
+    fn test_model_submit_and_wait() {
+        let session = crate::tests::test_session();
+        let endpoints = session.list_endpoints().unwrap();
+        let endpoint = &endpoints[0];
+        let model_path = crate::tests::test_model_path();
+
+        let mut model = endpoint.load_model_from_file(&model_path).unwrap();
+        model
+            .allocate_tensors(None)
+            .expect("should allocate tensors");
+
+        // Submit async inference
+        let request = model.submit().expect("submit should succeed");
+        // Just verify request_id() succeeds — IDs are proxy-assigned and
+        // may start at 0.
+        let _req_id = request.request_id().expect("should get request id");
+
+        // Wait for completion
+        let timing = request
+            .wait(super::DEFAULT_TIMEOUT_MS)
+            .expect("wait should succeed");
+        assert!(timing.run_time.as_micros() > 0, "run_time should be > 0");
+
+        // No in-flight requests after wait
+        let count = session.inflight_count().expect("should get inflight count");
+        assert_eq!(count, 0, "inflight count should be 0 after wait");
+    }
+
+    #[test]
+    fn test_model_submit_drop_without_wait() {
+        let session = crate::tests::test_session();
+        let endpoints = session.list_endpoints().unwrap();
+        let endpoint = &endpoints[0];
+        let model_path = crate::tests::test_model_path();
+
+        let mut model = endpoint.load_model_from_file(&model_path).unwrap();
+        model.allocate_tensors(None).unwrap();
+
+        // Submit and drop without waiting — should not panic or leak
+        let request = model.submit().expect("submit should succeed");
+        drop(request);
+
+        // Verify we can still run inference after dropping a request
+        let timing = model.run().expect("inference should succeed after drop");
+        assert!(timing.run_time.as_micros() > 0);
     }
 }
 

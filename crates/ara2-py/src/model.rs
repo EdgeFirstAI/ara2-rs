@@ -580,6 +580,29 @@ impl Model {
         Ok(OutputQuantization::from(q))
     }
 
+    /// Submit inference asynchronously.
+    ///
+    /// Returns an :class:`InferRequest` handle immediately. Call
+    /// :meth:`InferRequest.wait` to block until the result is ready.
+    ///
+    /// The model's tensors must not be reallocated (via
+    /// ``allocate_tensors()``) while the request is pending.
+    ///
+    /// Returns:
+    ///     InferRequest: Handle for the pending inference
+    ///
+    /// Raises:
+    ///     TensorError: If tensors have not been allocated
+    fn submit(slf: &Bound<'_, Self>) -> PyResult<InferRequest> {
+        let mut this = slf.borrow_mut();
+        this.check_allocated()?;
+        let req = this.inner_mut()?.submit().map_err(to_py_err)?;
+        Ok(InferRequest {
+            inner: Some(req),
+            _model: slf.clone().unbind(),
+        })
+    }
+
     /// Unload the model and release its resources.
     ///
     /// After calling ``close()``, any further method call raises
@@ -623,5 +646,78 @@ fn memory_type_str(memory: TensorMemory) -> &'static str {
         // Pbo (OpenGL pixel buffer) is a GPU-backed fallback for system memory;
         // expose it as "mem" since Python users only care about DMA-BUF capability.
         TensorMemory::Mem | TensorMemory::Pbo => "mem",
+    }
+}
+
+/// A pending asynchronous inference request.
+///
+/// Created by :meth:`Model.submit`. Call :meth:`wait` to block until the
+/// NPU finishes and retrieve timing information. The GIL is released
+/// during ``wait()`` so other Python threads can run.
+///
+/// The underlying request is freed automatically when the object is
+/// garbage-collected or when ``wait()`` returns.
+///
+/// Example::
+///
+///     request = model.submit()
+///     # ... pre-process next frame while NPU is busy ...
+///     timing = request.wait()
+#[pyclass(module = "edgefirst_ara2", unsendable)]
+pub struct InferRequest {
+    inner: Option<ara2::InferRequest>,
+    /// Prevent the originating Model from being garbage-collected while
+    /// the request is pending — the NPU references the model's tensor
+    /// buffers asynchronously.
+    _model: Py<Model>,
+}
+
+#[pymethods]
+impl InferRequest {
+    /// Block until the inference completes and return timing.
+    ///
+    /// The GIL is released during the wait so other Python threads can
+    /// proceed concurrently.
+    ///
+    /// Args:
+    ///     timeout_ms: Maximum wait time in milliseconds (default: 1000)
+    ///
+    /// Returns:
+    ///     ModelTiming: Timing information for the completed inference
+    ///
+    /// Raises:
+    ///     Ara2Error: If the request has already been consumed, or
+    ///                inference failed on the NPU
+    #[pyo3(signature = (timeout_ms=1000))]
+    fn wait(&mut self, py: Python<'_>, timeout_ms: i32) -> PyResult<ModelTiming> {
+        let req = self
+            .inner
+            .take()
+            .ok_or_else(|| error::Ara2Error::new_err("inference request already consumed"))?;
+        let timing = py.detach(|| req.wait(timeout_ms).map_err(to_py_err))?;
+        Ok(ModelTiming::from(timing))
+    }
+
+    /// Get the proxy-assigned request ID for log correlation.
+    ///
+    /// Returns:
+    ///     int: The unique request ID assigned by the proxy
+    ///
+    /// Raises:
+    ///     Ara2Error: If the request has already been consumed
+    #[getter]
+    fn request_id(&self) -> PyResult<u64> {
+        let req = self
+            .inner
+            .as_ref()
+            .ok_or_else(|| error::Ara2Error::new_err("inference request already consumed"))?;
+        req.request_id().map_err(to_py_err)
+    }
+
+    fn __repr__(&self) -> String {
+        match &self.inner {
+            Some(_) => "InferRequest(pending)".to_string(),
+            None => "InferRequest(consumed)".to_string(),
+        }
     }
 }

@@ -19,6 +19,8 @@ pub enum Error {
     Json(serde_json::Error),
     UnsupportedQmode(i32),
     TensorSizeMismatch { expected: usize, got: usize },
+    InferenceFailed,
+    InferenceNotCompleted(u32),
 }
 
 impl From<std::io::Error> for Error {
@@ -101,6 +103,10 @@ impl std::fmt::Display for Error {
                 f,
                 "tensor size mismatch: expected {expected} bytes, got {got} bytes"
             ),
+            Error::InferenceFailed => write!(f, "asynchronous inference failed on the NPU"),
+            Error::InferenceNotCompleted(status) => {
+                write!(f, "inference not completed (status={status})")
+            }
         }
     }
 }

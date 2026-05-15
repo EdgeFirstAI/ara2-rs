@@ -18,8 +18,8 @@ ara2 = { version = "0.9.0", path = "crates/ara2" }
 ara2-sys = { version = "0.9.0", path = "crates/ara2-sys" }
 clap = { version = "4.6", features = ["derive"] }
 criterion = "0.8"
-edgefirst-hal = "0.22.0"
-libcamera = "0.7.0"
+edgefirst-hal = "0.22"
+libcamera = "0.7"
 wayland-client = { version = "0.31", default-features = false }
 wayland-protocols = { version = "0.32", features = ["unstable", "client"] }
 image = { version = "0.25", default-features = false, features = [

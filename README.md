@@ -67,12 +67,64 @@ println!("NPU inference: {:?}", timing.run_time);
 # Ok::<(), ara2::Error>(())
 ```
 
+## Async Inference
+
+The `submit()` / `wait()` API enables overlapping CPU work with NPU
+execution — the building block for pipeline parallelism:
+
+```rust
+use ara2::{Session, DEFAULT_SOCKET, DEFAULT_TIMEOUT_MS};
+
+let session = Session::create_via_unix_socket(DEFAULT_SOCKET)?;
+let endpoints = session.list_endpoints()?;
+let mut model = endpoints[0].load_model_from_file("model.dvm".as_ref())?;
+model.allocate_tensors(None)?;
+
+// Submit — returns immediately while the NPU works
+let request = model.submit()?;
+
+// CPU is free to do other work (preprocess next frame, etc.)
+
+// Block until the NPU finishes
+let timing = request.wait(DEFAULT_TIMEOUT_MS)?;
+println!("NPU inference: {:?}", timing.run_time);
+
+// Monitor pipeline depth
+assert_eq!(session.inflight_count()?, 0);
+# Ok::<(), ara2::Error>(())
+```
+
+The Python API mirrors this exactly:
+
+```python
+import edgefirst_ara2 as ara2
+
+session = ara2.Session.create_via_unix_socket(ara2.DEFAULT_SOCKET)
+endpoint = session.list_endpoints()[0]
+model = endpoint.load_model("model.dvm")
+model.allocate_tensors()
+
+# Submit — returns immediately
+request = model.submit()
+
+# CPU work here... the GIL is NOT held during wait()
+timing = request.wait()
+print(f"NPU inference: {timing.run_time_us} µs")
+```
+
+See the [`async_infer`](examples/async_infer.rs) example for a complete
+benchmark comparing synchronous vs. asynchronous inference, and
+[`async_pipeline`](examples/async_pipeline.rs) for pipelined inference
+with a circular buffer of DMA-BUF tensor sets (2x+ throughput improvement).
+
 ## Runtime Requirements
 
 The following must be present on the target system:
 
 - **`libaraclient.so.1`** — Kinara client library (from the ARA-2 SDK)
-- **`ara2-proxy`** — System service providing NPU access, must be running
+- **`ara2-proxy` / `dvproxy`** — System service providing NPU access, must be running
+  (systemd unit name is platform-dependent: `ara2.service` on EdgeFirst Yocto images,
+  `dvproxy.service` on other platforms)
 - **ARA-2 hardware** — PCIe accelerator card visible via `lspci`
 
 ## Building
@@ -119,6 +171,10 @@ physical buffers with no CPU copies in the data path.
 |---------|-------------|
 | [`yolov8.rs`](examples/yolov8.rs) | Rust — YOLOv8 detection + segmentation with letterbox preprocessing and 3-step mask pipeline |
 | [`yolov8.py`](examples/yolov8.py) | Python — Same 3-step pipeline via `edgefirst-hal` and `edgefirst-ara2` Python packages |
+| [`async_infer.rs`](examples/async_infer.rs) | Rust — Async inference benchmark: sync vs. submit/wait vs. overlap |
+| [`async_infer.py`](examples/async_infer.py) | Python — Same async benchmark via `edgefirst-ara2` |
+| [`async_pipeline.rs`](examples/async_pipeline.rs) | Rust — Pipelined inference with circular DMA-BUF buffer ring (2x+ speedup) |
+| [`async_pipeline.py`](examples/async_pipeline.py) | Python — Same pipeline demo via `edgefirst-ara2` |
 | [`endpoints.py`](examples/endpoints.py) | Python — Connect, list endpoints, check status |
 | [`test_dvm_metadata.rs`](examples/test_dvm_metadata.rs) | Rust — Read and display DVM model metadata |
 
@@ -173,6 +229,7 @@ ARA2_TEST_MODEL=/path/to/model.dvm cargo test -p ara2 model
 ## Documentation
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — System architecture and ownership model
+- [TESTING.md](TESTING.md) — Test guide, on-target setup, and debugging
 - [CONTRIBUTING.md](CONTRIBUTING.md) — Contribution guidelines
 - [SECURITY.md](SECURITY.md) — Security policy
 - [CHANGELOG.md](CHANGELOG.md) — Release history
