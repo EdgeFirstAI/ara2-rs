@@ -3,7 +3,7 @@ use ara2_sys::{DV_ENDPOINT_STATE, DV_LAYER_OUTPUT_TYPE, dv_status_code};
 #[derive(Debug)]
 pub enum Error {
     Io(std::io::Error),
-    Image(image::ImageError),
+    Codec(edgefirst_hal::codec::CodecError),
     Library(libloading::Error),
     Ara2(dv_status_code),
     EndpointStateInvalid(DV_ENDPOINT_STATE),
@@ -29,9 +29,9 @@ impl From<std::io::Error> for Error {
     }
 }
 
-impl From<image::ImageError> for Error {
-    fn from(e: image::ImageError) -> Self {
-        Error::Image(e)
+impl From<edgefirst_hal::codec::CodecError> for Error {
+    fn from(e: edgefirst_hal::codec::CodecError) -> Self {
+        Error::Codec(e)
     }
 }
 
@@ -81,7 +81,7 @@ impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Error::Io(e) => write!(f, "{e}"),
-            Error::Image(e) => write!(f, "{e}"),
+            Error::Codec(e) => write!(f, "{e}"),
             Error::Library(e) => write!(f, "{e}"),
             Error::Ara2(e) => write!(f, "Ara2 error: {e:?}"),
             Error::EndpointStateInvalid(e) => write!(f, "Invalid endpoint state: {e:?}"),
@@ -115,7 +115,7 @@ impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Error::Io(e) => Some(e),
-            Error::Image(e) => Some(e),
+            Error::Codec(e) => Some(e),
             Error::Library(e) => Some(e),
             Error::TensorError(e) => Some(e),
             Error::ImageError(e) => Some(e),

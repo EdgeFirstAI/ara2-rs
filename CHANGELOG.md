@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-05-18
+
+### Changed (BREAKING)
+
+- **edgefirst-hal** upgraded from 0.22.0 to 0.23.0. The standalone
+  `load_image` function has been removed from the image crate;
+  callers now use the `ImageLoad` trait from the new `edgefirst_codec`
+  crate (re-exported as `edgefirst_hal::codec`). The new pattern
+  pre-allocates a tensor, then decodes in-place via
+  `tensor.load_image(&mut decoder, &bytes, &opts)`.
+- **`image` crate dependency removed.** The `Error::Image` variant
+  (wrapping `image::ImageError`) is replaced by `Error::Codec`
+  (wrapping `edgefirst_hal::codec::CodecError`). Downstream `match`
+  arms on `ara2::Error::Image(_)` must be updated.
+- The `yolov8` example now decodes directly into a GPU-accessible
+  tensor via `ImageDecoder`, eliminating the previous CPU→GPU copy
+  step.
+
+### Migration
+
+| 0.9.x | 0.10.0 |
+|-------|--------|
+| `ara2 = "0.9"` | `ara2 = "0.10"` |
+| `edgefirst-hal = "0.22"` (downstream pin) | `edgefirst-hal = "0.23"` |
+| `ara2::Error::Image(e)` | `ara2::Error::Codec(e)` |
+| `load_image(&bytes, Some(fmt), mem)` | `peek_info` → `Tensor::image` → `tensor.load_image(&mut decoder, &bytes, &opts)` |
+
 ## [0.9.0] - 2026-05-11
 
 ### Changed (BREAKING)
@@ -358,7 +385,8 @@ Non-qmode-9 DVMs now raise `Ara2Error("unsupported quantization mode: qmode=N ..
 - Requires `edgefirst-hal` for HAL integration
 - Requires `libaraclient.so` runtime library
 
-[Unreleased]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.6.0...v0.7.0

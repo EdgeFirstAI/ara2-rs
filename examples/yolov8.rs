@@ -41,13 +41,14 @@
 use ara2::{Session, dvm_metadata};
 use clap::{Parser, ValueEnum};
 use edgefirst_hal::{
+    codec::{DecodeOptions, ImageDecoder, ImageLoad as _, peek_info},
     decoder::{
         DecoderBuilder, DetectBox, ProtoData, Segmentation,
         configs::{self, DecoderType, QuantTuple},
     },
     image::{
         ColorMode, Crop, Flip, ImageProcessor, ImageProcessorTrait as _, MaskOverlay,
-        MaskResolution, Rect, Rotation, load_image, save_jpeg,
+        MaskResolution, Rect, Rotation, save_jpeg,
     },
     tensor::{DType, PixelFormat, PlaneDescriptor, TensorDyn, TensorMemory, TensorTrait as _},
 };
@@ -514,13 +515,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let image_bytes = std::fs::read(&args.image)?;
     let mut processor = ImageProcessor::new()?;
 
-    // Decode JPEG to CPU, then blit into a DMA-backed image for GPU access.
-    let cpu_img = load_image(&image_bytes, Some(PixelFormat::Rgba), None)?;
-    let (img_w, img_h) = (cpu_img.width().unwrap(), cpu_img.height().unwrap());
+    // Decode JPEG into a pre-allocated DMA tensor for GPU access.
+    let opts = DecodeOptions::default().with_format(PixelFormat::Rgba);
+    let info = peek_info(&image_bytes, &opts)?;
+    let (img_w, img_h) = (info.width, info.height);
     println!("Image: {img_w}x{img_h}");
     let mut src = processor.create_image(img_w, img_h, PixelFormat::Rgba, DType::U8, None)?;
-    processor.convert(&cpu_img, &mut src, Rotation::None, Flip::None, Crop::new())?;
-    drop(cpu_img);
+    let mut img_decoder = ImageDecoder::new();
+    src.load_image(&mut img_decoder, &image_bytes, &opts)?;
 
     let input_quant = model.input_quants(0);
     let input_dtype = if input_quant.is_signed {

@@ -1,7 +1,8 @@
 use ara2::Session;
 use criterion::{Criterion, criterion_group, criterion_main};
 use edgefirst_hal::{
-    image::{Crop, Flip, G2DProcessor, ImageProcessorTrait as _, Rotation, load_image},
+    codec::{DecodeOptions, ImageDecoder, ImageLoad as _, peek_info},
+    image::{Crop, Flip, G2DProcessor, ImageProcessorTrait as _, Rotation},
     tensor::{PixelFormat, Tensor, TensorDyn, TensorMemory, TensorTrait as _},
 };
 use std::{env, path::Path};
@@ -20,14 +21,37 @@ fn model_benchmark(c: &mut Criterion) {
     c.bench_function("load_image", |b| {
         b.iter(|| {
             let file = std::fs::read(&image).expect("Failed to read image file");
-            load_image(&file, Some(PixelFormat::Rgba), Some(TensorMemory::Dma))
+            let opts = DecodeOptions::default().with_format(PixelFormat::Rgba);
+            let info = peek_info(&file, &opts).expect("Failed to peek image");
+            let mut tensor = Tensor::<u8>::image(
+                info.width,
+                info.height,
+                info.format,
+                Some(TensorMemory::Dma),
+            )
+            .expect("Failed to allocate tensor");
+            let mut decoder = ImageDecoder::new();
+            tensor
+                .load_image(&mut decoder, &file, &opts)
                 .expect("Failed to load image");
         });
     });
 
     let file = std::fs::read(&image).expect("Failed to read image file");
-    let tensor = load_image(&file, Some(PixelFormat::Rgba), Some(TensorMemory::Dma))
+    let opts = DecodeOptions::default().with_format(PixelFormat::Rgba);
+    let info = peek_info(&file, &opts).expect("Failed to peek image");
+    let mut tensor = Tensor::<u8>::image(
+        info.width,
+        info.height,
+        info.format,
+        Some(TensorMemory::Dma),
+    )
+    .expect("Failed to allocate tensor");
+    let mut decoder = ImageDecoder::new();
+    tensor
+        .load_image(&mut decoder, &file, &opts)
         .expect("Failed to load image");
+    let tensor = TensorDyn::from(tensor);
     let mut converter = G2DProcessor::new().expect("Failed to create G2DProcessor");
 
     c.bench_function("convert_image", |b| {

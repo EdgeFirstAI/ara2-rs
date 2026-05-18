@@ -21,7 +21,6 @@ camera = ["dep:libcamera", "dep:wayland-client", "dep:wayland-protocols"]
 [dependencies]
 ara2-sys.workspace = true
 edgefirst-hal.workspace = true
-image.workspace = true
 libcamera = { workspace = true, optional = true }
 libloading.workspace = true
 log.workspace = true
