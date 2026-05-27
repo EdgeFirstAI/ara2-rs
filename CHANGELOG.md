@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-05-26
+
+### Changed (BREAKING)
+
+- **edgefirst-hal** upgraded from 0.23.0 to 0.24.1. HAL types
+  (`Tensor<u8>`, `TensorMemory`, `edgefirst_hal::tensor::Error`,
+  `edgefirst_hal::codec::CodecError`) appear in the public API surface
+  of `ara2`, so this is a transitive ABI break: downstream crates
+  pinning `edgefirst-hal = "0.23"` must bump in lockstep. The HAL
+  release brings an optimized `edgefirst-codec` with full DMA and
+  strided loading support for `Tensor::load_image`; no source changes
+  were required in `ara2` or its examples — the workspace builds
+  cleanly against the new HAL with the pin bump alone.
+- **zip** upgraded from 2.4 to 8.6 (six major versions). The
+  `Error::Zip` variant wraps `zip::result::ZipError`, which is part
+  of the public API surface, so downstream `match` arms on the
+  `ZipError` variants may need review. The subset of the zip API
+  used by `ara2` (`ZipArchive::new`, `by_name`, the
+  `InvalidArchive` and `FileNotFound` variants, `ZipWriter`,
+  `SimpleFileOptions`, `CompressionMethod::Stored`) is stable across
+  the bump — `ara2` itself required no source changes and all
+  `dvm_metadata` tests pass against the new version.
+
+### Changed
+
+- Refreshed `Cargo.lock` to pick up semver-compatible updates across
+  the dependency tree (`log` 0.4.29 → 0.4.30, `tokio` 1.52.1 → 1.52.3,
+  `serde_json` 1.0.149 → 1.0.150, `jiff` 0.2.24 → 0.2.27, `nalgebra`
+  0.34 → 0.35, `simba` 0.9 → 0.10, `wasm-bindgen` 0.2.118 → 0.2.122,
+  and others). Collapsed 15 transitive `glam` versions into a single
+  0.33.0.
+
+### Migration
+
+| 0.10.x | 0.11.0 |
+|--------|--------|
+| `ara2 = "0.10"` | `ara2 = "0.11"` |
+| `edgefirst-hal = "0.23"` (downstream pin) | `edgefirst-hal = "0.24"` |
+| `zip = "2"` (if matched on `Error::Zip(_)`) | `zip = "8"` |
+
 ## [0.10.0] - 2026-05-18
 
 ### Changed (BREAKING)
@@ -385,7 +425,8 @@ Non-qmode-9 DVMs now raise `Ara2Error("unsupported quantization mode: qmode=N ..
 - Requires `edgefirst-hal` for HAL integration
 - Requires `libaraclient.so` runtime library
 
-[Unreleased]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.7.0...v0.8.0
