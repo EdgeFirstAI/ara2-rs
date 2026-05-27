@@ -89,32 +89,9 @@ struct Args {
     #[arg(long, value_enum, default_value_t = ColorModeArg::Class)]
     color_mode: ColorModeArg,
 
-    /// How to interpret the box-output quantization scale.
-    ///
-    /// Some exports encode pixel-space box coords (0..input_dim); others
-    /// emit pre-normalized coords (0..1). Picking the wrong one collapses
-    /// the boxes to a tiny region near the origin.
-    #[arg(long, value_enum, default_value_t = BoxScaleArg::DivideNormalized)]
-    box_scale: BoxScaleArg,
-
     /// UNIX socket path for the ARA-2 proxy service.
     #[arg(long, default_value_t = ara2::DEFAULT_SOCKET.to_string())]
     socket: String,
-}
-
-/// Box-output scale interpretation.
-#[derive(Clone, Copy, Debug, ValueEnum)]
-enum BoxScaleArg {
-    /// `scale = qn / input_dim`, decoder `normalized = true`.
-    /// Use when the model emits int-encoded pixel coords (0..input_dim).
-    DivideNormalized,
-    /// `scale = qn`, decoder `normalized = true`.
-    /// Use when the model already emits normalized coords (0..1).
-    AsIsNormalized,
-    /// `scale = qn`, decoder `normalized = false`.
-    /// Use when the model emits pixel coords and the decoder should
-    /// scale by `input_dim` itself.
-    AsIsPixel,
 }
 
 /// How segmentation mask colors are assigned.
@@ -256,6 +233,20 @@ fn normalize_shape(raw: [usize; 3]) -> Vec<usize> {
         shape.pop();
     }
     shape.insert(0, 1);
+    shape
+}
+
+/// Strip trailing 1s from a metadata shape (Vec<i64>) and widen to usize.
+///
+/// Metadata declares shapes with the leading batch and any trailing
+/// `padding` axes; the NPU runtime strips trailing 1s before returning
+/// the per-output shape. Normalising both sides the same way lets us
+/// match a runtime shape to its [`dvm_metadata::OutputSpec`].
+fn strip_trailing_ones_i64(raw: &[i64]) -> Vec<usize> {
+    let mut shape: Vec<usize> = raw.iter().map(|&d| d as usize).collect();
+    while shape.len() > 1 && shape.last() == Some(&1) {
+        shape.pop();
+    }
     shape
 }
 
@@ -422,31 +413,82 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut shapes = Vec::with_capacity(n_outputs);
     let mut quants = Vec::with_capacity(n_outputs);
+    let mut dshapes: Vec<Vec<(DimName, usize)>> = Vec::with_capacity(n_outputs);
+    let mut normalized_flags: Vec<Option<bool>> = Vec::with_capacity(n_outputs);
 
-    // Whether the box-output scale should be passed through to the decoder
-    // as a normalized [0, 1] coordinate or as a pixel coord. Set from --box-scale.
-    let box_normalized = !matches!(args.box_scale, BoxScaleArg::AsIsPixel);
+    // Index the metadata outputs by their normalized shape so we can attach
+    // edgefirst.json fields (dshape, normalized, encoding) to each runtime
+    // output. Older .dvm files without these fields still work — runtime
+    // info from the NPU continues to drive shape and quantization.
+    let meta_by_shape: std::collections::HashMap<Vec<usize>, &dvm_metadata::OutputSpec> =
+        metadata
+            .as_ref()
+            .map(|m| {
+                m.outputs
+                    .iter()
+                    .map(|o| (strip_trailing_ones_i64(&o.shape), o))
+                    .collect()
+            })
+            .unwrap_or_default();
 
     for i in 0..n_outputs {
         let raw_shape = model.output_shape(i);
         let shape = normalize_shape(raw_shape);
         let info = model.output_info(i)?;
+        let spec = meta_by_shape.get(&shape).copied();
+
+        // Pull dshape from metadata if present. Trim trailing dims past
+        // the rank of `shape` (covers metadata declaring a `padding=1`
+        // axis the NPU strips). Then patch up a known converter bug:
+        // some exports declare `num_features` on a `mask_coefs` output
+        // when the spec (metadata.md §Output Types) says the channel
+        // axis must be `num_protos` for that role. Substitute so the
+        // hal decoder's role-specific axis validator accepts the
+        // dshape; the converter should be fixed upstream.
+        let dshape: Vec<(DimName, usize)> = spec
+            .map(|s| {
+                let mut d = s.dshape.clone();
+                d.truncate(shape.len());
+                if s.output_type.as_deref() == Some("mask_coefs") {
+                    for (name, _) in d.iter_mut() {
+                        if *name == DimName::NumFeatures {
+                            *name = DimName::NumProtos;
+                        }
+                    }
+                }
+                d
+            })
+            .unwrap_or_default();
+
+        // The `normalized` flag from metadata applies to box outputs only
+        // (per the EdgeFirst metadata spec). Other roles inherit None.
+        let normalized = spec.and_then(|s| s.normalized);
+
         // Box outputs have shape [1, 4, N] — specifically dim[1]==4 for the
-        // Ultralytics split format.
+        // Ultralytics split format. Older exports that didn't declare
+        // `normalized` emit int-encoded pixel coords (0..input_dim) and need
+        // the quant scale divided by input_dim to convert to the [0, 1]
+        // range the decoder reports back. Newer spec-conforming exports
+        // (normalized=true) already emit normalized coords so we use qn as-is.
         let is_box_output = shape.len() == 3 && shape[1] == 4;
-        let scale = if is_box_output && matches!(args.box_scale, BoxScaleArg::DivideNormalized)
-            && input_dim > 1.0
-        {
+        let scale = if is_box_output && normalized.is_none() && input_dim > 1.0 {
             info.quant.qn / input_dim
         } else {
             info.quant.qn
         };
         println!(
-            "  output[{i}] shape={shape:?} bpp={} signed={} qn={} offset={} (adj_scale={scale:.6e})",
-            info.bpp, info.quant.is_signed, info.quant.qn, info.quant.offset
+            "  output[{i}] shape={shape:?} bpp={} signed={} qn={} offset={} \
+             (adj_scale={scale:.6e}) normalized={normalized:?} dshape_len={}",
+            info.bpp,
+            info.quant.is_signed,
+            info.quant.qn,
+            info.quant.offset,
+            dshape.len()
         );
         quants.push((scale, info.quant.offset, info.bpp, info.quant.is_signed));
         shapes.push(shape);
+        dshapes.push(dshape);
+        normalized_flags.push(normalized);
     }
 
     // Override task if output shapes indicate segmentation (rank-4 proto tensor present).
@@ -458,6 +500,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         task
     };
 
+    // For box outputs, prefer the metadata's normalized flag; if absent,
+    // assume true (legacy converters that pre-divided the scale by
+    // input_dim above are now operating in the normalized domain too).
+    let normalized_for = |i: usize| Some(normalized_flags[i].unwrap_or(true));
+
     let decoder = match (task, n_outputs) {
         // Monolithic detection: single output [1, nc+4, N] with normalized boxes
         (Task::Detect, 1) => {
@@ -468,7 +515,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         decoder: DecoderType::Ultralytics,
                         quantization: Some(QuantTuple(quants[0].0, quants[0].1)),
                         shape: shapes[0].clone(),
-                        normalized: Some(box_normalized),
+                        dshape: dshapes[0].clone(),
+                        normalized: normalized_for(0),
                         ..Default::default()
                     },
                     None,
@@ -487,13 +535,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         decoder: DecoderType::Ultralytics,
                         quantization: Some(QuantTuple(quants[bi].0, quants[bi].1)),
                         shape: shapes[bi].clone(),
-                        normalized: Some(box_normalized),
+                        dshape: dshapes[bi].clone(),
+                        normalized: normalized_for(bi),
                         ..Default::default()
                     },
                     configs::Scores {
                         decoder: DecoderType::Ultralytics,
                         quantization: Some(QuantTuple(quants[si].0, quants[si].1)),
                         shape: shapes[si].clone(),
+                        dshape: dshapes[si].clone(),
                         ..Default::default()
                     },
                 )
@@ -503,68 +553,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         (Task::Segment, _) => {
             let (bi, si, mi, pi) = identify_seg_outputs(&shapes)?;
-            // Declare the physical axis order so the decoder can stride-swap
-            // NCHW protos into the canonical NHWC view the materializer expects.
-            // Without dshape, an NCHW-emitting model is read as if it were
-            // NHWC and the mask kernel mis-identifies which axis is num_protos.
-            let boxes_dshape: Vec<(DimName, usize)> = shapes[bi]
-                .iter()
-                .copied()
-                .zip([DimName::Batch, DimName::BoxCoords, DimName::NumBoxes])
-                .map(|(n, name)| (name, n))
-                .collect();
-            let scores_dshape: Vec<(DimName, usize)> = shapes[si]
-                .iter()
-                .copied()
-                .zip([DimName::Batch, DimName::NumClasses, DimName::NumBoxes])
-                .map(|(n, name)| (name, n))
-                .collect();
-            let mask_dshape: Vec<(DimName, usize)> = shapes[mi]
-                .iter()
-                .copied()
-                .zip([DimName::Batch, DimName::NumProtos, DimName::NumBoxes])
-                .map(|(n, name)| (name, n))
-                .collect();
-            let protos_dshape: Vec<(DimName, usize)> = shapes[pi]
-                .iter()
-                .copied()
-                .zip([
-                    DimName::Batch,
-                    DimName::NumProtos,
-                    DimName::Height,
-                    DimName::Width,
-                ])
-                .map(|(n, name)| (name, n))
-                .collect();
             DecoderBuilder::new()
                 .with_config_yolo_split_segdet(
                     configs::Boxes {
                         decoder: DecoderType::Ultralytics,
                         quantization: Some(QuantTuple(quants[bi].0, quants[bi].1)),
                         shape: shapes[bi].clone(),
-                        dshape: boxes_dshape,
-                        normalized: Some(box_normalized),
+                        dshape: dshapes[bi].clone(),
+                        normalized: normalized_for(bi),
                         ..Default::default()
                     },
                     configs::Scores {
                         decoder: DecoderType::Ultralytics,
                         quantization: Some(QuantTuple(quants[si].0, quants[si].1)),
                         shape: shapes[si].clone(),
-                        dshape: scores_dshape,
+                        dshape: dshapes[si].clone(),
                         ..Default::default()
                     },
                     configs::MaskCoefficients {
                         decoder: DecoderType::Ultralytics,
                         quantization: Some(QuantTuple(quants[mi].0, quants[mi].1)),
                         shape: shapes[mi].clone(),
-                        dshape: mask_dshape,
+                        dshape: dshapes[mi].clone(),
                         ..Default::default()
                     },
                     configs::Protos {
                         decoder: DecoderType::Ultralytics,
                         quantization: Some(QuantTuple(quants[pi].0, quants[pi].1)),
                         shape: shapes[pi].clone(),
-                        dshape: protos_dshape,
+                        dshape: dshapes[pi].clone(),
                         ..Default::default()
                     },
                 )

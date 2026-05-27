@@ -9,6 +9,7 @@
 //! interference.
 
 use crate::Error;
+use edgefirst_hal::decoder::configs::{DimName, deserialize_dshape};
 use serde::Deserialize;
 use std::io::{Cursor, Read as _};
 use zip::ZipArchive;
@@ -179,6 +180,48 @@ pub struct OutputSpec {
     /// Tensor shape
     #[serde(default)]
     pub shape: Vec<i64>,
+
+    /// Physical axis names in memory order. Used by the HAL decoder to
+    /// stride-swap into its canonical axis order without copying bytes.
+    /// Empty when the producer omitted the field.
+    #[serde(default, deserialize_with = "deserialize_dshape")]
+    pub dshape: Vec<(DimName, usize)>,
+
+    /// Whether box coordinates are normalized to `[0, 1]` (true) or in
+    /// pixel space `[0, input_dim]` (false). Only meaningful for `boxes`
+    /// and `detections` outputs (per the EdgeFirst metadata spec).
+    #[serde(default)]
+    pub normalized: Option<bool>,
+
+    /// Box-coordinate encoding (e.g. `direct`, `dfl`). Only meaningful
+    /// on `boxes` / `detections` outputs.
+    #[serde(default)]
+    pub encoding: Option<String>,
+
+    /// Score-tensor format (e.g. `per_class`). Only meaningful on
+    /// `scores` outputs.
+    #[serde(default)]
+    pub score_format: Option<String>,
+
+    /// Per-tensor quantization parameters (null for float models).
+    #[serde(default)]
+    pub quantization: Option<QuantizationSpec>,
+}
+
+/// Per-tensor quantization parameters carried alongside a quantized
+/// output. The dequantization formula is
+/// `real = scale * (quantized - zero_point)`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct QuantizationSpec {
+    /// Scale factor. The metadata spec also allows an array of scales for
+    /// per-channel quantization; only scalar (per-tensor) is parsed here.
+    pub scale: f32,
+    /// Zero-point offset. Absent for symmetric quantization (implies 0).
+    #[serde(default)]
+    pub zero_point: i32,
+    /// Quantized data type (`int8`, `uint8`, `int16`, `uint16`, `float16`).
+    #[serde(default)]
+    pub dtype: Option<String>,
 }
 
 /// Input specification from the metadata.
