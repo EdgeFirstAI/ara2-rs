@@ -44,7 +44,7 @@ use edgefirst_hal::{
     codec::{DecodeOptions, ImageDecoder, ImageLoad as _, peek_info},
     decoder::{
         DecoderBuilder, DetectBox, ProtoData, Segmentation,
-        configs::{self, DecoderType, QuantTuple},
+        configs::{self, DecoderType, DimName, QuantTuple},
     },
     image::{
         ColorMode, Crop, Flip, ImageProcessor, ImageProcessorTrait as _, MaskOverlay,
@@ -89,9 +89,32 @@ struct Args {
     #[arg(long, value_enum, default_value_t = ColorModeArg::Class)]
     color_mode: ColorModeArg,
 
+    /// How to interpret the box-output quantization scale.
+    ///
+    /// Some exports encode pixel-space box coords (0..input_dim); others
+    /// emit pre-normalized coords (0..1). Picking the wrong one collapses
+    /// the boxes to a tiny region near the origin.
+    #[arg(long, value_enum, default_value_t = BoxScaleArg::DivideNormalized)]
+    box_scale: BoxScaleArg,
+
     /// UNIX socket path for the ARA-2 proxy service.
     #[arg(long, default_value_t = ara2::DEFAULT_SOCKET.to_string())]
     socket: String,
+}
+
+/// Box-output scale interpretation.
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum BoxScaleArg {
+    /// `scale = qn / input_dim`, decoder `normalized = true`.
+    /// Use when the model emits int-encoded pixel coords (0..input_dim).
+    DivideNormalized,
+    /// `scale = qn`, decoder `normalized = true`.
+    /// Use when the model already emits normalized coords (0..1).
+    AsIsNormalized,
+    /// `scale = qn`, decoder `normalized = false`.
+    /// Use when the model emits pixel coords and the decoder should
+    /// scale by `input_dim` itself.
+    AsIsPixel,
 }
 
 /// How segmentation mask colors are assigned.
@@ -400,21 +423,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut shapes = Vec::with_capacity(n_outputs);
     let mut quants = Vec::with_capacity(n_outputs);
 
+    // Whether the box-output scale should be passed through to the decoder
+    // as a normalized [0, 1] coordinate or as a pixel coord. Set from --box-scale.
+    let box_normalized = !matches!(args.box_scale, BoxScaleArg::AsIsPixel);
+
     for i in 0..n_outputs {
         let raw_shape = model.output_shape(i);
         let shape = normalize_shape(raw_shape);
         let info = model.output_info(i)?;
         // Box outputs have shape [1, 4, N] — specifically dim[1]==4 for the
-        // Ultralytics split format. Dividing qn by input_dim normalizes the
-        // decoded coordinates to [0, 1].
+        // Ultralytics split format.
         let is_box_output = shape.len() == 3 && shape[1] == 4;
-        let scale = if is_box_output && input_dim > 1.0 {
+        let scale = if is_box_output && matches!(args.box_scale, BoxScaleArg::DivideNormalized)
+            && input_dim > 1.0
+        {
             info.quant.qn / input_dim
         } else {
             info.quant.qn
         };
         println!(
-            "  output[{i}] shape={shape:?} bpp={} signed={} qn={} offset={} (adj_scale={scale:.4})",
+            "  output[{i}] shape={shape:?} bpp={} signed={} qn={} offset={} (adj_scale={scale:.6e})",
             info.bpp, info.quant.is_signed, info.quant.qn, info.quant.offset
         );
         quants.push((scale, info.quant.offset, info.bpp, info.quant.is_signed));
@@ -440,7 +468,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         decoder: DecoderType::Ultralytics,
                         quantization: Some(QuantTuple(quants[0].0, quants[0].1)),
                         shape: shapes[0].clone(),
-                        normalized: Some(true),
+                        normalized: Some(box_normalized),
                         ..Default::default()
                     },
                     None,
@@ -459,7 +487,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         decoder: DecoderType::Ultralytics,
                         quantization: Some(QuantTuple(quants[bi].0, quants[bi].1)),
                         shape: shapes[bi].clone(),
-                        normalized: Some(true),
+                        normalized: Some(box_normalized),
                         ..Default::default()
                     },
                     configs::Scores {
@@ -475,31 +503,68 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         (Task::Segment, _) => {
             let (bi, si, mi, pi) = identify_seg_outputs(&shapes)?;
+            // Declare the physical axis order so the decoder can stride-swap
+            // NCHW protos into the canonical NHWC view the materializer expects.
+            // Without dshape, an NCHW-emitting model is read as if it were
+            // NHWC and the mask kernel mis-identifies which axis is num_protos.
+            let boxes_dshape: Vec<(DimName, usize)> = shapes[bi]
+                .iter()
+                .copied()
+                .zip([DimName::Batch, DimName::BoxCoords, DimName::NumBoxes])
+                .map(|(n, name)| (name, n))
+                .collect();
+            let scores_dshape: Vec<(DimName, usize)> = shapes[si]
+                .iter()
+                .copied()
+                .zip([DimName::Batch, DimName::NumClasses, DimName::NumBoxes])
+                .map(|(n, name)| (name, n))
+                .collect();
+            let mask_dshape: Vec<(DimName, usize)> = shapes[mi]
+                .iter()
+                .copied()
+                .zip([DimName::Batch, DimName::NumProtos, DimName::NumBoxes])
+                .map(|(n, name)| (name, n))
+                .collect();
+            let protos_dshape: Vec<(DimName, usize)> = shapes[pi]
+                .iter()
+                .copied()
+                .zip([
+                    DimName::Batch,
+                    DimName::NumProtos,
+                    DimName::Height,
+                    DimName::Width,
+                ])
+                .map(|(n, name)| (name, n))
+                .collect();
             DecoderBuilder::new()
                 .with_config_yolo_split_segdet(
                     configs::Boxes {
                         decoder: DecoderType::Ultralytics,
                         quantization: Some(QuantTuple(quants[bi].0, quants[bi].1)),
                         shape: shapes[bi].clone(),
-                        normalized: Some(true),
+                        dshape: boxes_dshape,
+                        normalized: Some(box_normalized),
                         ..Default::default()
                     },
                     configs::Scores {
                         decoder: DecoderType::Ultralytics,
                         quantization: Some(QuantTuple(quants[si].0, quants[si].1)),
                         shape: shapes[si].clone(),
+                        dshape: scores_dshape,
                         ..Default::default()
                     },
                     configs::MaskCoefficients {
                         decoder: DecoderType::Ultralytics,
                         quantization: Some(QuantTuple(quants[mi].0, quants[mi].1)),
                         shape: shapes[mi].clone(),
+                        dshape: mask_dshape,
                         ..Default::default()
                     },
                     configs::Protos {
                         decoder: DecoderType::Ultralytics,
                         quantization: Some(QuantTuple(quants[pi].0, quants[pi].1)),
                         shape: shapes[pi].clone(),
+                        dshape: protos_dshape,
                         ..Default::default()
                     },
                 )
