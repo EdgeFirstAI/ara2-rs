@@ -7,6 +7,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-05-28
+
+### Added
+
+- **`ara2::dvm_metadata::OutputSpec`** now surfaces the per-output
+  fields the EdgeFirst metadata spec (`metadata.md §Output
+  Specification`) already requires producers to emit but `ara2`
+  previously ignored:
+  - `dshape: Vec<(DimName, usize)>` — physical axis names in memory
+    order, parsed via `edgefirst_decoder::configs::deserialize_dshape`.
+    Lets the HAL decoder stride-swap an NCHW physical tensor into its
+    canonical NHWC view without copying bytes.
+  - `normalized: Option<bool>` — `true` when box coords are in
+    `[0, 1]`, `false` for pixel space; per the spec, meaningful only
+    on `boxes` / `detections` outputs.
+  - `encoding: Option<String>` — `direct`, `dfl`, `anchor` on
+    `boxes` outputs.
+  - `score_format: Option<String>` — `per_class` or `obj_x_class` on
+    `scores` outputs.
+  - `quantization: Option<QuantizationSpec>` — per-tensor
+    `(scale, zero_point, dtype)`. Older `.dvm` files without these
+    fields deserialize with `None` / empty defaults.
+- **`ara2::dvm_metadata::QuantizationSpec`** — new public struct
+  (`scale: f32`, `zero_point: i32`, `dtype: Option<String>`) carrying
+  per-tensor quantization parameters from the JSON.
+
+### Changed
+
+- The `yolov8` example is now metadata-driven. It indexes
+  `dvm_metadata::OutputSpec` entries by their (trailing-`1`-stripped)
+  shape, then passes the JSON-declared `dshape` and `normalized`
+  through to the HAL decoder's `Boxes`, `Scores`,
+  `MaskCoefficients`, and `Protos` configs. Legacy `.dvm` files
+  without these fields still work: an empty `dshape` is treated by
+  the decoder as "shape is already in canonical order", and a missing
+  `normalized` flag falls back to the prior `qn / input_dim`
+  heuristic for the box quant scale.
+- The example carries a tactical substitution
+  (`DimName::NumFeatures → DimName::NumProtos` for outputs whose
+  `output_type == "mask_coefs"`) for a converter regression seen in
+  ara2 1.7.0–1.7.3 exports where the channel axis was misnamed.
+  Spec-compliant exports (ara2 ≥ 1.7.4) declare `num_protos`
+  directly, so the substitution is a no-op on current `.dvm` files.
+
+### Fixed
+
+- (example) Detection bounding boxes from spec-compliant `.dvm`
+  files collapsing to a sub-pixel region near the origin. Root
+  cause: the example unconditionally divided the box quantization
+  scale by `input_dim` on the assumption that the model emitted
+  pixel-space coords, but spec-compliant exports already emit
+  normalized coords. The pre-divide is now gated on the metadata's
+  `boxes.normalized` flag — applied only when the field is absent
+  (legacy behaviour).
+- (example) Segmentation pipeline erroring at `materialize_masks`
+  with `mask_coefficients [N, 32] incompatible with protos
+  [32, 160, 160] (expected [N, 160])`. Root cause: the example did
+  not declare `dshape` for the proto / mask-coeff configs, so the
+  HAL materializer interpreted the NCHW physical layout
+  `[batch, num_protos, height, width]` as NHWC and selected the
+  wrong axis as `num_protos`. With the metadata-driven `dshape`,
+  the decoder stride-swaps into its canonical NHWC view (no byte
+  copy) before mask materialisation.
+
 ## [0.11.0] - 2026-05-26
 
 ### Changed (BREAKING)
@@ -425,7 +489,8 @@ Non-qmode-9 DVMs now raise `Ara2Error("unsupported quantization mode: qmode=N ..
 - Requires `edgefirst-hal` for HAL integration
 - Requires `libaraclient.so` runtime library
 
-[Unreleased]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.11.1...HEAD
+[0.11.1]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.8.0...v0.9.0
