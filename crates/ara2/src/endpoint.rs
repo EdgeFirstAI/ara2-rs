@@ -180,7 +180,33 @@ impl Endpoint {
             return Err(err.into());
         }
 
-        Ok(Model::new(Arc::clone(&self.session), self.ptr, model))
+        let mut model = Model::new(Arc::clone(&self.session), self.ptr, model);
+
+        // Populate per-output dequantization-scale overrides from the
+        // DVM's embedded edgefirst.json (if present). Keyed by tensor
+        // ``name`` so it matches the FFI's ``blob_name`` regardless of
+        // the order outputs appear in either source.
+        //
+        // Outputs without metadata or whose metadata lacks a
+        // ``quantization`` block fall through to the FFI's ``qn`` value
+        // — preserving behaviour on legacy DVMs without the embedded
+        // metadata block.
+        if let Ok(Some(meta)) = crate::dvm_metadata::read_metadata_from_file(path) {
+            let overrides: std::collections::HashMap<String, f32> = meta
+                .outputs
+                .iter()
+                .filter_map(|o| {
+                    let name = o.name.as_ref()?;
+                    let scale = o.quantization.as_ref()?.scale;
+                    Some((name.clone(), scale))
+                })
+                .collect();
+            if !overrides.is_empty() {
+                model.set_output_scale_overrides(overrides);
+            }
+        }
+
+        Ok(model)
     }
 }
 

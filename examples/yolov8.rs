@@ -469,7 +469,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // `normalized` emit int-encoded pixel coords (0..input_dim) and need
         // the quant scale divided by input_dim to convert to the [0, 1]
         // range the decoder reports back. Newer spec-conforming exports
-        // (normalized=true) already emit normalized coords so we use qn as-is.
+        // (normalized=true) already emit normalized coords so we use qn
+        // as-is. ``info.quant.qn`` is already the embedded-metadata float
+        // scale (when present) thanks to Model's per-output overrides.
         let is_box_output = shape.len() == 3 && shape[1] == 4;
         let scale = if is_box_output && normalized.is_none() && input_dim > 1.0 {
             info.quant.qn / input_dim

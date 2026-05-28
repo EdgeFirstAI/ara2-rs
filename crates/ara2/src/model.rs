@@ -91,6 +91,20 @@ pub struct Model {
     inputs: Vec<(Tensor<u8>, *mut dv_shm_descriptor)>,
     outputs: Vec<(Tensor<u8>, *mut dv_shm_descriptor)>,
     timeout_ms: i32,
+    /// Per-output dequantization scale override, keyed by tensor name.
+    ///
+    /// Populated when the DVM file contains an embedded `edgefirst.json`
+    /// with `outputs[].quantization.scale`. Matched to FFI outputs by
+    /// blob name rather than position — the metadata writer and the
+    /// Kinara compiler may order outputs differently.
+    ///
+    /// The Kinara FFI's `OutputQuantization::qn` field holds the float
+    /// multiplicative scale for INT8 outputs but a Q-format integer
+    /// (e.g. 64, 128) for INT16 / UINT16 outputs — silently
+    /// mis-dequantizing the latter by orders of magnitude. The embedded
+    /// metadata, written by the EdgeFirst converter, always carries the
+    /// true float scale and is used in preference when present.
+    output_scale_overrides: std::collections::HashMap<String, f32>,
 }
 
 impl std::fmt::Debug for Model {
@@ -126,7 +140,25 @@ impl Model {
             inputs: vec![],
             outputs: vec![],
             timeout_ms: DEFAULT_TIMEOUT_MS,
+            output_scale_overrides: std::collections::HashMap::new(),
         }
+    }
+
+    /// Set per-output dequantization scale overrides, keyed by tensor name.
+    ///
+    /// The Kinara FFI's `qn` field is reliable for INT8 outputs but
+    /// holds a Q-format integer (rather than a float scale) for INT16
+    /// / UINT16 outputs. When the DVM has an embedded `edgefirst.json`
+    /// containing per-output `quantization.scale`, callers should pass
+    /// those values here so [`Model::output_info`] can substitute the
+    /// correct float scale. The map is keyed by the tensor's
+    /// `blob_name` from the FFI (matched against `name` in
+    /// `edgefirst.json.outputs[]`).
+    pub fn set_output_scale_overrides(
+        &mut self,
+        overrides: std::collections::HashMap<String, f32>,
+    ) {
+        self.output_scale_overrides = overrides;
     }
 
     /// Set the inference timeout in milliseconds.
@@ -676,6 +708,26 @@ impl Model {
         };
 
         unsafe {
+            let blob_name = std::ffi::CStr::from_ptr((*output).blob_name)
+                .to_string_lossy()
+                .into_owned();
+
+            // Prefer the float scale from the DVM's embedded
+            // edgefirst.json when present, matched by the FFI's
+            // ``blob_name``. The Kinara FFI's ``qn`` field holds the
+            // true float scale for INT8 outputs but a Q-format integer
+            // for INT16 / UINT16 outputs (e.g. ``qn=64`` for a tensor
+            // whose actual dequant scale is ``3.75e-5``). Without this
+            // override, dequantizing an INT16 output through
+            // ``effective(qmode=9)`` produces values off by ~2^14 (the
+            // catastrophic mis-detection observed on int16_smart /
+            // int16 DVMs prior to v0.11.1).
+            let qn = self
+                .output_scale_overrides
+                .get(&blob_name)
+                .copied()
+                .unwrap_or((*params).qn);
+
             Ok(OutputTensor {
                 layer_id: (*output).layer_id,
                 blob_id: (*output).blob_id,
@@ -683,9 +735,7 @@ impl Model {
                 layer_name: std::ffi::CStr::from_ptr((*output).layer_name)
                     .to_string_lossy()
                     .into_owned(),
-                blob_name: std::ffi::CStr::from_ptr((*output).blob_name)
-                    .to_string_lossy()
-                    .into_owned(),
+                blob_name,
                 layer_fused_parent_name: std::ffi::CStr::from_ptr(
                     (*output).layer_fused_parent_name,
                 )
@@ -706,7 +756,7 @@ impl Model {
                 layer_output_type: (*output).layer_output_type.try_into()?,
                 max_dynamic_id: (*output).max_dynamic_id,
                 quant: OutputQuantization {
-                    qn: (*params).qn,
+                    qn,
                     offset: (*params).offset,
                     is_signed: (*params).is_signed,
                 },
