@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.2] - 2026-05-28
+
+### Changed
+
+- **edgefirst-hal** bumped from 0.24.0 to 0.24.2 (transitive update via
+  the workspace's `edgefirst-hal = "0.24"` semver constraint). The 0.24.2
+  release fixes a `GL_TEXTURE_SWIZZLE_R` leak in the GL backend's
+  RGBA → PlanarRgb conversion path
+  ([EdgeFirstAI/hal#84](https://github.com/EdgeFirstAI/hal/pull/84)) —
+  the swizzle was left at `GL_BLUE` after the last iteration of the
+  per-channel loop, then inherited by the next `draw_decoded_masks`
+  call's bg blit and observed as `canvas.R := src.B` across the entire
+  overlay on NXP Vivante GC7000 and Mali Valhall targets. The yolov8
+  example's saved overlay JPEG now renders in natural colours on
+  imx8mp-frdm and imx95-frdm.
+
+### Added
+
+- The `yolov8` example now synthesises a canonical Ultralytics `dshape`
+  per output role (`Detection`, `Boxes`, `Scores`, `MaskCoefficients`,
+  `Protos`) when the `.dvm` file does not ship an `edgefirst.json`
+  metadata block — for example the official Kinara 1.2.1 exports
+  (`yolov8n-kinara-1.2.1.dvm`, `yolov8n-seg-kinara-1.2.1.dvm`) which
+  have no zip footer. Without this fallback, the seg path errored at
+  mask materialisation with
+  `mask_coefficients [N, 32] incompatible with protos [32, 160, 160]
+  (expected [N, 160])` because the HAL decoder fell back to "shape is
+  already canonical" and read the NCHW proto tensor as if it were
+  NHWC. Verified end-to-end with both detection and segmentation Kinara
+  exports on imx8mp-frdm and imx95-frdm.
+
 ## [0.11.1] - 2026-05-28
 
 ### Added
@@ -489,7 +520,8 @@ Non-qmode-9 DVMs now raise `Ara2Error("unsupported quantization mode: qmode=N ..
 - Requires `edgefirst-hal` for HAL integration
 - Requires `libaraclient.so` runtime library
 
-[Unreleased]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.11.1...HEAD
+[Unreleased]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.11.2...HEAD
+[0.11.2]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.11.1...v0.11.2
 [0.11.1]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.9.0...v0.10.0

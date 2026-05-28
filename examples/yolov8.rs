@@ -328,6 +328,63 @@ fn identify_seg_outputs(shapes: &[Vec<usize>]) -> Result<(usize, usize, usize, u
     ))
 }
 
+/// Build a canonical Ultralytics `dshape` for a role, used when the DVM
+/// did not ship an `edgefirst.json` (e.g. Kinara-1.2.1 official models) or
+/// when the metadata entry for that output was missing.
+///
+/// The HAL decoder treats an empty `dshape` as "shape is already in
+/// canonical order"; this is true for boxes / scores / mask coefficients,
+/// but for protos the canonical order is NHWC while NPU outputs are NCHW,
+/// so the materializer would otherwise mis-identify `num_protos`.
+fn canonical_dshape(role: OutputRole, shape: &[usize]) -> Vec<(DimName, usize)> {
+    let names: &[DimName] = match role {
+        OutputRole::Detection => &[DimName::Batch, DimName::NumFeatures, DimName::NumBoxes],
+        OutputRole::Boxes => &[DimName::Batch, DimName::BoxCoords, DimName::NumBoxes],
+        OutputRole::Scores => &[DimName::Batch, DimName::NumClasses, DimName::NumBoxes],
+        OutputRole::MaskCoefficients => &[DimName::Batch, DimName::NumProtos, DimName::NumBoxes],
+        OutputRole::Protos => &[
+            DimName::Batch,
+            DimName::NumProtos,
+            DimName::Height,
+            DimName::Width,
+        ],
+    };
+    // Pair element-wise; if the runtime rank is shorter than the canonical
+    // names list (e.g. a `padding=1` axis was stripped) the zip stops at the
+    // shorter side, which keeps `dshape.len() == shape.len()` as the HAL
+    // decoder's validator requires.
+    shape
+        .iter()
+        .copied()
+        .zip(names.iter().copied())
+        .map(|(n, name)| (name, n))
+        .collect()
+}
+
+#[derive(Clone, Copy)]
+enum OutputRole {
+    Detection,
+    Boxes,
+    Scores,
+    MaskCoefficients,
+    Protos,
+}
+
+/// Return `dshapes[i]` if it was populated from metadata, otherwise the
+/// canonical Ultralytics dshape for the role at `shape`.
+fn dshape_or_canonical(
+    dshapes: &[Vec<(DimName, usize)>],
+    i: usize,
+    role: OutputRole,
+    shape: &[usize],
+) -> Vec<(DimName, usize)> {
+    if dshapes[i].is_empty() {
+        canonical_dshape(role, shape)
+    } else {
+        dshapes[i].clone()
+    }
+}
+
 /// Compute a letterbox [`Crop`] that fits `src` into `dst` preserving aspect
 /// ratio, centered with YOLO gray (114, 114, 114) padding.
 #[allow(
@@ -515,7 +572,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         decoder: DecoderType::Ultralytics,
                         quantization: Some(QuantTuple(quants[0].0, quants[0].1)),
                         shape: shapes[0].clone(),
-                        dshape: dshapes[0].clone(),
+                        dshape: dshape_or_canonical(&dshapes, 0, OutputRole::Detection, &shapes[0]),
                         normalized: normalized_for(0),
                         ..Default::default()
                     },
@@ -535,7 +592,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         decoder: DecoderType::Ultralytics,
                         quantization: Some(QuantTuple(quants[bi].0, quants[bi].1)),
                         shape: shapes[bi].clone(),
-                        dshape: dshapes[bi].clone(),
+                        dshape: dshape_or_canonical(&dshapes, bi, OutputRole::Boxes, &shapes[bi]),
                         normalized: normalized_for(bi),
                         ..Default::default()
                     },
@@ -543,7 +600,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         decoder: DecoderType::Ultralytics,
                         quantization: Some(QuantTuple(quants[si].0, quants[si].1)),
                         shape: shapes[si].clone(),
-                        dshape: dshapes[si].clone(),
+                        dshape: dshape_or_canonical(&dshapes, si, OutputRole::Scores, &shapes[si]),
                         ..Default::default()
                     },
                 )
@@ -559,7 +616,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         decoder: DecoderType::Ultralytics,
                         quantization: Some(QuantTuple(quants[bi].0, quants[bi].1)),
                         shape: shapes[bi].clone(),
-                        dshape: dshapes[bi].clone(),
+                        dshape: dshape_or_canonical(&dshapes, bi, OutputRole::Boxes, &shapes[bi]),
                         normalized: normalized_for(bi),
                         ..Default::default()
                     },
@@ -567,21 +624,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         decoder: DecoderType::Ultralytics,
                         quantization: Some(QuantTuple(quants[si].0, quants[si].1)),
                         shape: shapes[si].clone(),
-                        dshape: dshapes[si].clone(),
+                        dshape: dshape_or_canonical(&dshapes, si, OutputRole::Scores, &shapes[si]),
                         ..Default::default()
                     },
                     configs::MaskCoefficients {
                         decoder: DecoderType::Ultralytics,
                         quantization: Some(QuantTuple(quants[mi].0, quants[mi].1)),
                         shape: shapes[mi].clone(),
-                        dshape: dshapes[mi].clone(),
+                        dshape: dshape_or_canonical(
+                            &dshapes,
+                            mi,
+                            OutputRole::MaskCoefficients,
+                            &shapes[mi],
+                        ),
                         ..Default::default()
                     },
                     configs::Protos {
                         decoder: DecoderType::Ultralytics,
                         quantization: Some(QuantTuple(quants[pi].0, quants[pi].1)),
                         shape: shapes[pi].clone(),
-                        dshape: dshapes[pi].clone(),
+                        dshape: dshape_or_canonical(&dshapes, pi, OutputRole::Protos, &shapes[pi]),
                         ..Default::default()
                     },
                 )
