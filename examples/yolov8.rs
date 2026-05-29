@@ -477,16 +477,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // edgefirst.json fields (dshape, normalized, encoding) to each runtime
     // output. Older .dvm files without these fields still work — runtime
     // info from the NPU continues to drive shape and quantization.
-    let meta_by_shape: std::collections::HashMap<Vec<usize>, &dvm_metadata::OutputSpec> =
-        metadata
-            .as_ref()
-            .map(|m| {
-                m.outputs
-                    .iter()
-                    .map(|o| (strip_trailing_ones_i64(&o.shape), o))
-                    .collect()
-            })
-            .unwrap_or_default();
+    let meta_by_shape: std::collections::HashMap<Vec<usize>, &dvm_metadata::OutputSpec> = metadata
+        .as_ref()
+        .map(|m| {
+            m.outputs
+                .iter()
+                .map(|o| (strip_trailing_ones_i64(&o.shape), o))
+                .collect()
+        })
+        .unwrap_or_default();
 
     for i in 0..n_outputs {
         let raw_shape = model.output_shape(i);
