@@ -593,14 +593,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         shape: shapes[bi].clone(),
                         dshape: dshape_or_canonical(&dshapes, bi, OutputRole::Boxes, &shapes[bi]),
                         normalized: normalized_for(bi),
-                        ..Default::default()
                     },
                     configs::Scores {
                         decoder: DecoderType::Ultralytics,
                         quantization: Some(QuantTuple(quants[si].0, quants[si].1)),
                         shape: shapes[si].clone(),
                         dshape: dshape_or_canonical(&dshapes, si, OutputRole::Scores, &shapes[si]),
-                        ..Default::default()
                     },
                 )
                 .with_score_threshold(args.threshold)
@@ -617,14 +615,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         shape: shapes[bi].clone(),
                         dshape: dshape_or_canonical(&dshapes, bi, OutputRole::Boxes, &shapes[bi]),
                         normalized: normalized_for(bi),
-                        ..Default::default()
                     },
                     configs::Scores {
                         decoder: DecoderType::Ultralytics,
                         quantization: Some(QuantTuple(quants[si].0, quants[si].1)),
                         shape: shapes[si].clone(),
                         dshape: dshape_or_canonical(&dshapes, si, OutputRole::Scores, &shapes[si]),
-                        ..Default::default()
                     },
                     configs::MaskCoefficients {
                         decoder: DecoderType::Ultralytics,
@@ -636,14 +632,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             OutputRole::MaskCoefficients,
                             &shapes[mi],
                         ),
-                        ..Default::default()
                     },
                     configs::Protos {
                         decoder: DecoderType::Ultralytics,
                         quantization: Some(QuantTuple(quants[pi].0, quants[pi].1)),
                         shape: shapes[pi].clone(),
                         dshape: dshape_or_canonical(&dshapes, pi, OutputRole::Protos, &shapes[pi]),
-                        ..Default::default()
                     },
                 )
                 .with_score_threshold(args.threshold)
