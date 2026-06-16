@@ -374,8 +374,10 @@ impl Model {
     pub fn allocate_input_set(&self, memory: Option<TensorMemory>) -> Result<InputSet, Error> {
         let tensors = (0..self.n_inputs())
             .map(|i| {
-                let size = self.input_size(i);
-                let tensor = Tensor::<u8>::new(&[size], memory, None)?;
+                // Use CHW shape so the tensor is compatible with HAL's TensorImageRef,
+                // matching the layout that allocate_tensors produces for model inputs.
+                let shape = self.input_shape(i);
+                let tensor = Tensor::<u8>::new(&shape, memory, None)?;
                 match tensor.memory() {
                     TensorMemory::Shm | TensorMemory::Dma => {
                         let desc = self.shmfd_register(&tensor)?;
@@ -407,6 +409,25 @@ impl Model {
         &mut self,
         output_set: &OutputSet,
     ) -> Result<InferRequest, Error> {
+        if !Arc::ptr_eq(&self.session, &output_set.session) {
+            return Err(Error::UnsupportedLayout(
+                "OutputSet was allocated from a different session".to_owned(),
+            ));
+        }
+        let n_out = self.n_outputs();
+        if output_set.tensors.len() != n_out {
+            return Err(Error::UnsupportedLayout(format!(
+                "OutputSet has {} tensors but model expects {n_out}",
+                output_set.tensors.len(),
+            )));
+        }
+        for i in 0..n_out {
+            let expected = self.output_size(i);
+            let got = output_set.tensors[i].0.size();
+            if got != expected {
+                return Err(Error::TensorSizeMismatch { expected, got });
+            }
+        }
         let mut map_guards: Vec<TensorMap<u8>> = Vec::new();
 
         let mut input_blobs = self
@@ -506,6 +527,44 @@ impl Model {
         input_set: &InputSet,
         output_set: &OutputSet,
     ) -> Result<InferRequest, Error> {
+        if !Arc::ptr_eq(&self.session, &input_set.session) {
+            return Err(Error::UnsupportedLayout(
+                "InputSet was allocated from a different session".to_owned(),
+            ));
+        }
+        if !Arc::ptr_eq(&self.session, &output_set.session) {
+            return Err(Error::UnsupportedLayout(
+                "OutputSet was allocated from a different session".to_owned(),
+            ));
+        }
+        let n_in = self.n_inputs();
+        let n_out = self.n_outputs();
+        if input_set.tensors.len() != n_in {
+            return Err(Error::UnsupportedLayout(format!(
+                "InputSet has {} tensors but model expects {n_in}",
+                input_set.tensors.len(),
+            )));
+        }
+        if output_set.tensors.len() != n_out {
+            return Err(Error::UnsupportedLayout(format!(
+                "OutputSet has {} tensors but model expects {n_out}",
+                output_set.tensors.len(),
+            )));
+        }
+        for i in 0..n_in {
+            let expected = self.input_size(i);
+            let got = input_set.tensors[i].0.size();
+            if got != expected {
+                return Err(Error::TensorSizeMismatch { expected, got });
+            }
+        }
+        for i in 0..n_out {
+            let expected = self.output_size(i);
+            let got = output_set.tensors[i].0.size();
+            if got != expected {
+                return Err(Error::TensorSizeMismatch { expected, got });
+            }
+        }
         let mut map_guards: Vec<TensorMap<u8>> = Vec::new();
 
         let mut input_blobs = input_set
