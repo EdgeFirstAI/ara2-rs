@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-06-16
+
+### Added
+
+- **I/O rebind pool**: new `InputSet` and `OutputSet` types plus four new
+  `Model` methods for continuous full-pipeline NPU saturation without a transit
+  reserve:
+  - `allocate_output_set(memory)` → `OutputSet`: allocates and DMA-registers
+    one buffer per model output. Pass to `submit_with_output_set` so a decoder
+    can hold some sets while the NPU infers into others.
+  - `allocate_input_set(memory)` → `InputSet`: symmetric analogue for inputs;
+    tensors are shaped `[C, H, W]` to match `allocate_tensors` and are
+    compatible with HAL's `TensorImageRef` for zero-copy GPU preprocessing.
+  - `submit_with_output_set(output_set)`: infers using the model's own input
+    tensors and writes outputs into an `OutputSet`.
+  - `submit_with_io_set(input_set, output_set)`: fully decoupled path — both
+    input and output bypass the model's `allocate_tensors` buffers.
+
+  Both types are `Send`; raw DMA descriptor pointers are valid for the session
+  lifetime enforced by an internal `Arc` keep-alive.
+
+### Fixed
+
+- `submit_with_output_set` and `submit_with_io_set` now validate session
+  identity, tensor count, and per-tensor byte sizes before calling
+  `dv_infer_async`, returning a typed error instead of undefined behaviour
+  on a mismatched set.
+- `allocate_input_set` now allocates with `input_shape()` (`[C, H, W]`)
+  instead of a flat `[size]` slice, matching the layout `allocate_tensors`
+  produces and enabling `TensorImageRef` compatibility.
+
 ## [0.11.2] - 2026-05-28
 
 ### Changed
@@ -520,7 +551,8 @@ Non-qmode-9 DVMs now raise `Ara2Error("unsupported quantization mode: qmode=N ..
 - Requires `edgefirst-hal` for HAL integration
 - Requires `libaraclient.so` runtime library
 
-[Unreleased]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.11.2...HEAD
+[Unreleased]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.11.2...v0.12.0
 [0.11.2]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.11.1...v0.11.2
 [0.11.1]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.10.0...v0.11.0
