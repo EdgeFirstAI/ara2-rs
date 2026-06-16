@@ -335,6 +335,258 @@ impl Model {
         })
     }
 
+    /// Allocate a standalone output buffer set for rebindable inference.
+    ///
+    /// Returns an [`OutputSet`] whose output tensors match this model's output
+    /// sizes and memory type. Pass it to [`submit_with_output_set`] to write
+    /// inference outputs into that set instead of the model's own
+    /// [`allocate_tensors`]-allocated outputs, decoupling the output buffer
+    /// from the model slot.
+    ///
+    /// Allocate more sets than pipeline slots so a decoder can hold some sets
+    /// while the model keeps inferring into others.
+    pub fn allocate_output_set(&self, memory: Option<TensorMemory>) -> Result<OutputSet, Error> {
+        let tensors = (0..self.n_outputs())
+            .map(|i| {
+                let size = self.output_size(i);
+                let tensor = Tensor::<u8>::new(&[size], memory, None)?;
+                match tensor.memory() {
+                    TensorMemory::Shm | TensorMemory::Dma => {
+                        let desc = self.shmfd_register(&tensor)?;
+                        Ok((tensor, desc))
+                    }
+                    _ => Ok((tensor, std::ptr::null_mut())),
+                }
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
+        Ok(OutputSet {
+            session: Arc::clone(&self.session),
+            tensors,
+        })
+    }
+
+    /// Allocate a pool input tensor set for the rebindable inference path.
+    ///
+    /// Returns an [`InputSet`] whose input tensors match this model's input
+    /// sizes and memory type. Pass it to [`submit_with_io_set`] to read from
+    /// an arbitrary pool tensor instead of the model's own input, decoupling
+    /// the input DMA-BUF from the model slot.
+    pub fn allocate_input_set(&self, memory: Option<TensorMemory>) -> Result<InputSet, Error> {
+        let tensors = (0..self.n_inputs())
+            .map(|i| {
+                let size = self.input_size(i);
+                let tensor = Tensor::<u8>::new(&[size], memory, None)?;
+                match tensor.memory() {
+                    TensorMemory::Shm | TensorMemory::Dma => {
+                        let desc = self.shmfd_register(&tensor)?;
+                        Ok((tensor, desc))
+                    }
+                    _ => Ok((tensor, std::ptr::null_mut())),
+                }
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
+        Ok(InputSet {
+            session: Arc::clone(&self.session),
+            tensors,
+        })
+    }
+
+    /// Submit inference asynchronously, writing outputs into `output_set`.
+    ///
+    /// Identical to [`submit`] but passes `output_set`'s pre-registered
+    /// DMA/SHM descriptors as the output blobs instead of the model's own
+    /// [`allocate_tensors`]-allocated outputs. This decouples the output
+    /// buffer from the model slot: the caller can cycle a pool of output sets
+    /// through a decoder while the model keeps inferring at full concurrency.
+    ///
+    /// # Safety contract
+    ///
+    /// The `output_set` must remain alive (and unmodified by another inference)
+    /// until the returned [`InferRequest`] is waited or dropped.
+    pub fn submit_with_output_set(
+        &mut self,
+        output_set: &OutputSet,
+    ) -> Result<InferRequest, Error> {
+        let mut map_guards: Vec<TensorMap<u8>> = Vec::new();
+
+        let mut input_blobs = self
+            .inputs
+            .iter()
+            .map(|tensor| {
+                let blob = if tensor.1.is_null() {
+                    let map = tensor.0.map()?;
+                    let ptr = map.as_ptr() as *mut std::ffi::c_void;
+                    map_guards.push(map);
+                    (ptr, ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_RAW_POINTER)
+                } else {
+                    (
+                        tensor.1 as *mut std::ffi::c_void,
+                        ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_SHM_DESCRIPTOR,
+                    )
+                };
+                Ok(dv_blob {
+                    handle: blob.0,
+                    offset: 0,
+                    size: tensor.0.size() as u64,
+                    blob_type: blob.1,
+                })
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
+
+        let mut output_blobs = output_set
+            .tensors
+            .iter()
+            .map(|tensor| {
+                let blob = if tensor.1.is_null() {
+                    let map = tensor.0.map()?;
+                    let ptr = map.as_ptr() as *mut std::ffi::c_void;
+                    map_guards.push(map);
+                    (ptr, ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_RAW_POINTER)
+                } else {
+                    (
+                        tensor.1 as *mut std::ffi::c_void,
+                        ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_SHM_DESCRIPTOR,
+                    )
+                };
+                Ok(dv_blob {
+                    handle: blob.0,
+                    offset: 0,
+                    size: tensor.0.size() as u64,
+                    blob_type: blob.1,
+                })
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
+
+        let mut request: *mut dv_infer_request = std::ptr::null_mut();
+
+        let err = unsafe {
+            self.session.lib.dv_infer_async(
+                self.session.ptr,
+                self.endpoint_ptr,
+                self.ptr,
+                input_blobs.as_mut_ptr(),
+                output_blobs.as_mut_ptr(),
+                true,
+                &mut request,
+            )
+        };
+
+        if err != 0 {
+            return Err(err.into());
+        }
+
+        if request.is_null() {
+            return Err(Error::NullPointer(
+                "dv_infer_async (with_output_set) returned null request pointer".to_owned(),
+            ));
+        }
+
+        Ok(InferRequest {
+            session: Arc::clone(&self.session),
+            ptr: request,
+            _map_guards: map_guards,
+        })
+    }
+
+    /// Submit inference asynchronously using pool-allocated input and output sets.
+    ///
+    /// Reads from `input_set`'s pre-registered DMA/SHM descriptors and writes
+    /// into `output_set`'s, bypassing the model's own `allocate_tensors`-allocated
+    /// buffers for both. This fully decouples both I/O buffers from the model slot:
+    /// any pool `(input_set, output_set)` pair can be submitted on any slot,
+    /// enabling independent input and output DMA-BUF pools sized larger than
+    /// the slot count for continuous full-pipeline saturation.
+    ///
+    /// # Safety contract
+    ///
+    /// Both `input_set` and `output_set` must remain alive and unmodified by
+    /// another thread until the returned [`InferRequest`] is waited or dropped.
+    pub fn submit_with_io_set(
+        &mut self,
+        input_set: &InputSet,
+        output_set: &OutputSet,
+    ) -> Result<InferRequest, Error> {
+        let mut map_guards: Vec<TensorMap<u8>> = Vec::new();
+
+        let mut input_blobs = input_set
+            .tensors
+            .iter()
+            .map(|tensor| {
+                let blob = if tensor.1.is_null() {
+                    let map = tensor.0.map()?;
+                    let ptr = map.as_ptr() as *mut std::ffi::c_void;
+                    map_guards.push(map);
+                    (ptr, ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_RAW_POINTER)
+                } else {
+                    (
+                        tensor.1 as *mut std::ffi::c_void,
+                        ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_SHM_DESCRIPTOR,
+                    )
+                };
+                Ok(dv_blob {
+                    handle: blob.0,
+                    offset: 0,
+                    size: tensor.0.size() as u64,
+                    blob_type: blob.1,
+                })
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
+
+        let mut output_blobs = output_set
+            .tensors
+            .iter()
+            .map(|tensor| {
+                let blob = if tensor.1.is_null() {
+                    let map = tensor.0.map()?;
+                    let ptr = map.as_ptr() as *mut std::ffi::c_void;
+                    map_guards.push(map);
+                    (ptr, ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_RAW_POINTER)
+                } else {
+                    (
+                        tensor.1 as *mut std::ffi::c_void,
+                        ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_SHM_DESCRIPTOR,
+                    )
+                };
+                Ok(dv_blob {
+                    handle: blob.0,
+                    offset: 0,
+                    size: tensor.0.size() as u64,
+                    blob_type: blob.1,
+                })
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
+
+        let mut request: *mut dv_infer_request = std::ptr::null_mut();
+
+        let err = unsafe {
+            self.session.lib.dv_infer_async(
+                self.session.ptr,
+                self.endpoint_ptr,
+                self.ptr,
+                input_blobs.as_mut_ptr(),
+                output_blobs.as_mut_ptr(),
+                true,
+                &mut request,
+            )
+        };
+
+        if err != 0 {
+            return Err(err.into());
+        }
+
+        if request.is_null() {
+            return Err(Error::NullPointer(
+                "dv_infer_async (with_io_set) returned null request pointer".to_owned(),
+            ));
+        }
+
+        Ok(InferRequest {
+            session: Arc::clone(&self.session),
+            ptr: request,
+            _map_guards: map_guards,
+        })
+    }
+
     /// Get a mutable reference to an input tensor.
     pub fn input_tensor(&mut self, idx: usize) -> &mut Tensor<u8> {
         &mut self.inputs[idx].0
@@ -948,6 +1200,74 @@ impl Drop for Model {
         unsafe {
             self.session.lib.dv_model_unload(self.ptr);
         }
+    }
+}
+
+/// A pre-allocated set of output tensors for rebindable zero-copy inference.
+///
+/// Created by [`Model::allocate_output_set`] and passed to
+/// [`Model::submit_with_output_set`] to write outputs into a buffer decoupled
+/// from the model slot. Allocate more sets than pipeline slots so a decoder can
+/// hold some sets while the model keeps inferring into others.
+pub struct OutputSet {
+    #[allow(dead_code)] // keep-alive: holds the session so registered descriptors stay valid
+    session: Arc<SessionInner>,
+    tensors: Vec<(Tensor<u8>, *mut dv_shm_descriptor)>,
+}
+
+// Safety: Arc is Send+Sync; raw pointers are FFI-registered descriptors used
+// only through the session library handle.
+unsafe impl Send for OutputSet {}
+
+impl OutputSet {
+    /// Reference to the output tensor at `idx`.
+    pub fn output_tensor(&self, idx: usize) -> &Tensor<u8> {
+        &self.tensors[idx].0
+    }
+
+    /// Number of output tensors in this set.
+    pub fn len(&self) -> usize {
+        self.tensors.len()
+    }
+
+    /// Returns `true` if this set contains no output tensors.
+    pub fn is_empty(&self) -> bool {
+        self.tensors.is_empty()
+    }
+}
+
+/// A pre-allocated, pre-registered set of input tensors for the rebindable
+/// inference path.
+///
+/// Analogous to [`OutputSet`]: allocate a pool of these (more than
+/// pipeline slots) with [`Model::allocate_input_set`] and pass one per
+/// submission to [`Model::submit_with_io_set`]. This decouples the input
+/// DMA-BUF from the model slot so any slot can read from any pool tensor,
+/// enabling full GPU zero-copy preprocessing alongside output rebinding.
+pub struct InputSet {
+    #[allow(dead_code)] // keep-alive: holds the session so registered descriptors stay valid
+    session: Arc<SessionInner>,
+    tensors: Vec<(Tensor<u8>, *mut dv_shm_descriptor)>,
+}
+
+// Safety: Arc is Send+Sync; raw pointers are FFI-registered descriptors used
+// only through the session library handle.
+unsafe impl Send for InputSet {}
+
+impl InputSet {
+    /// Reference to the input tensor at `idx`.
+    pub fn input_tensor(&self, idx: usize) -> &Tensor<u8> {
+        &self.tensors[idx].0
+    }
+
+    /// Number of input tensors in this set.
+    pub fn len(&self) -> usize {
+        self.tensors.len()
+    }
+
+    /// Returns `true` if this set contains no input tensors.
+    pub fn is_empty(&self) -> bool {
+        self.tensors.is_empty()
     }
 }
 
