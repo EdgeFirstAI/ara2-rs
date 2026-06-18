@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-06-17
+
+### Changed
+
+- **edgefirst-hal** bumped from `0.24` to `0.25` (`0.25.1`). The HAL 0.25
+  release refactors codec and image-processing APIs:
+  - `DecodeOptions` is removed — `peek_info` and `load_image` no longer accept
+    decode options; the destination tensor's pre-allocated pixel format drives
+    conversion automatically.
+  - `Crop::letterbox(pad)` replaces the manual `with_dst_rect` / `with_dst_color`
+    builder pattern for letterbox placement; geometry is now resolved internally
+    via `Crop::resolve`.
+  - `MaskOverlay::with_letterbox_crop` takes two additional arguments (`src_w`,
+    `src_h`) so the library can resolve placement without requiring callers to
+    pre-compute the letterbox rectangle.
+  - `ImageProcessor::import_image` gains a trailing
+    `colorimetry: Option<Colorimetry>` parameter for BT.709/BT.601 colour-space
+    tagging; pass `None` to preserve the previous implicit behaviour.
+  - The `Rect` placement type is now crate-private; public callers use `Region`
+    from `edgefirst-tensor` instead.
+
+  The `yolov8` example and the `model_benchmark` bench are updated accordingly.
+
 ## [0.12.0] - 2026-06-16
 
 ### Added
@@ -551,7 +574,8 @@ Non-qmode-9 DVMs now raise `Ara2Error("unsupported quantization mode: qmode=N ..
 - Requires `edgefirst-hal` for HAL integration
 - Requires `libaraclient.so` runtime library
 
-[Unreleased]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.11.2...v0.12.0
 [0.11.2]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.11.1...v0.11.2
 [0.11.1]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.11.0...v0.11.1

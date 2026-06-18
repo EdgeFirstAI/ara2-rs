@@ -41,14 +41,14 @@
 use ara2::{Session, dvm_metadata};
 use clap::{Parser, ValueEnum};
 use edgefirst_hal::{
-    codec::{DecodeOptions, ImageDecoder, ImageLoad as _, peek_info},
+    codec::{ImageDecoder, ImageLoad as _, peek_info},
     decoder::{
         DecoderBuilder, DetectBox, ProtoData, Segmentation,
         configs::{self, DecoderType, DimName, QuantTuple},
     },
     image::{
         ColorMode, Crop, Flip, ImageProcessor, ImageProcessorTrait as _, MaskOverlay,
-        MaskResolution, Rect, Rotation, save_jpeg,
+        MaskResolution, Rotation, save_jpeg,
     },
     tensor::{DType, PixelFormat, PlaneDescriptor, TensorDyn, TensorMemory, TensorTrait as _},
 };
@@ -385,27 +385,6 @@ fn dshape_or_canonical(
     }
 }
 
-/// Compute a letterbox [`Crop`] that fits `src` into `dst` preserving aspect
-/// ratio, centered with YOLO gray (114, 114, 114) padding.
-#[allow(
-    clippy::cast_precision_loss,
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss
-)]
-fn compute_letterbox(src_w: usize, src_h: usize, dst_w: usize, dst_h: usize) -> Crop {
-    let scale = (dst_w as f32 / src_w as f32).min(dst_h as f32 / src_h as f32);
-    let new_w = (src_w as f32 * scale) as usize;
-    let new_h = (src_h as f32 * scale) as usize;
-    Crop::new()
-        .with_dst_rect(Some(Rect::new(
-            (dst_w - new_w) / 2,
-            (dst_h - new_h) / 2,
-            new_w,
-            new_h,
-        )))
-        .with_dst_color(Some([114, 114, 114, 255]))
-}
-
 fn bench_row(label: &str, data: &[f64]) {
     let n = data.len() as f64;
     let mean = data.iter().sum::<f64>() / n;
@@ -653,13 +632,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut processor = ImageProcessor::new()?;
 
     // Decode JPEG into a pre-allocated DMA tensor for GPU access.
-    let opts = DecodeOptions::default().with_format(PixelFormat::Rgba);
-    let info = peek_info(&image_bytes, &opts)?;
+    let info = peek_info(&image_bytes)?;
     let (img_w, img_h) = (info.width, info.height);
     println!("Image: {img_w}x{img_h}");
     let mut src = processor.create_image(img_w, img_h, PixelFormat::Rgba, DType::U8, None)?;
     let mut img_decoder = ImageDecoder::new();
-    src.load_image(&mut img_decoder, &image_bytes, &opts)?;
+    src.load_image(&mut img_decoder, &image_bytes)?;
 
     let input_quant = model.input_quants(0);
     let input_dtype = if input_quant.is_signed {
@@ -670,13 +648,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let input_fd = model.input_tensor(0).clone_fd()?;
     let plane = PlaneDescriptor::new(input_fd.as_fd())?;
-    let mut dst =
-        processor.import_image(plane, None, in_w, in_h, PixelFormat::PlanarRgb, input_dtype)?;
+    let mut dst = processor.import_image(
+        plane,
+        None,
+        in_w,
+        in_h,
+        PixelFormat::PlanarRgb,
+        input_dtype,
+        None,
+    )?;
 
     // Letterbox: fit src into model input preserving aspect ratio with gray padding.
-    let letterbox = compute_letterbox(img_w, img_h, in_w, in_h);
+    let letterbox = Crop::letterbox([114, 114, 114, 255]);
     let letterbox_norm = MaskOverlay::default()
-        .with_letterbox_crop(&letterbox, in_w, in_h)
+        .with_letterbox_crop(&letterbox, img_w, img_h, in_w, in_h)
         .letterbox;
 
     // ── 5. Pre-allocate render canvas ───────────────────────────────────
@@ -746,7 +731,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // overlay quad, composited over the background image on the canvas.
     let overlay = MaskOverlay::default()
         .with_background(&src)
-        .with_letterbox_crop(&letterbox, in_w, in_h)
+        .with_letterbox_crop(&letterbox, img_w, img_h, in_w, in_h)
         .with_color_mode(color_mode);
     let t_draw = Instant::now();
     processor.draw_decoded_masks(&mut canvas, &detections, &masks, overlay)?;
@@ -823,7 +808,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
             let overlay = MaskOverlay::default()
                 .with_background(&src)
-                .with_letterbox_crop(&letterbox, in_w, in_h)
+                .with_letterbox_crop(&letterbox, img_w, img_h, in_w, in_h)
                 .with_color_mode(color_mode);
             processor.draw_decoded_masks(&mut canvas, &warmup_boxes, &masks, overlay)?;
         }
@@ -877,7 +862,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // MaskOverlay is a lightweight builder with no heap allocation.
             let overlay = MaskOverlay::default()
                 .with_background(&src)
-                .with_letterbox_crop(&letterbox, in_w, in_h)
+                .with_letterbox_crop(&letterbox, img_w, img_h, in_w, in_h)
                 .with_color_mode(color_mode);
             processor.draw_decoded_masks(&mut canvas, &boxes, &masks, overlay)?;
             let t5 = Instant::now();

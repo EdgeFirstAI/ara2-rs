@@ -1,7 +1,7 @@
 use ara2::Session;
 use criterion::{Criterion, criterion_group, criterion_main};
 use edgefirst_hal::{
-    codec::{DecodeOptions, ImageDecoder, ImageLoad as _, peek_info},
+    codec::{ImageDecoder, ImageLoad as _, peek_info},
     image::{Crop, Flip, G2DProcessor, ImageProcessorTrait as _, Rotation},
     tensor::{PixelFormat, Tensor, TensorDyn, TensorMemory, TensorTrait as _},
 };
@@ -21,35 +21,33 @@ fn model_benchmark(c: &mut Criterion) {
     c.bench_function("load_image", |b| {
         b.iter(|| {
             let file = std::fs::read(&image).expect("Failed to read image file");
-            let opts = DecodeOptions::default().with_format(PixelFormat::Rgba);
-            let info = peek_info(&file, &opts).expect("Failed to peek image");
+            let info = peek_info(&file).expect("Failed to peek image");
             let mut tensor = Tensor::<u8>::image(
                 info.width,
                 info.height,
-                info.format,
+                PixelFormat::Rgba,
                 Some(TensorMemory::Dma),
             )
             .expect("Failed to allocate tensor");
             let mut decoder = ImageDecoder::new();
             tensor
-                .load_image(&mut decoder, &file, &opts)
+                .load_image(&mut decoder, &file)
                 .expect("Failed to load image");
         });
     });
 
     let file = std::fs::read(&image).expect("Failed to read image file");
-    let opts = DecodeOptions::default().with_format(PixelFormat::Rgba);
-    let info = peek_info(&file, &opts).expect("Failed to peek image");
+    let info = peek_info(&file).expect("Failed to peek image");
     let mut tensor = Tensor::<u8>::image(
         info.width,
         info.height,
-        info.format,
+        PixelFormat::Rgba,
         Some(TensorMemory::Dma),
     )
     .expect("Failed to allocate tensor");
     let mut decoder = ImageDecoder::new();
     tensor
-        .load_image(&mut decoder, &file, &opts)
+        .load_image(&mut decoder, &file)
         .expect("Failed to load image");
     let tensor = TensorDyn::from(tensor);
     let mut converter = G2DProcessor::new().expect("Failed to create G2DProcessor");
