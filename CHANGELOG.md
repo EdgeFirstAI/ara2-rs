@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-06-23
+
+### Changed
+
+- **Dependencies**: refreshed all workspace dependencies to their latest
+  versions. The Python-bindings crate (`ara2-py`) moves its PyO3 stack from
+  `0.28` to `0.29`:
+  - `pyo3` `0.28` → `0.29`
+  - `pyo3-build-config` `0.28` → `0.29`
+  - `numpy` `0.28` → `0.29`
+
+  No source changes were required; the published Rust crates (`ara2`,
+  `ara2-sys`) are unaffected and their public API is unchanged. Python wheel
+  consumers should rebuild against the PyO3 0.29 ABI.
+
 ## [0.13.0] - 2026-06-17
 
 ### Changed
@@ -574,7 +589,8 @@ Non-qmode-9 DVMs now raise `Ara2Error("unsupported quantization mode: qmode=N ..
 - Requires `edgefirst-hal` for HAL integration
 - Requires `libaraclient.so` runtime library
 
-[Unreleased]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.13.1...HEAD
+[0.13.1]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.11.2...v0.12.0
 [0.11.2]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.11.1...v0.11.2
