@@ -645,6 +645,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         DType::U8
     };
+    println!(
+        "  input[0] dtype={input_dtype:?} signed={} qn={} offset={} qmode={}",
+        input_quant.is_signed, input_quant.qn, input_quant.offset, input_quant.qmode
+    );
 
     let input_fd = model.input_tensor(0).clone_fd()?;
     let plane = PlaneDescriptor::new(input_fd.as_fd())?;
