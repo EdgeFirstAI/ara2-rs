@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`Endpoint::statistics()`** returns live endpoint telemetry — operational
+  state, system and DRAM clocks (MHz), core voltage (V), temperature (°C), and
+  DRAM usage — via `dv_endpoint_get_statistics`. This exposes the dNPU's thermal
+  and voltage sensors; the Ara SDK provides no power-in-watts reading, so
+  temperature and core voltage are the available power-related telemetry. The
+  `dv_endpoint_get_statistics`/`dv_endpoint_free_statistics` FFI and the
+  `dv_endpoint_stats` struct were already bound in `ara2-sys`; this adds the
+  safe high-level `EndpointStatistics` accessor.
+
 ## [0.14.0] - 2026-07-16
 
 ### Changed
