@@ -3,7 +3,7 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use edgefirst_hal::{
     codec::{ImageDecoder, ImageLoad as _, peek_info},
     image::{Crop, Flip, G2DProcessor, ImageProcessorTrait as _, Rotation},
-    tensor::{PixelFormat, Tensor, TensorDyn, TensorMemory, TensorTrait as _},
+    tensor::{CpuAccess, PixelFormat, Tensor, TensorDyn, TensorMemory, TensorTrait as _},
 };
 use std::{env, path::Path};
 
@@ -27,6 +27,7 @@ fn model_benchmark(c: &mut Criterion) {
                 info.height,
                 PixelFormat::Rgba,
                 Some(TensorMemory::Dma),
+                CpuAccess::Write,
             )
             .expect("Failed to allocate tensor");
             let mut decoder = ImageDecoder::new();
@@ -43,6 +44,7 @@ fn model_benchmark(c: &mut Criterion) {
         info.height,
         PixelFormat::Rgba,
         Some(TensorMemory::Dma),
+        CpuAccess::Write,
     )
     .expect("Failed to allocate tensor");
     let mut decoder = ImageDecoder::new();

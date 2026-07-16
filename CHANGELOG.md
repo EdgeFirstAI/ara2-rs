@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-07-16
+
+### Changed
+
+- **edgefirst-hal** bumped from `0.25` to `0.27` (`0.27.0`), spanning two
+  upstream releases:
+  - **`0.26.0` (breaking)**: image constructors now require an explicit
+    `CpuAccess` declaration (`None` / `Read` / `Write` / `ReadWrite`)
+    describing how the CPU touches the buffer. `Tensor::image`,
+    `ImageProcessor::create_image`, and related constructors gain a trailing
+    `CpuAccess` argument; hardware-only (`None`) buffers become eligible for
+    vendor tile compression, and precise declarations pick up cheaper
+    mappings than the previous implicit `ReadWrite` behaviour.
+  - **`0.27.0`**: adds zero-copy SAHI-style input tiling for small-object
+    detection (new `edgefirst-image`/`edgefirst-decoder` tiling APIs) —
+    additive, no source changes required on top of the `0.26.0` migration.
+  - Updated call sites in `yolov8.rs`, `yolov8_live.rs`, and
+    `model_benchmark.rs`: `CpuAccess::Write` for JPEG/image decode targets,
+    `CpuAccess::Read` for the static-image render canvas (read back via
+    `save_jpeg`), and `CpuAccess::None` for the live-camera canvas, which is
+    only ever GPU-drawn and handed to Wayland as a DMA-BUF.
+  - `yolov8_live.rs` also picks up the `Crop::letterbox` /
+    `with_letterbox_crop` / `import_image` colorimetry migration introduced
+    in HAL `0.25` (see `0.13.0` below) that had not yet been applied there —
+    the `camera` feature isn't built in CI, so it had drifted since.
+- **Dependencies**: refreshed all other workspace dependencies to their
+  latest compatible versions via `cargo update` (clap, criterion, ndarray,
+  regex, tokio, wasm-bindgen, zerocopy, and their transitive graph). No
+  further source changes required.
+
+### Known limitations
+
+- The `camera` feature (`yolov8_live.rs`) could not be compiled on the
+  development host used for this release (no `libcamera-dev` installed) and
+  is not covered by CI (`build.yml` only builds default features). Its HAL
+  migration was applied by manual review mirroring the already-verified
+  `yolov8.rs` pattern, not confirmed by a compiler; verify on a host with
+  `libcamera-dev` before relying on it.
+
 ## [0.13.1] - 2026-06-23
 
 ### Changed
@@ -589,7 +628,8 @@ Non-qmode-9 DVMs now raise `Ara2Error("unsupported quantization mode: qmode=N ..
 - Requires `edgefirst-hal` for HAL integration
 - Requires `libaraclient.so` runtime library
 
-[Unreleased]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.13.1...HEAD
+[Unreleased]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.13.1...v0.14.0
 [0.13.1]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.11.2...v0.12.0

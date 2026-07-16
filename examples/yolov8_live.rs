@@ -42,10 +42,11 @@ use edgefirst_hal::{
         configs::{self, DecoderType, QuantTuple},
     },
     image::{
-        ColorMode, Crop, Flip, ImageProcessor, ImageProcessorTrait as _, MaskOverlay, Rect,
-        Rotation,
+        ColorMode, Crop, Flip, ImageProcessor, ImageProcessorTrait as _, MaskOverlay, Rotation,
     },
-    tensor::{DType, PixelFormat, PlaneDescriptor, TensorDyn, TensorMemory, TensorTrait as _},
+    tensor::{
+        CpuAccess, DType, PixelFormat, PlaneDescriptor, TensorDyn, TensorMemory, TensorTrait as _,
+    },
 };
 use libcamera::{
     camera::CameraConfigurationStatus,
@@ -436,7 +437,7 @@ impl FrameCache {
             };
 
             let tensor =
-                processor.import_image(primary, chroma, width, height, format, DType::U8)?;
+                processor.import_image(primary, chroma, width, height, format, DType::U8, None)?;
             self.entries[index] = Some(tensor);
         }
         Ok(self.entries[index].as_ref().unwrap())
@@ -734,36 +735,6 @@ fn identify_seg_outputs(shapes: &[Vec<usize>]) -> Result<(usize, usize, usize, u
     ))
 }
 
-/// Compute a letterbox [`Crop`] that scales the source image into the
-/// destination area while preserving aspect ratio.
-///
-/// The image is centered in the destination with a neutral grey
-/// (`[114, 114, 114]`) fill, which is the standard YOLO letterbox padding.
-///
-/// - `src_w`, `src_h` — source (camera) frame dimensions.
-/// - `dst_w`, `dst_h` — destination (model input) dimensions.
-///
-/// Returns a [`Crop`] with the `dst_rect` and `dst_color` configured for
-/// the HAL `convert` operation.
-#[allow(
-    clippy::cast_precision_loss,
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss
-)]
-fn compute_letterbox(src_w: usize, src_h: usize, dst_w: usize, dst_h: usize) -> Crop {
-    let scale = (dst_w as f32 / src_w as f32).min(dst_h as f32 / src_h as f32);
-    let new_w = (src_w as f32 * scale) as usize;
-    let new_h = (src_h as f32 * scale) as usize;
-    Crop::new()
-        .with_dst_rect(Some(Rect::new(
-            (dst_w - new_w) / 2,
-            (dst_h - new_h) / 2,
-            new_w,
-            new_h,
-        )))
-        .with_dst_color(Some([114, 114, 114, 255]))
-}
-
 // ── Pixel format mapping ────────────────────────────────────────────────────
 
 /// DRM fourcc for NV12 — semi-planar YUV 4:2:0 (luma plane + interleaved UV plane).
@@ -963,10 +934,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let input_fd = model.input_tensor(0).clone_fd()?;
     let plane = PlaneDescriptor::new(input_fd.as_fd())?;
-    let mut model_input =
-        processor.import_image(plane, None, in_w, in_h, PixelFormat::PlanarRgb, input_dtype)?;
+    let mut model_input = processor.import_image(
+        plane,
+        None,
+        in_w,
+        in_h,
+        PixelFormat::PlanarRgb,
+        input_dtype,
+        None,
+    )?;
 
-    let letterbox = compute_letterbox(cam_w, cam_h, in_w, in_h);
+    let letterbox = Crop::letterbox([114, 114, 114, 255]);
 
     let output_tensors: Vec<TensorDyn> = (0..n_outputs)
         .map(|i| {
@@ -987,7 +965,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Allocate a DMA-BUF-backed RGBA canvas at camera resolution. This is
     // the final render target: draw_masks composites the camera frame with
     // detection overlays into this buffer, which is then submitted to Wayland.
-    let mut canvas = processor.create_image(cam_w, cam_h, PixelFormat::Rgba, DType::U8, None)?;
+    let mut canvas = processor.create_image(
+        cam_w,
+        cam_h,
+        PixelFormat::Rgba,
+        DType::U8,
+        None,
+        CpuAccess::None,
+    )?;
     let canvas_fd = canvas.clone_fd()?;
     let canvas_raw_fd = canvas_fd.as_raw_fd();
 
@@ -1107,7 +1092,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let overlay = MaskOverlay::default()
             .with_background(src)
-            .with_letterbox_crop(&letterbox, in_w, in_h)
+            .with_letterbox_crop(&letterbox, cam_w, cam_h, in_w, in_h)
             .with_color_mode(color_mode);
         processor.draw_masks(&decoder, &output_refs, &mut canvas, overlay)?;
 
@@ -1176,7 +1161,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let overlay = MaskOverlay::default()
             .with_background(src)
-            .with_letterbox_crop(&letterbox, in_w, in_h)
+            .with_letterbox_crop(&letterbox, cam_w, cam_h, in_w, in_h)
             .with_color_mode(color_mode);
         let detections = processor.draw_masks(&decoder, &output_refs, &mut canvas, overlay)?;
         let t5 = Instant::now();

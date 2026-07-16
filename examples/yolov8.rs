@@ -50,7 +50,9 @@ use edgefirst_hal::{
         ColorMode, Crop, Flip, ImageProcessor, ImageProcessorTrait as _, MaskOverlay,
         MaskResolution, Rotation, save_jpeg,
     },
-    tensor::{DType, PixelFormat, PlaneDescriptor, TensorDyn, TensorMemory, TensorTrait as _},
+    tensor::{
+        CpuAccess, DType, PixelFormat, PlaneDescriptor, TensorDyn, TensorMemory, TensorTrait as _,
+    },
 };
 use std::os::fd::AsFd as _;
 use std::{path::PathBuf, time::Instant};
@@ -635,7 +637,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let info = peek_info(&image_bytes)?;
     let (img_w, img_h) = (info.width, info.height);
     println!("Image: {img_w}x{img_h}");
-    let mut src = processor.create_image(img_w, img_h, PixelFormat::Rgba, DType::U8, None)?;
+    let mut src = processor.create_image(
+        img_w,
+        img_h,
+        PixelFormat::Rgba,
+        DType::U8,
+        None,
+        CpuAccess::Write,
+    )?;
     let mut img_decoder = ImageDecoder::new();
     src.load_image(&mut img_decoder, &image_bytes)?;
 
@@ -671,7 +680,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ── 5. Pre-allocate render canvas ───────────────────────────────────
     // Canvas at source image dimensions for display-resolution overlay.
     // src doubles as the background for the mask overlay blit.
-    let mut canvas = processor.create_image(img_w, img_h, PixelFormat::Rgba, DType::U8, None)?;
+    let mut canvas = processor.create_image(
+        img_w,
+        img_h,
+        PixelFormat::Rgba,
+        DType::U8,
+        None,
+        CpuAccess::Read,
+    )?;
 
     // ── 5b. Pre-allocate output tensor wrappers ──────────────────────────
     // Wrap the model's DMA output buffers directly — no per-frame CPU copy.
