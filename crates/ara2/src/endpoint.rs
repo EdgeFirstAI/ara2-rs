@@ -6,7 +6,7 @@ use std::{
 
 use ara2_sys::{
     DV_ENDPOINT_STATE, DV_MODEL_PRIORITY_LEVEL_DV_MODEL_PRIORITY_LEVEL_DEFAULT, dv_endpoint,
-    dv_endpoint_dram_statistics, dv_model,
+    dv_endpoint_dram_statistics, dv_endpoint_stats, dv_model,
 };
 
 use crate::{
@@ -65,6 +65,27 @@ pub struct DramStatistics {
     pub model_occupancy_size: u64,
     /// DRAM occupied by tensor buffers in bytes.
     pub tensor_occupancy_size: u64,
+}
+
+/// Live operational statistics for an endpoint.
+///
+/// Sourced from `dv_endpoint_get_statistics`. Note the Ara SDK exposes no
+/// power-in-watts reading for the dNPU — temperature, core voltage, and
+/// the clocks are the available power-related telemetry.
+#[derive(Debug, Clone, Copy)]
+pub struct EndpointStatistics {
+    /// Current operational state of the endpoint.
+    pub state: State,
+    /// Endpoint system core clock, in MHz.
+    pub sys_clk_mhz: i32,
+    /// Endpoint DRAM clock, in MHz.
+    pub dram_clk_mhz: i32,
+    /// Average core voltage across the hardware measurement points, in volts.
+    pub core_voltage_v: f32,
+    /// Average endpoint temperature across the measurement points, in °C.
+    pub temp_c: f32,
+    /// DRAM usage statistics for the endpoint.
+    pub dram: DramStatistics,
 }
 
 /// An ARA-2 NPU accelerator endpoint.
@@ -142,6 +163,69 @@ impl Endpoint {
         }
 
         Ok(stats)
+    }
+
+    /// Read live operational statistics for this endpoint: clocks, core
+    /// voltage, temperature, operational state, and DRAM usage.
+    ///
+    /// This is the dNPU's power-and-thermal telemetry. The Ara SDK does
+    /// not expose a power-in-watts reading, so [`EndpointStatistics`]
+    /// surfaces the temperature and core voltage instead.
+    pub fn statistics(&self) -> Result<EndpointStatistics, Error> {
+        let mut ep_count = 1;
+        let mut stats: *mut dv_endpoint_stats = std::ptr::null_mut();
+        let err = unsafe {
+            self.session.lib.dv_endpoint_get_statistics(
+                self.session.ptr,
+                self.ptr,
+                &mut stats,
+                &mut ep_count,
+            )
+        };
+
+        if err != 0 {
+            return Err(err.into());
+        }
+
+        if stats.is_null() || ep_count <= 0 {
+            return Err(Error::NullPointer(
+                "dv_endpoint_get_statistics returned success with a null or empty buffer"
+                    .to_owned(),
+            ));
+        }
+
+        // Copy out the primitive fields before freeing the SDK buffer, so
+        // a fallible `State` conversion can never leak the allocation.
+        // SAFETY: checked above that `stats` is non-null and `ep_count` >= 1.
+        let raw = unsafe { &*stats };
+        let state_raw = raw.state;
+        let sys_clk_mhz = raw.ep_sys_clk;
+        let dram_clk_mhz = raw.ep_dram_clk;
+        let core_voltage_v = raw.ep_core_voltage;
+        let temp_c = raw.ep_temp;
+        let dram = DramStatistics {
+            dram_size: raw.ep_dram_stats.ep_total_dram_size,
+            dram_occupancy_size: raw.ep_dram_stats.ep_total_dram_occupancy_size,
+            free_size: raw.ep_dram_stats.ep_total_free_size,
+            reserved_occupancy_size: raw.ep_dram_stats.ep_total_reserved_occupancy_size,
+            model_occupancy_size: raw.ep_dram_stats.ep_total_model_occupancy_size,
+            tensor_occupancy_size: raw.ep_dram_stats.ep_total_tensor_occupancy_size,
+        };
+
+        unsafe {
+            self.session
+                .lib
+                .dv_endpoint_free_statistics(stats, ep_count);
+        }
+
+        Ok(EndpointStatistics {
+            state: State::try_from(state_raw)?,
+            sys_clk_mhz,
+            dram_clk_mhz,
+            core_voltage_v,
+            temp_c,
+            dram,
+        })
     }
 
     /// Load a model from a file onto this endpoint.
@@ -225,5 +309,21 @@ mod tests {
             .dram_statistics()
             .expect("should get DRAM statistics");
         assert!(stats.dram_size > 0, "DRAM size should be non-zero");
+    }
+
+    #[test]
+    fn test_statistics_nonzero() {
+        let session = crate::tests::test_session();
+        let endpoints = session.list_endpoints().unwrap();
+        let endpoint = &endpoints[0];
+        let stats = endpoint.statistics().expect("should get statistics");
+        assert!(stats.sys_clk_mhz > 0, "system clock should be non-zero");
+        assert!(stats.dram_clk_mhz > 0, "DRAM clock should be non-zero");
+        assert!(stats.temp_c.is_finite(), "temperature should be finite");
+        assert!(
+            stats.core_voltage_v.is_finite(),
+            "core voltage should be finite"
+        );
+        assert!(stats.dram.dram_size > 0, "DRAM size should be non-zero");
     }
 }
