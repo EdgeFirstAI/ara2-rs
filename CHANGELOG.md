@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-07-17
+
 ### Added
 
 - **`Endpoint::statistics()`** returns live endpoint telemetry — operational
@@ -17,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `dv_endpoint_get_statistics`/`dv_endpoint_free_statistics` FFI and the
   `dv_endpoint_stats` struct were already bound in `ara2-sys`; this adds the
   safe high-level `EndpointStatistics` accessor.
+
+### Fixed
+
+- `Endpoint::statistics()` now guards against a null or empty buffer returned
+  by the SDK instead of dereferencing it.
 
 ## [0.14.0] - 2026-07-16
 
@@ -639,7 +646,8 @@ Non-qmode-9 DVMs now raise `Ara2Error("unsupported quantization mode: qmode=N ..
 - Requires `edgefirst-hal` for HAL integration
 - Requires `libaraclient.so` runtime library
 
-[Unreleased]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.13.1...v0.14.0
 [0.13.1]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.12.0...v0.13.0
