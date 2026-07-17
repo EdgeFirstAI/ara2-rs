@@ -187,9 +187,16 @@ impl Endpoint {
             return Err(err.into());
         }
 
+        if stats.is_null() || ep_count <= 0 {
+            return Err(Error::NullPointer(
+                "dv_endpoint_get_statistics returned success with a null or empty buffer"
+                    .to_owned(),
+            ));
+        }
+
         // Copy out the primitive fields before freeing the SDK buffer, so
         // a fallible `State` conversion can never leak the allocation.
-        // SAFETY: on success the SDK allocated `ep_count` (>= 1) structs.
+        // SAFETY: checked above that `stats` is non-null and `ep_count` >= 1.
         let raw = unsafe { &*stats };
         let state_raw = raw.state;
         let sys_clk_mhz = raw.ep_sys_clk;
@@ -302,5 +309,21 @@ mod tests {
             .dram_statistics()
             .expect("should get DRAM statistics");
         assert!(stats.dram_size > 0, "DRAM size should be non-zero");
+    }
+
+    #[test]
+    fn test_statistics_nonzero() {
+        let session = crate::tests::test_session();
+        let endpoints = session.list_endpoints().unwrap();
+        let endpoint = &endpoints[0];
+        let stats = endpoint.statistics().expect("should get statistics");
+        assert!(stats.sys_clk_mhz > 0, "system clock should be non-zero");
+        assert!(stats.dram_clk_mhz > 0, "DRAM clock should be non-zero");
+        assert!(stats.temp_c.is_finite(), "temperature should be finite");
+        assert!(
+            stats.core_voltage_v.is_finite(),
+            "core voltage should be finite"
+        );
+        assert!(stats.dram.dram_size > 0, "DRAM size should be non-zero");
     }
 }
