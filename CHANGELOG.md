@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **edgefirst-hal** bumped from `0.27` to `0.28` (`0.28.0`). The HAL 0.28
+  release splits the crate into published sub-crates (`edgefirst-tensor`,
+  `edgefirst-image`, `edgefirst-gl`, `edgefirst-egl`, `edgefirst-decoder`,
+  `edgefirst-codec`) re-exported under the same `edgefirst_hal` paths, and
+  lands the crop-contract work (fused NV→planar source regions, GL planar
+  heap destinations, padded destination views, tiling-path tracing spans).
+  No ara2 API changes were required — the bump compiled clean with zero
+  call-site fallout. Raising the floor keeps downstream consumers on a
+  single HAL stack (a `^0.27` pin dual-resolves against HAL-0.28 users and
+  fails type unification at the ara2 boundary).
+
 ## [0.15.0] - 2026-07-17
 
 ### Added
