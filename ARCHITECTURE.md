@@ -12,18 +12,20 @@ ARA-2 neural network accelerator devices via the ARA-2 proxy service.
 │                      User Applications                           │
 │                                                                  │
 │  use ara2::Session;                                              │
-│  use edgefirst_hal::{tensor, image, decoder};                    │
+│  use edgefirst_tensor::Tensor;                                   │
+│  use edgefirst_image::ImageProcessor;                            │
+│  use edgefirst_decoder::DecoderBuilder;                          │
 └──────────────────────────────────────────────────────────────────┘
                 │                           │
                 ▼                           ▼
 ┌───────────────────────────┐   ┌──────────────────────────────────┐
-│          ara2             │   │       edgefirst-hal              │
-│     (Core Library)        │   │  (Tensor, Image, Decoder)        │
+│          ara2             │   │  edgefirst-tensor / -image /     │
+│     (Core Library)        │   │  -decoder / -codec               │
 │                           │   │                                  │
 │  • Session management     │──▶│  • DMA/SHM tensor allocation     │
 │  • Endpoint enumeration   │   │  • G2D/OpenGL image processing   │
 │  • Model loading/infer    │   │  • YOLO decode + overlay render  │
-│  • DVM metadata parsing   │   │                                  │
+│  • DVM metadata parsing   │   │  • JPEG/PNG decode into a tensor │
 └─────────────┬─────────────┘   └──────────────────────────────────┘
               │
               ▼
@@ -162,10 +164,11 @@ For multi-model parallelism, load separate `Model` instances per thread.
 
 | Feature | Default | Description |
 |---------|---------|-------------|
-| `hal` | yes | Enables `edgefirst-hal` for tensor and image operations |
+| `camera` | no | Builds the libcamera/Wayland live example (`yolov8_live`), and turns on `edgefirst-image/decode` for its fused `draw_masks` call |
 
-Without `hal`, only session/endpoint/metadata operations are available.
-Model tensor allocation and inference require the HAL tensor types.
+The EdgeFirst HAL crates are unconditional dependencies: `edgefirst-tensor`
+types appear in the public API of `Model`, and tensor allocation and
+inference cannot be expressed without them.
 
 ## FFI Layer (ara2-sys)
 
@@ -188,7 +191,10 @@ pub enum Error {
     NullPointer(String),        // Null pointer from FFI
     InferenceFailed,            // Async inference failed on NPU
     InferenceNotCompleted(u32), // Unexpected completion status
-    // ... HAL-gated variants for tensor/image errors
+    Codec(edgefirst_codec::CodecError),   // JPEG/PNG decode errors
+    TensorError(edgefirst_tensor::Error), // Tensor allocation/mapping
+    ImageError(edgefirst_image::Error),   // Image conversion/rendering
+    // ... see crates/ara2/src/error.rs for the full list
 }
 ```
 
@@ -209,7 +215,7 @@ chaining for integration with `anyhow` and `eyre`.
 3. endpoint.load_model_from_file("model.dvm")
    └─▶ Upload compiled model to NPU DRAM
 
-4. model.allocate_tensors(Some(TensorMemory::Dma))
+4. model.allocate_tensors(Some(TensorMemory::DmaBuf))
    └─▶ Allocate DMA-backed input/output buffers
 
 5. Write input data to model.input_tensor(0)

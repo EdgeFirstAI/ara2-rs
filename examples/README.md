@@ -4,12 +4,18 @@ End-to-end inference examples for the ARA-2 NPU using the EdgeFirst HAL
 for GPU preprocessing, decoding, and overlay rendering.  All examples use
 zero-copy DMA-BUF buffers throughout the pipeline.
 
+The HAL ships as one library per concern rather than a single
+`edgefirst-hal` package: `edgefirst-tensor` (memory), `edgefirst-codec`
+(JPEG/PNG decode), `edgefirst-image` (convert and render), and
+`edgefirst-decoder` (YOLO post-processing).  In Rust they are four crates;
+in Python they are four wheels sharing the `edgefirst.` namespace.
+
 ## Prerequisites
 
 - ARA-2 proxy service running: `systemctl status ara2.service`
 - ARA-2 PCIe device visible: `lspci | grep -i kinara`
 - Wayland compositor running (Weston) with `zwp_linux_dmabuf_v1` support
-- A compiled DVM model, e.g. `yolov8n-seg_640x640.dvm`
+- A compiled DVM model — see [Models](#models) below
 
 | File | Description |
 |------|-------------|
@@ -17,6 +23,37 @@ zero-copy DMA-BUF buffers throughout the pipeline.
 | `yolov8_live.rs` | Live camera inference (Rust + libcamera + wayland-client) |
 | `yolov8_live.py` | Live camera inference (Python + libcamera + pywayland) |
 | `yolov8.py` | Static image inference (Python) |
+
+## Models
+
+The official pre-trained models are published in the EdgeFirst model zoo on
+Hugging Face:
+
+| Task | Repository |
+| --- | --- |
+| Detection | <https://huggingface.co/EdgeFirst/yolov8-det> |
+| Segmentation | <https://huggingface.co/EdgeFirst/yolov8-seg> |
+
+Each repository ships one directory per target — `tflite/`, `imx95/`,
+`onnx/`, `hailo/`, `jetson/`, `qnn/`.  The ARA-2 builds are the int16 `.dvm`
+exports under `ara240/`, in `n`/`s`/`m` sizes:
+
+```bash
+# On the target
+curl -LO https://huggingface.co/EdgeFirst/yolov8-det/resolve/main/ara240/yolov8n-det-int16.dvm
+curl -LO https://huggingface.co/EdgeFirst/yolov8-seg/resolve/main/ara240/yolov8n-seg-int16.dvm
+```
+
+Each export embeds an `edgefirst.json` schema and the class `labels.txt` in a
+ZIP trailer appended to the `.dvm`.  That is where the per-output
+`normalized` flag and named `dshape` come from — the NPU runtime reports
+neither, and a model whose boxes are in pixel space is misread without them.
+An export with no trailer still runs, falling back to the built-in COCO
+labels and a canonical Ultralytics axis naming.
+
+Both examples pin `DecoderVersion::Yolov8`.  The zoo's `yolo11` and `yolo26`
+repositories ship `ara240/` builds too, but need the matching decoder
+version.
 
 ---
 
@@ -39,6 +76,9 @@ cargo build --release --example yolov8
 
 ```bash
 yolov8 <model.dvm> <image.jpg> [--save] [--threshold 0.25] [--iou 0.45] [--benchmark N]
+
+# e.g., with the model-zoo segmentation export
+yolov8 yolov8n-seg-int16.dvm zidane.jpg --save --benchmark 30
 ```
 
 | Flag | Default | Description |
@@ -66,10 +106,10 @@ RGBA canvas DMA-BUF directly to the compositor -- no EGL or OpenGL.
 
 ```
 libcamera (NV12 or YUYV DMA-BUF)
-  -> HAL import (cached by buffer index)
-  -> HAL convert (NV12|YUYV -> PlanarRGB letterbox)
+  -> edgefirst-image import (cached by buffer index)
+  -> edgefirst-image convert (NV12|YUYV -> PlanarRGB letterbox)
   -> ARA-2 NPU inference
-  -> HAL draw_masks (decode + composite -> RGBA canvas)
+  -> edgefirst-decoder draw_onto (decode + composite -> RGBA canvas)
   -> Wayland display (DMA-BUF -> wl_buffer -> compositor)
 ```
 
@@ -106,10 +146,10 @@ export WAYLAND_DISPLAY=wayland-0
 export LIBCAMERA_PIPELINES_MATCH_LIST='nxp/neo'
 
 # Default NV12 capture:
-yolov8_live /root/models/yolov8m-seg_640x640.dvm
+yolov8_live /root/models/yolov8m-seg-int16.dvm
 
 # YUYV capture:
-yolov8_live /root/models/yolov8m-seg_640x640.dvm --format yuyv
+yolov8_live /root/models/yolov8m-seg-int16.dvm --format yuyv
 ```
 
 **`LIBCAMERA_PIPELINES_MATCH_LIST='nxp/neo'` is required on i.MX95.** The
@@ -148,7 +188,8 @@ EGL, OpenGL, or compiled C libraries needed.
 ```bash
 python3 -m venv --system-site-packages /root/venv
 source /root/venv/bin/activate
-pip install edgefirst-ara2 edgefirst-hal numpy pywayland
+pip install edgefirst-ara2 'edgefirst-decoder>=0.31' 'edgefirst-image>=0.31' \
+    numpy pywayland
 ```
 
 The `--system-site-packages` flag is required to pick up the libcamera
@@ -164,10 +205,10 @@ export LIBCAMERA_PIPELINES_MATCH_LIST='nxp/neo'
 source /root/venv/bin/activate
 
 # Default NV12 capture:
-python3 yolov8_live.py /root/models/yolov8m-seg_640x640.dvm
+python3 yolov8_live.py /root/models/yolov8m-seg-int16.dvm
 
 # YUYV capture:
-python3 yolov8_live.py /root/models/yolov8m-seg_640x640.dvm --format yuyv
+python3 yolov8_live.py /root/models/yolov8m-seg-int16.dvm --format yuyv
 ```
 
 See the Rust `yolov8_live` section above for why
