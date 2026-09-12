@@ -261,6 +261,73 @@ def canonical_dshape(role: str, shape: list[int]) -> list[tuple[ef_decoder.DimNa
     return list(zip(names, shape))
 
 
+def _decoder_output(
+    shape: list[int],
+    quant,
+    spec,
+    n_proto_ch: int | None,
+    input_dim: float,
+) -> ef_decoder.Output:
+    """Build the decoder ``Output`` for a single model output tensor.
+
+    The role is inferred from *shape*; the named ``dshape`` comes from the DVM
+    metadata when it carries one, otherwise from :func:`canonical_dshape`.
+
+    Args:
+        shape: Batch-prefixed runtime shape of this output.
+        quant: Runtime quantization for this output.
+        spec: ``OutputSpec`` from the DVM metadata, or ``None`` when the
+            metadata does not describe this output.
+        n_proto_ch: Prototype-channel count, or ``None`` for a detect-only
+            model with no proto tensor.
+        input_dim: Largest model input dimension.
+    """
+    qn, offset = quant.qn, quant.offset
+
+    def dshape_for(role: str) -> list[tuple[ef_decoder.DimName, int]]:
+        return metadata_dshape(spec, shape) or canonical_dshape(role, shape)
+
+    if len(shape) == 4:
+        # Proto tensor [1, 32, H, W]
+        out = ef_decoder.Output.protos(
+            dshape=dshape_for("protos"),
+            decoder=ef_decoder.DecoderType.Ultralytics,
+        )
+        return out.with_quantization(qn, offset)
+
+    if len(shape) == 3 and shape[1] == 4:
+        # Box tensor [1, 4, N]. A spec-conforming export declares `normalized`,
+        # and its coordinates are already in [0, 1] — use qn as-is. An older
+        # export that declares nothing emits int-encoded pixel coordinates in
+        # [0, input_dim], so the quantization scale is divided by input_dim to
+        # bring them into the same range. Dividing unconditionally (as this
+        # example used to) makes a modern model's boxes `input_dim` times too
+        # small.
+        normalized = spec.normalized if spec is not None else None
+        scale = qn / input_dim if normalized is None and input_dim > 1 else qn
+        out = ef_decoder.Output.boxes(
+            dshape=dshape_for("boxes"),
+            decoder=ef_decoder.DecoderType.Ultralytics,
+        )
+        out = out.with_quantization(scale, offset)
+        return out.with_normalized(True if normalized is None else normalized)
+
+    if n_proto_ch and len(shape) == 3 and shape[1] == n_proto_ch:
+        # Mask coefficient tensor [1, 32, N]
+        out = ef_decoder.Output.mask_coefficients(
+            dshape=dshape_for("mask_coefficients"),
+            decoder=ef_decoder.DecoderType.Ultralytics,
+        )
+        return out.with_quantization(qn, offset)
+
+    # Score tensor [1, C, N]
+    out = ef_decoder.Output.scores(
+        dshape=dshape_for("scores"),
+        decoder=ef_decoder.DecoderType.Ultralytics,
+    )
+    return out.with_quantization(qn, offset)
+
+
 def build_decoder(
     shapes: list[list[int]],
     quants: list,
@@ -293,56 +360,10 @@ def build_decoder(
     proto_shape = next((s for s in shapes if len(s) == 4), None)
     n_proto_ch = proto_shape[1] if proto_shape else None
 
-    outputs = []
-    for i, shape in enumerate(shapes):
-        qn, offset = quants[i].qn, quants[i].offset
-        spec = specs[i]
-
-        def dshape_for(role: str) -> list[tuple[ef_decoder.DimName, int]]:
-            return metadata_dshape(spec, shape) or canonical_dshape(role, shape)
-
-        if len(shape) == 4:
-            # Proto tensor [1, 32, H, W]
-            out = ef_decoder.Output.protos(
-                dshape=dshape_for("protos"),
-                decoder=ef_decoder.DecoderType.Ultralytics,
-            )
-            out = out.with_quantization(qn, offset)
-
-        elif len(shape) == 3 and shape[1] == 4:
-            # Box tensor [1, 4, N]. A spec-conforming export declares
-            # `normalized`, and its coordinates are already in [0, 1] — use qn
-            # as-is. An older export that declares nothing emits int-encoded
-            # pixel coordinates in [0, input_dim], so the quantization scale is
-            # divided by input_dim to bring them into the same range. Dividing
-            # unconditionally (as this example used to) makes a modern model's
-            # boxes `input_dim` times too small.
-            normalized = spec.normalized if spec is not None else None
-            scale = qn / input_dim if normalized is None and input_dim > 1 else qn
-            out = ef_decoder.Output.boxes(
-                dshape=dshape_for("boxes"),
-                decoder=ef_decoder.DecoderType.Ultralytics,
-            )
-            out = out.with_quantization(scale, offset)
-            out = out.with_normalized(True if normalized is None else normalized)
-
-        elif n_proto_ch and len(shape) == 3 and shape[1] == n_proto_ch:
-            # Mask coefficient tensor [1, 32, N]
-            out = ef_decoder.Output.mask_coefficients(
-                dshape=dshape_for("mask_coefficients"),
-                decoder=ef_decoder.DecoderType.Ultralytics,
-            )
-            out = out.with_quantization(qn, offset)
-
-        else:
-            # Score tensor [1, C, N]
-            out = ef_decoder.Output.scores(
-                dshape=dshape_for("scores"),
-                decoder=ef_decoder.DecoderType.Ultralytics,
-            )
-            out = out.with_quantization(qn, offset)
-
-        outputs.append(out)
+    outputs = [
+        _decoder_output(shape, quants[i], specs[i], n_proto_ch, input_dim)
+        for i, shape in enumerate(shapes)
+    ]
 
     return ef_decoder.Decoder.new_from_outputs(
         outputs,

@@ -707,7 +707,7 @@ impl Model {
             TensorMemory::Shm | TensorMemory::DmaBuf => {}
             other => {
                 return Err(Error::UnsupportedLayout(format!(
-                    "shmfd_register only supports Shm or Dma memory, got {other:?}"
+                    "shmfd_register only supports Shm or DmaBuf memory, got {other:?}"
                 )));
             }
         }
