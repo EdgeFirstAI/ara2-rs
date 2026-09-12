@@ -28,7 +28,7 @@
 //! - `depth`: ring buffer depth / number of model slots (default: 2)
 
 use ara2::{DEFAULT_TIMEOUT_MS, InferRequest, Model, Session};
-use edgefirst_hal::tensor::TensorTrait;
+use edgefirst_tensor::TensorTrait;
 use std::{env, path::PathBuf, process, time::Instant};
 
 /// Simulate CPU preprocessing by writing a pattern into all input tensors.

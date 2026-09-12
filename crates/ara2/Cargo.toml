@@ -16,11 +16,22 @@ exclude = ["target/", "*.dvm", "*.onnx"]
 # Enables the libcamera-based live-inference example (yolov8_live).
 # Off by default so building the library and file-based examples does not
 # require libcamera or Wayland client libraries on the host.
-camera = ["dep:libcamera", "dep:wayland-client", "dep:wayland-protocols"]
+# `edgefirst-image/decode` supplies `ImageProcessor::draw_masks`, the fused
+# decode+composite call the live example uses. It is off by default upstream
+# so a build that only converts images does not link the model decoder.
+camera = [
+    "dep:libcamera",
+    "dep:wayland-client",
+    "dep:wayland-protocols",
+    "edgefirst-image/decode",
+]
 
 [dependencies]
 ara2-sys.workspace = true
-edgefirst-hal.workspace = true
+edgefirst-codec.workspace = true
+edgefirst-decoder.workspace = true
+edgefirst-image.workspace = true
+edgefirst-tensor.workspace = true
 libcamera = { workspace = true, optional = true }
 libloading.workspace = true
 log.workspace = true

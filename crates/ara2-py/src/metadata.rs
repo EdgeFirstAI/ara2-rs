@@ -323,6 +323,32 @@ impl OutputSpec {
         self.0.shape.clone()
     }
 
+    /// Physical axis names in memory order, as `(name, extent)` pairs.
+    ///
+    /// Names are the metadata spellings (`"batch"`, `"num_boxes"`,
+    /// `"num_protos"`, ...) so a caller can map them onto
+    /// `edgefirst.decoder.DimName` without this package depending on the
+    /// decoder. Empty when the producer omitted the field.
+    #[getter]
+    fn dshape(&self) -> Vec<(String, usize)> {
+        self.0
+            .dshape
+            .iter()
+            .map(|(name, extent)| (name.to_string(), *extent))
+            .collect()
+    }
+
+    /// Whether box coordinates are already normalized to `[0, 1]`.
+    ///
+    /// `None` when the metadata does not say — the caller must then assume
+    /// pixel-space coordinates and divide the box quantization scale by the
+    /// model's input dimension. Only meaningful for `boxes` and `detection`
+    /// outputs.
+    #[getter]
+    fn normalized(&self) -> Option<bool> {
+        self.0.normalized
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "OutputSpec(name={:?}, type={:?}, shape={:?})",

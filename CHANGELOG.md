@@ -7,6 +7,182 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-09-11
+
+### Changed (BREAKING)
+
+- **edgefirst-hal replaced by the modular EdgeFirst HAL crates at `0.31`.**
+  `edgefirst-hal` was a meta-crate that re-exported the real libraries under
+  `edgefirst_hal::{tensor, image, decoder, codec}`; upstream deleted it in
+  HAL 0.29, and `0.28.3` is its last release. `ara2` now depends on
+  `edgefirst-tensor`, `edgefirst-image`, `edgefirst-decoder` and
+  `edgefirst-codec` directly. Each sub-crate exports its types at its own
+  crate root, so the intermediate module segment disappears:
+  `edgefirst_hal::tensor::TensorMemory` is now `edgefirst_tensor::TensorMemory`.
+  These types appear in the public API surface of `ara2`, so this is a
+  transitive break — a downstream crate pinning `edgefirst-hal` must migrate
+  in lockstep or it will fail type unification at the `ara2` boundary.
+- **`TensorMemory::Dma` renamed to `TensorMemory::DmaBuf`**, and the enum is
+  now `#[non_exhaustive]` upstream (`IoSurface`, `Pbo` and `Cuda` joined it,
+  with Windows D3D11 textures served under `DmaBuf`). A `match` on it needs a
+  wildcard arm. The Python binding's `allocate_tensors(memory=...)` string is
+  unchanged: `"dma"` still selects DMA-BUF, and `memory_type()` still reports
+  `"dma"`, `"shm"` or `"mem"` — an unmodelled backing now reports its upstream
+  wire name rather than being mislabelled.
+- **`TensorMap<T>` is no longer public; use `HostView<'_, T>`.** The map guards
+  `Model::build_blobs` holds are now `edgefirst_tensor::HostView<'static, u8>`,
+  which implements the same `TensorMapTrait`.
+- **`ara2`'s `camera` feature now also enables `edgefirst-image/decode`.**
+  `ImageProcessor::draw_masks` — the fused decode-and-composite call
+  `yolov8_live` uses — moved behind that feature upstream so a build that only
+  converts images does not link the model decoder.
+
+### Added
+
+- **`EndpointStatistics` is exported from the crate root.** `Endpoint::statistics()`
+  has been public since 0.15.0, but `mod endpoint` is private and the type was
+  missing from the `pub use` list — so the return type of a public method could
+  not be named downstream. Callable, but impossible to store in a struct field
+  or write in a signature.
+
+- **`OutputSpec.normalized` and `OutputSpec.dshape` on the Python bindings.**
+  The Rust `dvm_metadata::OutputSpec` has carried both since the fields were
+  added; `edgefirst_ara2` exposed neither, so a Python caller could not tell a
+  spec-conforming export (normalized box coordinates, named axes) from an older
+  one. `dshape` is returned as `(name, extent)` string pairs — the metadata
+  spellings, which map onto `edgefirst.decoder.DimName` without `edgefirst-ara2`
+  depending on the decoder wheel.
+
+### Changed
+
+- **Python examples migrated to the `edgefirst.*` namespace packages.**
+  `edgefirst_hal` is replaced by `edgefirst.tensor`, `edgefirst.image`,
+  `edgefirst.decoder` and `edgefirst.codec`, imported as `ef_tensor`,
+  `ef_image`, `ef_decoder` and `ef_codec` so each name says which library it
+  comes from. The rewrite also corrects call sites that had been stale since
+  HAL 0.28 or earlier:
+  - `hal.Rect` no longer exists. `ImageProcessor.convert(src, dst,
+    letterbox=(r, g, b, a))` performs the aspect-preserving fit itself, so the
+    destination rectangle is gone; `compute_letterbox` now returns only the
+    normalized rect the mask calls need, computed to match the HAL's own
+    `letterbox_rect` (long axis exact, short axis rounded half away from zero,
+    centred) so the overlay registers with the pixels the GPU rendered.
+  - `hal.Tensor.load_from_bytes` / `hal.load_image` are replaced by the
+    allocate-then-decode pattern: `edgefirst.codec.Tensor.peek_image_info_file`
+    for the native geometry, `ImageProcessor.create_image` to allocate, and
+    `edgefirst.codec.decode_file_into` to decode in place.
+  - `ImageProcessor.draw_masks(decoder=..., ...)` is now
+    `Decoder.draw_onto(processor, model_output, dst, ...)`, returning the same
+    `(boxes, scores, classes)` tuple — `edgefirst-image` no longer depends on
+    `edgefirst-decoder`.
+  - Cross-package objects travel by the `__edgefirst_tensor__` capsule
+    protocol, so a tensor allocated by one `edgefirst.*` package is accepted by
+    another without a copy.
+- Documented the actual `ara2` feature table in `ARCHITECTURE.md`: it listed a
+  `hal` feature that the crate has never had.
+
+### Fixed
+
+- **Python examples produced wrong detections**, found by running them against
+  the EdgeFirst Model Zoo `ara240` DVMs on an i.MX 95 board. All three were
+  pre-existing; the Rust examples were already correct in each case, and the
+  Python ones now match them box-for-box.
+  - *Boxes were `input_dim` times too small.* `build_decoder` divided the box
+    quantization scale by the model input dimension unconditionally. That is
+    only right for an older export emitting int-encoded pixel coordinates; a
+    spec-conforming DVM declares `normalized: true` and already emits `[0, 1]`.
+    The examples now read the flag (via the new `OutputSpec.normalized`) and
+    divide only when the metadata is silent, as `yolov8.rs` does.
+  - *Segmentation could not be decoded at all.* Outputs were declared with an
+    anonymous `shape=`, and the decoder read the rank-4 proto tensor as
+    trailing-channel: `materialize_masks` rejected the coefficients with
+    "`[N, 32]` incompatible with protos `[32, 160, 160]`". Outputs are now
+    declared with a named `dshape` — from the DVM metadata when present,
+    otherwise a canonical Ultralytics naming mirroring `canonical_dshape` in
+    `yolov8.rs`.
+  - *Printed boxes did not match the drawn overlay.* The detection list scaled
+    box coordinates straight by the image dimensions, ignoring the letterbox
+    the decoder reports against, so `y` was off by the pad. `unletterbox()`
+    now applies the same inverse transform `draw_decoded_masks` uses.
+- **`yolov8.py` fed the model an extra colour conversion.** The source JPEG was
+  decoded to NV12, converted to RGBA, and only then letterboxed into the model
+  input. Converting the native frame straight to PlanarRGB removes a full-frame
+  GPU pass *and* changes the answer — the extra chroma round trip moved boxes by
+  up to ~20 px. The RGBA copy is now made once for the overlay's base layer
+  only, and the example's detections match `yolov8.rs` exactly.
+- Two `clippy::byte_char_slices` errors in `yolov8_live.rs` that only appear
+  under `--features camera`, which CI's clippy job does not build.
+
+### Fixed upstream (EdgeFirst HAL 0.31.0)
+
+- **Python instance segmentation now works.** On 0.30.0 an int8 segmentation
+  model raised `I8 mask_coefficients require quantization metadata` from
+  `ImageProcessor.materialize_masks`: the `ProtoData` tensors did carry
+  quantization, but the `__edgefirst_protodata__` capsule that hands them from
+  `edgefirst.decoder` to `edgefirst.image` described each tensor with a
+  `TensorDesc`, which has no quantization field, so `import_tensor_capsule`
+  rebuilt them without it. `draw_proto_masks` and the fused
+  `Decoder.draw_onto` crossed the same boundary and failed identically.
+  Detection models were unaffected, and so was the Rust path, which has no
+  capsule boundary to cross.
+
+  0.31.0 carries quantization in the capsule payload (a `QuantDesc`, and the
+  name moved to `edgefirst_tensor_v2`) and through the same-module
+  `interop::reconstruct` path. Re-verified on an i.MX 95 board against the
+  released wheels: `yolov8.py` with `yolov8n-seg-int16.dvm` reports the same
+  four detections as `yolov8.rs`, mask overlay included. The examples needed
+  no change.
+
+### Documentation
+
+- **The READMEs and all four `yolov8` examples now point at the EdgeFirst model
+  zoo.** `README.md`, `examples/README.md`, `crates/ara2-py/README.md` and the
+  module docs of `yolov8.rs`, `yolov8.py`, `yolov8_live.rs` and `yolov8_live.py`
+  name the detection (<https://huggingface.co/EdgeFirst/yolov8-det>) and
+  segmentation (<https://huggingface.co/EdgeFirst/yolov8-seg>) repositories,
+  explain that the ARA-2 builds are the int16 `.dvm` exports under `ara240/`,
+  and give `curl` lines for them. Usage samples name real zoo artifacts rather
+  than placeholders like `model.dvm` or `yolov8n_640x640.dvm`, and `TESTING.md`
+  says where to get a `.dvm` for the model tests. This matches the presentation
+  the `tflite-rs` READMEs and examples use for the same zoo.
+
+  The docs also record what the embedded `edgefirst.json` is *for* on this
+  runtime: it carries the per-output `normalized` flag and named `dshape`,
+  neither of which the NPU reports, and without which a model emitting
+  pixel-space boxes is misread.
+
+- **`README.md`'s example table was missing four of the ten examples** —
+  `yolov8_live.rs`, `yolov8_live.py`, `async_multi_model.rs` and
+  `async_multi_model.py`.
+
+- **`cargo doc` is warning-free across the workspace.** Seven intra-doc links in
+  `ara2` pointed at bare method names that do not resolve from a doc comment
+  (`[`submit`]` → `[`Self::submit`]`, and similar). The remaining 142 came from
+  `ara2-sys`, where bindgen copies the C header's Doxygen prose into `#[doc]`
+  verbatim and rustdoc reads its `[in]`/`[out]`/`[unused]`/`[unsupported]`
+  direction markers as links; those are allowed at the crate root rather than
+  escaped in `ffi.rs`, since any edit there is lost when `update.sh`
+  regenerates it.
+
+### Migration
+
+| 0.16.x | 0.17.0 |
+|--------|--------|
+| `ara2 = "0.16"` | `ara2 = "0.17"` |
+| `edgefirst-hal = "0.28"` | `edgefirst-tensor`/`-image`/`-decoder`/`-codec` = `"0.31"` |
+| `use edgefirst_hal::tensor::X` | `use edgefirst_tensor::X` |
+| `use edgefirst_hal::image::X` | `use edgefirst_image::X` |
+| `use edgefirst_hal::decoder::X` | `use edgefirst_decoder::X` |
+| `use edgefirst_hal::codec::X` | `use edgefirst_codec::X` |
+| `TensorMemory::Dma` | `TensorMemory::DmaBuf` (+ wildcard arm) |
+| `TensorMap<u8>` | `HostView<'static, u8>` |
+| `pip install edgefirst-hal` | `pip install edgefirst-codec edgefirst-decoder edgefirst-image` |
+| `import edgefirst_hal as hal` | `import edgefirst.image as ef_image` (and siblings) |
+| `processor.convert(s, d, dst_crop=r, dst_color=c)` | `processor.convert(s, d, letterbox=c)` |
+| `processor.draw_masks(decoder=d, ...)` | `d.draw_onto(processor, ...)` |
+| `Output.protos(shape=[1, 32, H, W])` | `Output.protos(dshape=[(Batch, 1), (NumProtos, 32), (Height, H), (Width, W)])` |
+| `scale = qn / input_dim` (always) | divide only when `OutputSpec.normalized` is `None` |
+
 ## [0.16.0] - 2026-08-08
 
 ### Changed
@@ -661,7 +837,8 @@ Non-qmode-9 DVMs now raise `Ara2Error("unsupported quantization mode: qmode=N ..
 - Requires `edgefirst-hal` for HAL integration
 - Requires `libaraclient.so` runtime library
 
-[Unreleased]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.13.1...v0.14.0

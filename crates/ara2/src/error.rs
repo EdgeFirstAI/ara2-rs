@@ -3,7 +3,7 @@ use ara2_sys::{DV_ENDPOINT_STATE, DV_LAYER_OUTPUT_TYPE, dv_status_code};
 #[derive(Debug)]
 pub enum Error {
     Io(std::io::Error),
-    Codec(edgefirst_hal::codec::CodecError),
+    Codec(edgefirst_codec::CodecError),
     Library(libloading::Error),
     Ara2(dv_status_code),
     EndpointStateInvalid(DV_ENDPOINT_STATE),
@@ -12,8 +12,8 @@ pub enum Error {
     UnsupportedLayout(String),
     UnsupportedTypeSize(usize),
     NullPointer(String),
-    TensorError(edgefirst_hal::tensor::Error),
-    ImageError(edgefirst_hal::image::Error),
+    TensorError(edgefirst_tensor::Error),
+    ImageError(edgefirst_image::Error),
     ShapeError(ndarray::ShapeError),
     Zip(zip::result::ZipError),
     Json(serde_json::Error),
@@ -29,8 +29,8 @@ impl From<std::io::Error> for Error {
     }
 }
 
-impl From<edgefirst_hal::codec::CodecError> for Error {
-    fn from(e: edgefirst_hal::codec::CodecError) -> Self {
+impl From<edgefirst_codec::CodecError> for Error {
+    fn from(e: edgefirst_codec::CodecError) -> Self {
         Error::Codec(e)
     }
 }
@@ -47,14 +47,14 @@ impl From<dv_status_code> for Error {
     }
 }
 
-impl From<edgefirst_hal::tensor::Error> for Error {
-    fn from(e: edgefirst_hal::tensor::Error) -> Self {
+impl From<edgefirst_tensor::Error> for Error {
+    fn from(e: edgefirst_tensor::Error) -> Self {
         Error::TensorError(e)
     }
 }
 
-impl From<edgefirst_hal::image::Error> for Error {
-    fn from(e: edgefirst_hal::image::Error) -> Self {
+impl From<edgefirst_image::Error> for Error {
+    fn from(e: edgefirst_image::Error) -> Self {
         Error::ImageError(e)
     }
 }

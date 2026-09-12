@@ -55,6 +55,14 @@ cargo test -p ara2 dvm_metadata
 ARA2_TEST_MODEL=/path/to/model.dvm cargo test -p ara2 model
 ```
 
+Any compiled `.dvm` works. The EdgeFirst model zoo publishes ARA-2 builds
+under `ara240/`:
+
+```bash
+curl -LO https://huggingface.co/EdgeFirst/yolov8-det/resolve/main/ara240/yolov8n-det-int16.dvm
+curl -LO https://huggingface.co/EdgeFirst/yolov8-seg/resolve/main/ara240/yolov8n-seg-int16.dvm
+```
+
 ### With nextest
 
 ```bash
@@ -100,25 +108,25 @@ scp examples/async_infer.py examples/async_pipeline.py \
 
 ```bash
 # Rust — basic async benchmark
-ssh <target> /tmp/async_infer /root/models/yolov8n_640x640.dvm 10
+ssh <target> /tmp/async_infer /root/models/yolov8n-det-int16.dvm 10
 
 # Rust — pipelined inference with circular buffer (depth=2)
-ssh <target> /tmp/async_pipeline /root/models/yolov8n_640x640.dvm 50 2
+ssh <target> /tmp/async_pipeline /root/models/yolov8n-det-int16.dvm 50 2
 
 # Rust — multi-model (dual + A/B alternating)
 ssh <target> /tmp/async_multi_model \
-  /root/models/yolov8n-seg.dvm /root/models/yolo11n-seg.dvm 50
+  /root/models/yolov8n-seg-int16.dvm /root/models/yolo11n-seg-int16.dvm 50
 
 # Python
 ssh <target> 'pip install --force-reinstall --no-deps /tmp/edgefirst_ara2-*.whl && \
-  python3 /tmp/async_infer.py /root/models/yolov8n_640x640.dvm 10'
+  python3 /tmp/async_infer.py /root/models/yolov8n-det-int16.dvm 10'
 
 # Python — pipelined
-ssh <target> 'python3 /tmp/async_pipeline.py /root/models/yolov8n_640x640.dvm 50 2'
+ssh <target> 'python3 /tmp/async_pipeline.py /root/models/yolov8n-det-int16.dvm 50 2'
 
 # Python — multi-model
 ssh <target> 'python3 /tmp/async_multi_model.py \
-  /root/models/yolov8n-seg.dvm /root/models/yolo11n-seg.dvm 50'
+  /root/models/yolov8n-seg-int16.dvm /root/models/yolo11n-seg-int16.dvm 50'
 ```
 
 ## Async Processing Benchmarks
@@ -161,10 +169,10 @@ reads results from slot N−1.
 
 ```bash
 # Rust (100 iterations, depth=3)
-ssh <target> /tmp/async_pipeline /root/models/yolov8n-seg.dvm 100 3
+ssh <target> /tmp/async_pipeline /root/models/yolov8n-seg-int16.dvm 100 3
 
 # Python
-ssh <target> python3 /tmp/async_pipeline.py /root/models/yolov8n-seg.dvm 100 3
+ssh <target> python3 /tmp/async_pipeline.py /root/models/yolov8n-seg-int16.dvm 100 3
 ```
 
 **Reference results** (yolov8n-seg, 100 iterations):
@@ -182,11 +190,11 @@ scheduling patterns:
 ```bash
 # Rust (100 iterations)
 ssh <target> /tmp/async_multi_model \
-  /root/models/yolov8n-seg.dvm /root/models/yolo11n-seg.dvm 100
+  /root/models/yolov8n-seg-int16.dvm /root/models/yolo11n-seg-int16.dvm 100
 
 # Python
 ssh <target> python3 /tmp/async_multi_model.py \
-  /root/models/yolov8n-seg.dvm /root/models/yolo11n-seg.dvm 100
+  /root/models/yolov8n-seg-int16.dvm /root/models/yolo11n-seg-int16.dvm 100
 ```
 
 #### Dual-model: same image → both models

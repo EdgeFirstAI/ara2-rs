@@ -9,7 +9,7 @@
 //!
 //! ```no_run
 //! use ara2::{Session, DEFAULT_SOCKET, DEFAULT_TIMEOUT_MS};
-//! use edgefirst_hal::tensor::{TensorMemory, TensorTrait as _};
+//! use edgefirst_tensor::{TensorMemory, TensorTrait as _};
 //!
 //! // Connect to the ARA-2 proxy service
 //! let session = Session::create_via_unix_socket(DEFAULT_SOCKET)?;
@@ -17,7 +17,7 @@
 //!
 //! // Load model and allocate DMA-backed tensors
 //! let mut model = endpoints[0].load_model_from_file("model.dvm".as_ref())?;
-//! model.allocate_tensors(Some(TensorMemory::Dma))?;
+//! model.allocate_tensors(Some(TensorMemory::DmaBuf))?;
 //!
 //! // Synchronous inference
 //! let timing = model.run()?;
@@ -63,7 +63,7 @@ pub use dvm_metadata::{
     OutputSpec, PpaMetrics, has_metadata, read_labels, read_labels_from_file, read_metadata,
     read_metadata_from_file,
 };
-pub use endpoint::{DramStatistics, Endpoint, State};
+pub use endpoint::{DramStatistics, Endpoint, EndpointStatistics, State};
 pub use error::Error;
 pub use model::{
     DEFAULT_TIMEOUT_MS, InferRequest, InputPreprocess, InputQuantization, InputSet, InputTensor,

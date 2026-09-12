@@ -53,9 +53,9 @@ cargo zigbuild --release --target aarch64-unknown-linux-gnu
 
 | Feature | Default | Description |
 |---------|---------|-------------|
-| `camera` | no | Build the libcamera-based live-inference example (`yolov8_live`) |
+| `camera` | no | Build the libcamera-based live-inference example (`yolov8_live`); also turns on `edgefirst-image/decode` for its fused `draw_masks` call |
 
-`edgefirst-hal` is a required dependency — the `Model` API exposes
+The EdgeFirst HAL crates are required dependencies — the `Model` API exposes
 `Tensor<u8>` / `TensorMemory` in its public surface, so there is no
 FFI-only build mode.
 
@@ -77,7 +77,10 @@ maturin build --release --features pyo3/abi3-py311
 
 | Dependency | Purpose |
 |-----------|---------|
-| `edgefirst-hal` | Tensor memory management, image processing |
+| `edgefirst-tensor` | Tensor memory management (DMA/SHM/heap) |
+| `edgefirst-image` | Hardware-accelerated image conversion and overlay rendering |
+| `edgefirst-decoder` | YOLO/ModelPack output decoding, NMS, segmentation masks |
+| `edgefirst-codec` | JPEG/PNG decode into a pre-allocated tensor |
 | `libloading` | Dynamic loading of libaraclient.so.1 |
 | `ndarray` | N-dimensional array operations for tensor data |
 | `serde` / `serde_json` | DVM metadata parsing |

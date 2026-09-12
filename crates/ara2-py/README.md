@@ -12,7 +12,7 @@ Published to PyPI as [`edgefirst-ara2`](https://pypi.org/project/edgefirst-ara2/
 Python Application ──(UNIX/TCP socket)──▶ ara2-proxy ──(PCIe)──▶ ARA-2 NPU
        │                                (system service)        (Kinara hardware)
        │
-edgefirst-hal ──(DMA-BUF fd)──▶ GPU preprocessing (zero-copy)
+edgefirst-image ──(DMA-BUF fd)──▶ GPU preprocessing (zero-copy)
 ```
 
 Your Python code connects to the `dvproxy` system service (not directly
@@ -28,11 +28,16 @@ your application starts. The systemd unit name is platform-dependent:
 pip install edgefirst-ara2
 ```
 
-For zero-copy preprocessing with edgefirst-hal:
+For zero-copy preprocessing with the EdgeFirst HAL:
 
 ```bash
 pip install edgefirst-ara2[hal]
 ```
+
+The `hal` extra pulls `edgefirst-image` (and, through it, `edgefirst-tensor`).
+The HAL ships as one wheel per library rather than a single `edgefirst-hal`
+wheel; add `edgefirst-codec` for JPEG/PNG decode and `edgefirst-decoder` for
+YOLO post-processing when you need them.
 
 ### Prerequisites for Development
 
@@ -95,7 +100,7 @@ dequantized = model.dequantize(0)
 ## Zero-Copy DMA-BUF Pipeline
 
 For maximum throughput, use DMA-BUF tensors with
-[edgefirst-hal](https://pypi.org/project/edgefirst-hal/) for GPU-accelerated
+[edgefirst-image](https://pypi.org/project/edgefirst-image/) for GPU-accelerated
 preprocessing. This eliminates CPU memory copies between preprocessing and
 inference:
 
@@ -107,17 +112,21 @@ inference:
 **How it works:** `allocate_tensors("dma")` allocates the model's input tensor
 in a DMA-BUF — a Linux kernel buffer accessible by multiple hardware devices.
 `input_tensor_fd(0)` returns a file descriptor to that buffer. You pass this
-FD to `edgefirst_hal.import_image()`, which maps it as a GPU image surface.
+FD to `edgefirst.image.ImageProcessor.import_image()`, which maps it as a GPU
+image surface.
 The GPU writes the preprocessed frame directly into the NPU's input buffer —
 no CPU copies involved.
 
 ```python
 import os
+
+import edgefirst.codec as ef_codec
+import edgefirst.image as ef_image
 import edgefirst_ara2 as ara2
-import edgefirst_hal as hal
 
 session = ara2.Session.create_via_unix_socket(ara2.DEFAULT_SOCKET)
 endpoint = session.list_endpoints()[0]
+processor = ef_image.ImageProcessor()
 
 with endpoint.load_model("yolov8s.dvm") as model:
     model.allocate_tensors("dma")  # Must use "dma" for tensor FD access
@@ -127,14 +136,19 @@ with endpoint.load_model("yolov8s.dvm") as model:
     c, h, w = model.input_shape(0)
     try:
         # Import as PlanarRgb (CHW layout) to match ARA-2 tensor format
-        dst = hal.import_image(input_fd, w, h, hal.PixelFormat.PlanarRgb)
+        dst = processor.import_image(input_fd, w, h, ef_image.PixelFormat.PlanarRgb)
     finally:
         os.close(input_fd)  # FD duplicated by import_image; close original
 
-    # GPU-accelerated convert: camera frame -> model input (zero CPU copies)
-    processor = hal.ImageProcessor()
-    src = hal.load_image("image.jpg", format=hal.PixelFormat.Rgba, mem=hal.TensorMemory.DMA)
-    processor.convert(src, dst)
+    # edgefirst-codec decodes into a buffer edgefirst-image allocated. The
+    # decoder never converts, so a colour JPEG lands in its native NV12.
+    info = ef_codec.Tensor.peek_image_info_file("image.jpg")
+    src = processor.create_image(info.width, info.height, info.format)
+    ef_codec.decode_file_into(src, "image.jpg")
+
+    # GPU-accelerated convert: source frame -> model input (zero CPU copies).
+    # `letterbox=` fits the source preserving aspect ratio and pads the rest.
+    processor.convert(src, dst, letterbox=(114, 114, 114, 255))
 
     # Run inference — NPU reads from the same DMA-BUF
     timing = model.run()
@@ -168,9 +182,33 @@ install the packages from PyPI:
 
 ```bash
 python3 -m venv ~/venv
-~/venv/bin/pip install edgefirst-ara2 edgefirst-hal
-~/venv/bin/python3 yolov8.py model.dvm image.jpg --benchmark 30 --save
+~/venv/bin/pip install edgefirst-ara2 'edgefirst-codec>=0.31' \
+    'edgefirst-decoder>=0.31' 'edgefirst-image>=0.31'
+~/venv/bin/python3 yolov8.py yolov8m-seg-int16.dvm zidane.jpg --benchmark 30 --save
 ```
+
+## Models
+
+Official pre-trained models are published in the EdgeFirst model zoo on
+Hugging Face:
+
+| Task | Repository |
+| --- | --- |
+| Detection | <https://huggingface.co/EdgeFirst/yolov8-det> |
+| Segmentation | <https://huggingface.co/EdgeFirst/yolov8-seg> |
+
+Each repository ships one directory per target — `tflite/`, `imx95/`,
+`onnx/`, `hailo/`, `jetson/`, `qnn/`. The ARA-2 builds are the int16 `.dvm`
+exports under `ara240/`, in `n`/`s`/`m` sizes:
+
+```bash
+curl -LO https://huggingface.co/EdgeFirst/yolov8-det/resolve/main/ara240/yolov8n-det-int16.dvm
+curl -LO https://huggingface.co/EdgeFirst/yolov8-seg/resolve/main/ara240/yolov8n-seg-int16.dvm
+```
+
+Every export embeds an `edgefirst.json` schema and the class `labels.txt` in
+a ZIP trailer appended to the `.dvm`; `read_metadata()` and `read_labels()`
+below read them without loading the model onto the NPU.
 
 ## DVM Metadata
 
@@ -264,8 +302,8 @@ Loaded neural network model.
 - `dequantize(index: int) -> np.ndarray` - Dequantize output to float32
 
 **DMA-BUF Zero-Copy:**
-- `input_tensor_fd(index: int) -> int` - Get input tensor FD (pass to `hal.ImageProcessor.import_image`, which dups it — close after)
-- `output_tensor_fd(index: int) -> int` - Get output tensor FD (pass to `hal.Tensor.from_fd`, which takes ownership — do **not** close after)
+- `input_tensor_fd(index: int) -> int` - Get input tensor FD (pass to `edgefirst.image.ImageProcessor.import_image`, which dups it — close after)
+- `output_tensor_fd(index: int) -> int` - Get output tensor FD (pass to `edgefirst.tensor.Tensor.from_fd`, which takes ownership — do **not** close after)
 - `input_tensor_memory(index: int) -> str` - Input memory type
 - `output_tensor_memory(index: int) -> str` - Output memory type
 

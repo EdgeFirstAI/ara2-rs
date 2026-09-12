@@ -6,7 +6,7 @@ use crate::types::{
     InputPreprocess, InputQuantization, InputTensorInfo, ModelTiming, OutputQuantization,
     OutputTensorInfo,
 };
-use edgefirst_hal::tensor::{TensorMapTrait as _, TensorMemory, TensorTrait as _};
+use edgefirst_tensor::{TensorMapTrait as _, TensorMemory, TensorTrait as _};
 use numpy::IntoPyArray as _;
 use numpy::ndarray::{ArrayD, IxDyn};
 use pyo3::prelude::*;
@@ -106,11 +106,11 @@ impl Model {
     ///     memory: Memory type for tensor allocation. One of ``"dma"``,
     ///             ``"shm"``, ``"mem"``, or ``None`` for auto-selection
     ///             (tries DMA first). Use ``"dma"`` for zero-copy workflows
-    ///             with edgefirst-hal.
+    ///             with edgefirst-image.
     #[pyo3(signature = (memory=None))]
     fn allocate_tensors(&mut self, memory: Option<&str>) -> PyResult<()> {
         let mem = match memory {
-            Some("dma") => Some(TensorMemory::Dma),
+            Some("dma") => Some(TensorMemory::DmaBuf),
             Some("shm") => Some(TensorMemory::Shm),
             Some("mem") => Some(TensorMemory::Mem),
             None => None,
@@ -368,10 +368,9 @@ impl Model {
     /// Get a cloned DMA-BUF file descriptor for an input tensor.
     ///
     /// The returned FD is owned by the caller. Pass it to
-    /// ``edgefirst_hal.import_image()`` for zero-copy GPU preprocessing.
-    /// The ``import_image`` function duplicates the FD internally, so you
-    /// should close the returned FD with ``os.close()`` when done, or let
-    /// ``import_image`` manage it.
+    /// ``edgefirst.image.ImageProcessor.import_image()`` for zero-copy GPU
+    /// preprocessing. That call duplicates the FD internally, so close the
+    /// returned FD with ``os.close()`` when done.
     ///
     /// Args:
     ///     index: Input tensor index (0-based)
@@ -395,8 +394,9 @@ impl Model {
     /// Get a cloned DMA-BUF file descriptor for an output tensor.
     ///
     /// The returned FD is owned by the caller. Pass it to
-    /// ``edgefirst_hal.import_image()`` for zero-copy GPU post-processing.
-    /// Close with ``os.close()`` when done.
+    /// ``edgefirst.tensor.Tensor.from_fd()`` to decode the raw NPU output
+    /// without a copy. ``from_fd`` takes ownership of the FD — do not close
+    /// it yourself in that case.
     ///
     /// Args:
     ///     index: Output tensor index (0-based)
@@ -641,11 +641,15 @@ impl Model {
 
 fn memory_type_str(memory: TensorMemory) -> &'static str {
     match memory {
-        TensorMemory::Dma => "dma",
+        TensorMemory::DmaBuf => "dma",
         TensorMemory::Shm => "shm",
         // Pbo (OpenGL pixel buffer) is a GPU-backed fallback for system memory;
         // expose it as "mem" since Python users only care about DMA-BUF capability.
         TensorMemory::Mem | TensorMemory::Pbo => "mem",
+        // `TensorMemory` is `#[non_exhaustive]` upstream: backings are added
+        // without a major bump. Report an unmodelled one by its upstream wire
+        // name rather than mislabelling it as one of the three above.
+        other => other.as_str(),
     }
 }
 

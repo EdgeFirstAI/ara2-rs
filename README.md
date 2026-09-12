@@ -24,14 +24,17 @@ Requires [EdgeFirst Yocto Images](https://github.com/EdgeFirstAI/yocto) with ARA
 | [`ara2`](crates/ara2) | Core client library — session, endpoint, model, and DVM metadata APIs |
 | [`ara2-sys`](crates/ara2-sys) | FFI bindings to `libaraclient.so` via `libloading` |
 
-### Integration with edgefirst-hal
+### Integration with the EdgeFirst HAL
 
-The `ara2` crate depends on [`edgefirst-hal`](https://crates.io/crates/edgefirst-hal)
-for:
+The EdgeFirst HAL ships as one crate per library rather than a single
+`edgefirst-hal` crate. The `ara2` crate depends on four of them:
 
-- **Tensor memory management** — DMA-backed tensors for zero-copy NPU transfers
-- **Image preprocessing** — Hardware-accelerated format conversion and scaling
-- **Post-processing** — YOLO decoding, overlay rendering, segmentation masks
+| Crate | Used for |
+|-------|----------|
+| [`edgefirst-tensor`](https://crates.io/crates/edgefirst-tensor) | Tensor memory management — DMA-backed tensors for zero-copy NPU transfers |
+| [`edgefirst-image`](https://crates.io/crates/edgefirst-image) | Image preprocessing — hardware-accelerated format conversion, scaling, and overlay rendering |
+| [`edgefirst-decoder`](https://crates.io/crates/edgefirst-decoder) | Post-processing — YOLO decoding, NMS, segmentation masks |
+| [`edgefirst-codec`](https://crates.io/crates/edgefirst-codec) | JPEG/PNG decode straight into a pre-allocated tensor |
 
 ### Python Bindings
 
@@ -47,7 +50,7 @@ See [`crates/ara2-py/README.md`](crates/ara2-py/README.md) for the Python API re
 
 ```rust
 use ara2::{Session, DEFAULT_SOCKET};
-use edgefirst_hal::tensor::{TensorMemory, TensorTrait as _};
+use edgefirst_tensor::{TensorMemory, TensorTrait as _};
 
 // Connect to the ARA-2 proxy service
 let session = Session::create_via_unix_socket(DEFAULT_SOCKET)?;
@@ -59,7 +62,7 @@ println!("Endpoint state: {:?}", endpoint.check_status()?);
 
 // Load a compiled model (.dvm) and allocate DMA tensors
 let mut model = endpoint.load_model_from_file("model.dvm".as_ref())?;
-model.allocate_tensors(Some(TensorMemory::Dma))?;
+model.allocate_tensors(Some(TensorMemory::DmaBuf))?;
 
 // Run inference
 let timing = model.run()?;
@@ -170,13 +173,49 @@ physical buffers with no CPU copies in the data path.
 | Example | Description |
 |---------|-------------|
 | [`yolov8.rs`](examples/yolov8.rs) | Rust — YOLOv8 detection + segmentation with letterbox preprocessing and 3-step mask pipeline |
-| [`yolov8.py`](examples/yolov8.py) | Python — Same 3-step pipeline via `edgefirst-hal` and `edgefirst-ara2` Python packages |
+| [`yolov8.py`](examples/yolov8.py) | Python — Same 3-step pipeline via the `edgefirst.*` and `edgefirst-ara2` Python packages |
+| [`yolov8_live.rs`](examples/yolov8_live.rs) | Rust — Live camera inference: libcamera capture → NPU → Wayland display (needs `--features camera`) |
+| [`yolov8_live.py`](examples/yolov8_live.py) | Python — Same live pipeline via the libcamera Python bindings and pywayland |
+| [`async_multi_model.rs`](examples/async_multi_model.rs) | Rust — Two models in flight concurrently on one endpoint |
+| [`async_multi_model.py`](examples/async_multi_model.py) | Python — Same multi-model demo via `edgefirst-ara2` |
 | [`async_infer.rs`](examples/async_infer.rs) | Rust — Async inference benchmark: sync vs. submit/wait vs. overlap |
 | [`async_infer.py`](examples/async_infer.py) | Python — Same async benchmark via `edgefirst-ara2` |
 | [`async_pipeline.rs`](examples/async_pipeline.rs) | Rust — Pipelined inference with circular DMA-BUF buffer ring (2x+ speedup) |
 | [`async_pipeline.py`](examples/async_pipeline.py) | Python — Same pipeline demo via `edgefirst-ara2` |
 | [`endpoints.py`](examples/endpoints.py) | Python — Connect, list endpoints, check status |
 | [`test_dvm_metadata.rs`](examples/test_dvm_metadata.rs) | Rust — Read and display DVM model metadata |
+
+### Models
+
+The `yolov8` examples run the official pre-trained models published in the
+EdgeFirst model zoo on Hugging Face:
+
+| Task | Repository |
+| --- | --- |
+| Detection | <https://huggingface.co/EdgeFirst/yolov8-det> |
+| Segmentation | <https://huggingface.co/EdgeFirst/yolov8-seg> |
+
+Each repository ships one directory per target — `tflite/`, `imx95/`,
+`onnx/`, `hailo/`, `jetson/`, `qnn/`. The ARA-2 builds are the int16 `.dvm`
+exports under `ara240/`, in `n`/`s`/`m` sizes:
+
+```bash
+curl -LO https://huggingface.co/EdgeFirst/yolov8-det/resolve/main/ara240/yolov8n-det-int16.dvm
+curl -LO https://huggingface.co/EdgeFirst/yolov8-seg/resolve/main/ara240/yolov8n-seg-int16.dvm
+```
+
+Every zoo export embeds an `edgefirst.json` schema and the class `labels.txt`
+in a ZIP trailer appended to the `.dvm`, which `ara2::dvm_metadata` reads.
+That is what supplies the two things the NPU runtime cannot report: the
+per-output `normalized` flag and the named `dshape`. A `.dvm` without the
+trailer still runs — the examples fall back to the built-in COCO labels and a
+canonical Ultralytics axis naming — but a model whose boxes are in pixel
+space will be misread without it.
+
+Both `yolov8` examples pin `DecoderVersion::Yolov8`, so they decode the
+`yolov8-det` and `yolov8-seg` repositories; the zoo's `yolo11` and `yolo26`
+repositories ship `ara240/` builds too, but need the matching decoder
+version.
 
 ### Running the Rust example
 
@@ -188,7 +227,7 @@ cargo zigbuild --release --example yolov8 --target aarch64-unknown-linux-gnu
 
 # Deploy and run
 scp target/aarch64-unknown-linux-gnu/release/examples/yolov8 <target>:/root/yolov8-ara2
-ssh <target> "/root/yolov8-ara2 model.dvm image.jpg --benchmark 30 --save"
+ssh <target> "/root/yolov8-ara2 yolov8n-seg-int16.dvm zidane.jpg --benchmark 30 --save"
 ```
 
 ### Running the Python example
@@ -198,7 +237,8 @@ Create a virtual environment on the target and install the packages from PyPI:
 ```bash
 # On target
 python3 -m venv ~/venv
-~/venv/bin/pip install edgefirst-ara2 edgefirst-hal
+~/venv/bin/pip install edgefirst-ara2 'edgefirst-codec>=0.31' \
+    'edgefirst-decoder>=0.31' 'edgefirst-image>=0.31'
 ```
 
 Copy the script and run:
@@ -208,7 +248,7 @@ Copy the script and run:
 scp examples/yolov8.py <target>:/root/
 
 # On target
-~/venv/bin/python3 /root/yolov8.py model.dvm image.jpg --benchmark 30 --save
+~/venv/bin/python3 /root/yolov8.py yolov8n-seg-int16.dvm zidane.jpg --benchmark 30 --save
 ```
 
 ## Testing

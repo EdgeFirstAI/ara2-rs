@@ -35,7 +35,7 @@
 //! ```
 
 use ara2::{DEFAULT_TIMEOUT_MS, InferRequest, Model, Session};
-use edgefirst_hal::tensor::TensorTrait;
+use edgefirst_tensor::TensorTrait;
 use std::{env, path::PathBuf, process, time::Instant};
 
 /// Simulate CPU preprocessing by writing a frame-dependent pattern.

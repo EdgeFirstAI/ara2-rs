@@ -16,7 +16,7 @@ Pipeline::
     │ libcamera     │    │ cached import     │    │ pywayland            │
     │ NV12 or YUYV  │ →  │ → convert         │ →  │  DMA-BUF → wl_buffer│
     │ DMA-BUF       │    │ → NPU inference   │    │  → wl_surface_attach │
-    │               │    │ → draw_masks      │    │  → wl_surface_commit │
+    │               │    │ → draw_onto       │    │  → wl_surface_commit │
     └──────────────┘    │ → RGBA canvas     │    └──────────────────────┘
                          └───────────────────┘
 
@@ -29,8 +29,32 @@ Usage::
     python yolov8_live.py model.dvm
     python yolov8_live.py model.dvm --camera-name '/base/soc/...' --width 1920 --height 1080
 
+Models:
+    Official pre-trained models are published in the EdgeFirst model zoo on
+    Hugging Face:
+
+      Detection:    https://huggingface.co/EdgeFirst/yolov8-det
+      Segmentation: https://huggingface.co/EdgeFirst/yolov8-seg
+
+    Each repository ships one directory per target; the ARA-2 builds are the
+    int16 ``.dvm`` exports under ``ara240/``, in n/s/m sizes.
+
+      curl -LO https://huggingface.co/EdgeFirst/yolov8-det/resolve/main/ara240/yolov8n-det-int16.dvm
+      curl -LO https://huggingface.co/EdgeFirst/yolov8-seg/resolve/main/ara240/yolov8n-seg-int16.dvm
+
+    Every export embeds an ``edgefirst.json`` schema and the class
+    ``labels.txt`` in a ZIP trailer appended to the ``.dvm``. That schema is
+    where the per-output ``normalized`` flag and named ``dshape`` come from —
+    the NPU runtime reports neither, and a model emitting pixel-space boxes
+    is misread without them. An export with no trailer still runs, falling
+    back to the built-in COCO labels and :func:`canonical_dshape`.
+
+    This example pins ``DecoderVersion.Yolov8``, so it decodes the
+    ``yolov8-det`` and ``yolov8-seg`` repositories.
+
 Requirements:
-    edgefirst-ara2  edgefirst-hal  numpy  pywayland
+    edgefirst-ara2  edgefirst-decoder>=0.31  edgefirst-image>=0.31  numpy
+    pywayland
     libcamera Python bindings (ship with libcamera)
     Wayland compositor running (e.g. Weston) with zwp_linux_dmabuf_v1
 """
@@ -38,6 +62,7 @@ Requirements:
 from __future__ import annotations
 
 import argparse
+import math
 import os
 import select
 import signal
@@ -46,8 +71,10 @@ import time
 
 import numpy as np
 
+import edgefirst.decoder as ef_decoder
+import edgefirst.image as ef_image
+import edgefirst.tensor as ef_tensor
 import edgefirst_ara2 as ara2
-import edgefirst_hal as hal
 
 # Camera capture via native libcamera Python bindings
 try:
@@ -343,12 +370,21 @@ def normalize_shape(raw: tuple[int, int, int]) -> list[int]:
 
 def compute_letterbox(
     src_w: int, src_h: int, dst_w: int, dst_h: int
-) -> tuple[hal.Rect, tuple[float, float, float, float]]:
-    """Compute a letterbox transform that fits *src* into *dst*.
+) -> tuple[float, float, float, float]:
+    """Describe the letterbox transform that fits *src* into *dst*.
 
-    Preserves the source aspect ratio and centres the image within the
-    destination rectangle.  The remaining border is filled with YOLO's
-    standard gray-114 padding by the caller.
+    ``ImageProcessor.convert(src, dst, letterbox=(r, g, b, a))`` performs the
+    aspect-preserving fit itself and pads the border with the given colour,
+    so no destination rectangle is passed in.  What the caller still has to
+    supply is the same placement in normalised model-input coordinates, for
+    ``Decoder.draw_onto(letterbox=...)`` to map boxes and masks back onto the
+    camera frame.
+
+    The arithmetic mirrors the HAL's own ``letterbox_rect``: the long axis
+    fills the destination exactly, the short axis is rounded half away from
+    zero, and the result is centred.  Reproducing it (rather than deriving a
+    plausible fit) is what keeps the overlay registered with the pixels the
+    GPU actually rendered.
 
     Args:
         src_w: Source (camera) width in pixels.
@@ -357,25 +393,21 @@ def compute_letterbox(
         dst_h: Destination (model input) height in pixels.
 
     Returns:
-        A 2-tuple of:
-
-        * ``hal.Rect(x, y, w, h)`` -- pixel-coordinate crop rectangle
-          for ``processor.convert()``.
-        * ``(x0, y0, x1, y1)`` -- the same rectangle normalised to
-          ``[0, 1]`` for ``processor.draw_masks(letterbox=...)``.
+        ``(x0, y0, x1, y1)`` normalised to ``[0, 1]`` in model-input space.
     """
-    scale = min(dst_w / src_w, dst_h / src_h)
-    new_w = int(src_w * scale)
-    new_h = int(src_h * scale)
+    src_aspect = src_w / src_h
+    dst_aspect = dst_w / dst_h
+    if src_aspect > dst_aspect:
+        new_w, new_h = dst_w, max(1, math.floor(dst_w / src_aspect + 0.5))
+    else:
+        new_w, new_h = max(1, math.floor(dst_h * src_aspect + 0.5)), dst_h
     x = (dst_w - new_w) // 2
     y = (dst_h - new_h) // 2
-    rect = hal.Rect(x, y, new_w, new_h)
-    norm = (x / dst_w, y / dst_h, (x + new_w) / dst_w, (y + new_h) / dst_h)
-    return rect, norm
+    return (x / dst_w, y / dst_h, (x + new_w) / dst_w, (y + new_h) / dst_h)
 
 
 def output_dtype(bpp: int, signed: bool) -> str:
-    """Map ARA-2 output tensor bit-width and sign to a HAL dtype string.
+    """Map ARA-2 output tensor bit-width and sign to an EdgeFirst dtype string.
 
     Args:
         bpp: Bytes per element (1 for 8-bit tensors, 2 for 16-bit).
@@ -389,24 +421,191 @@ def output_dtype(bpp: int, signed: bool) -> str:
     return "int16" if signed else "uint16"
 
 
+def strip_trailing_ones(raw) -> list[int]:
+    """Strip trailing 1s from a metadata shape.
+
+    Metadata declares shapes with the leading batch and any trailing
+    ``padding`` axes; the NPU runtime strips trailing 1s before returning the
+    per-output shape.  Normalising both sides the same way lets a runtime
+    shape be matched to its ``OutputSpec``.
+    """
+    shape = [int(d) for d in raw]
+    while len(shape) > 1 and shape[-1] == 1:
+        shape.pop()
+    return shape
+
+
+def index_metadata_by_shape(metadata) -> dict[tuple[int, ...], object]:
+    """Index a model's metadata outputs by their normalised shape.
+
+    The runtime reports shape and quantization; ``edgefirst.json`` inside the
+    ``.dvm`` adds the semantics the runtime cannot know -- the named
+    ``dshape`` and, for box outputs, whether coordinates are already
+    normalised.  Older ``.dvm`` files carry neither.
+    """
+    if metadata is None:
+        return {}
+    return {tuple(strip_trailing_ones(o.shape)): o for o in metadata.outputs}
+
+
+DIM_NAMES = {
+    "batch": "Batch",
+    "height": "Height",
+    "width": "Width",
+    "num_classes": "NumClasses",
+    "num_features": "NumFeatures",
+    "num_boxes": "NumBoxes",
+    "num_protos": "NumProtos",
+    "num_anchors_x_features": "NumAnchorsXFeatures",
+    "padding": "Padding",
+    "box_coords": "BoxCoords",
+}
+
+
+def metadata_dshape(
+    spec, shape: list[int]
+) -> list[tuple[ef_decoder.DimName, int]] | None:
+    """Convert an ``OutputSpec.dshape`` into decoder ``DimName`` pairs.
+
+    Returns ``None`` when the metadata carries no ``dshape`` (or names an
+    axis this build does not recognise), leaving the caller on
+    :func:`canonical_dshape`.
+
+    Two fix-ups mirror the Rust example: trailing dims past the rank of
+    *shape* are dropped (metadata may declare a ``padding=1`` axis the NPU
+    strips), and a ``mask_coefs`` output declaring ``num_features`` on its
+    channel axis is corrected to ``num_protos`` -- some converters emit the
+    wrong name and the decoder's role validator rejects it.
+    """
+    if spec is None or not spec.dshape:
+        return None
+    pairs = list(spec.dshape)[: len(shape)]
+    is_mask_coefs = spec.output_type == "mask_coefs"
+    out = []
+    for name, extent in pairs:
+        if is_mask_coefs and name == "num_features":
+            name = "num_protos"
+        attr = DIM_NAMES.get(name)
+        if attr is None:
+            return None
+        out.append((getattr(ef_decoder.DimName, attr), extent))
+    return out
+
+
+def canonical_dshape(role: str, shape: list[int]) -> list[tuple[ef_decoder.DimName, int]]:
+    """Name each dimension of an Ultralytics output tensor.
+
+    An anonymous ``shape=`` leaves the decoder to guess which axis carries
+    what, and for the rank-4 proto tensor it guesses wrong.  Naming the
+    dimensions removes the guess -- this mirrors ``canonical_dshape`` in the
+    Rust example (``examples/yolov8_live.rs``).
+
+    Args:
+        role: One of ``"protos"``, ``"boxes"``, ``"scores"``, or
+            ``"mask_coefficients"``.
+        shape: The batch-prefixed shape from ``normalize_shape``.
+
+    Returns:
+        ``[(DimName, extent), ...]``, one entry per dimension of *shape*.
+    """
+    d = ef_decoder.DimName
+    names = {
+        "protos": [d.Batch, d.NumProtos, d.Height, d.Width],
+        "boxes": [d.Batch, d.BoxCoords, d.NumBoxes],
+        "scores": [d.Batch, d.NumClasses, d.NumBoxes],
+        "mask_coefficients": [d.Batch, d.NumProtos, d.NumBoxes],
+    }[role]
+    return list(zip(names, shape))
+
+
+def _decoder_output(
+    shape: list[int],
+    quant,
+    spec,
+    n_proto_ch: int | None,
+    input_dim: float,
+) -> ef_decoder.Output:
+    """Build the decoder ``Output`` for a single model output tensor.
+
+    The role is inferred from *shape*; the named ``dshape`` comes from the DVM
+    metadata when it carries one, otherwise from :func:`canonical_dshape`.
+
+    Args:
+        shape: Batch-prefixed runtime shape of this output.
+        quant: Runtime quantization for this output.
+        spec: ``OutputSpec`` from the DVM metadata, or ``None`` when the
+            metadata does not describe this output.
+        n_proto_ch: Prototype-channel count, or ``None`` for a detect-only
+            model with no proto tensor.
+        input_dim: Largest model input dimension.
+    """
+    qn, offset = quant.qn, quant.offset
+
+    def dshape_for(role: str) -> list[tuple[ef_decoder.DimName, int]]:
+        return metadata_dshape(spec, shape) or canonical_dshape(role, shape)
+
+    if len(shape) == 4:
+        # Proto tensor [1, 32, H, W]
+        out = ef_decoder.Output.protos(
+            dshape=dshape_for("protos"),
+            decoder=ef_decoder.DecoderType.Ultralytics,
+        )
+        return out.with_quantization(qn, offset)
+
+    if len(shape) == 3 and shape[1] == 4:
+        # Box tensor [1, 4, N]. A spec-conforming export declares `normalized`,
+        # and its coordinates are already in [0, 1] — use qn as-is. An older
+        # export that declares nothing emits int-encoded pixel coordinates in
+        # [0, input_dim], so the quantization scale is divided by input_dim to
+        # bring them into the same range. Dividing unconditionally (as this
+        # example used to) makes a modern model's boxes `input_dim` times too
+        # small.
+        normalized = spec.normalized if spec is not None else None
+        scale = qn / input_dim if normalized is None and input_dim > 1 else qn
+        out = ef_decoder.Output.boxes(
+            dshape=dshape_for("boxes"),
+            decoder=ef_decoder.DecoderType.Ultralytics,
+        )
+        out = out.with_quantization(scale, offset)
+        return out.with_normalized(True if normalized is None else normalized)
+
+    if n_proto_ch and len(shape) == 3 and shape[1] == n_proto_ch:
+        # Mask coefficient tensor [1, 32, N]
+        out = ef_decoder.Output.mask_coefficients(
+            dshape=dshape_for("mask_coefficients"),
+            decoder=ef_decoder.DecoderType.Ultralytics,
+        )
+        return out.with_quantization(qn, offset)
+
+    # Score tensor [1, C, N]
+    out = ef_decoder.Output.scores(
+        dshape=dshape_for("scores"),
+        decoder=ef_decoder.DecoderType.Ultralytics,
+    )
+    return out.with_quantization(qn, offset)
+
+
 def build_decoder(
     shapes: list[list[int]],
     quants: list,
+    specs: list,
     input_dim: float,
     threshold: float,
     iou: float,
-) -> hal.Decoder:
-    """Build a HAL YOLOv8 decoder from model output metadata.
+) -> ef_decoder.Decoder:
+    """Build an EdgeFirst YOLOv8 decoder from model output metadata.
 
     Classifies each output tensor into one of four roles based on its
-    shape, so that the HAL decoder knows how to interpret the raw NPU
+    shape, so that the decoder knows how to interpret the raw NPU
     output:
 
     * **Protos** (4-D, e.g. ``[1, 32, 160, 160]``) -- segmentation
       prototype masks.
     * **Boxes** (3-D with ``dim[1] == 4``) -- bounding-box coordinates.
-      The quantization scale is normalised by *input_dim* so that
-      coordinates are returned in ``[0, 1]``.
+      A spec-conforming export declares ``normalized`` in its metadata and
+      already emits ``[0, 1]``; an older one that declares nothing emits
+      int-encoded pixel coordinates, and only then is the quantization scale
+      divided by *input_dim*.
     * **Mask coefficients** (3-D with ``dim[1] == n_proto_channels``) --
       per-detection coefficients that combine with the protos.
     * **Scores** (everything else) -- class confidence scores.
@@ -416,45 +615,31 @@ def build_decoder(
             ``normalize_shape``.
         quants: Per-output quantization parameters from
             ``model.output_quants()``.
+        specs: Per-output ``OutputSpec`` from the DVM metadata, or ``None``
+            for outputs the metadata does not describe.
         input_dim: Largest model input dimension (used to normalise box
-            coordinates).
+            coordinates when the metadata does not declare them normalised).
         threshold: Minimum score to keep a detection.
         iou: IoU threshold for non-maximum suppression.
 
     Returns:
-        A configured ``hal.Decoder`` ready for
-        ``processor.draw_masks()``.
+        A configured ``ef_decoder.Decoder`` ready for
+        ``Decoder.draw_onto()``.
     """
+    # Number of prototype channels (e.g., 32) from the rank-4 proto tensor.
     proto_shape = next((s for s in shapes if len(s) == 4), None)
     n_proto_ch = proto_shape[1] if proto_shape else None
 
-    outputs = []
-    for i, shape in enumerate(shapes):
-        qn, offset = quants[i].qn, quants[i].offset
+    outputs = [
+        _decoder_output(shape, quants[i], specs[i], n_proto_ch, input_dim)
+        for i, shape in enumerate(shapes)
+    ]
 
-        if len(shape) == 4:
-            out = hal.Output.protos(shape=shape, decoder=hal.DecoderType.Ultralytics)
-            out = out.with_quantization(qn, offset)
-        elif len(shape) == 3 and shape[1] == 4:
-            scale = qn / input_dim if input_dim > 1 else qn
-            out = hal.Output.boxes(shape=shape, decoder=hal.DecoderType.Ultralytics)
-            out = out.with_quantization(scale, offset).with_normalized(True)
-        elif n_proto_ch and len(shape) == 3 and shape[1] == n_proto_ch:
-            out = hal.Output.mask_coefficients(
-                shape=shape, decoder=hal.DecoderType.Ultralytics
-            )
-            out = out.with_quantization(qn, offset)
-        else:
-            out = hal.Output.scores(shape=shape, decoder=hal.DecoderType.Ultralytics)
-            out = out.with_quantization(qn, offset)
-
-        outputs.append(out)
-
-    return hal.Decoder.new_from_outputs(
+    return ef_decoder.Decoder.new_from_outputs(
         outputs,
         score_threshold=threshold,
         iou_threshold=iou,
-        decoder_version=hal.DecoderVersion.Yolov8,
+        decoder_version=ef_decoder.DecoderVersion.Yolov8,
     )
 
 
@@ -477,18 +662,18 @@ class FrameCache:
                 allocated by ``libcamera.FrameBufferAllocator``.  Each
                 slot maps 1:1 to a libcamera buffer index (cookie).
         """
-        self._entries: list[hal.Tensor | None] = [None] * capacity
+        self._entries: list[ef_image.Tensor | None] = [None] * capacity
 
     def get_or_import(
         self,
         index: int,
-        processor: hal.ImageProcessor,
+        processor: ef_image.ImageProcessor,
         framebuffer: libcamera.FrameBuffer,
         width: int,
         height: int,
-        fmt: hal.PixelFormat = hal.PixelFormat.Nv12,
-    ) -> hal.Tensor:
-        """Return a cached HAL tensor, importing the DMA-BUF on first use.
+        fmt: ef_image.PixelFormat = ef_image.PixelFormat.Nv12,
+    ) -> ef_image.Tensor:
+        """Return a cached tensor, importing the DMA-BUF on first use.
 
         libcamera's ``FrameBufferAllocator`` pre-allocates a fixed pool
         of buffers whose DMA-BUF file descriptors remain stable for the
@@ -506,7 +691,7 @@ class FrameCache:
         Args:
             index: Buffer index (the libcamera request cookie), used as
                 the cache key.
-            processor: HAL image processor used to import the DMA-BUF.
+            processor: edgefirst-image processor used to import the DMA-BUF.
             framebuffer: The ``libcamera.FrameBuffer`` whose planes
                 provide the DMA-BUF fds.
             width:  Frame width in pixels.
@@ -514,15 +699,15 @@ class FrameCache:
             fmt: Pixel format of the camera buffer (default NV12).
 
         Returns:
-            A ``hal.Tensor`` wrapping the imported DMA-BUF, suitable for
-            passing to ``processor.convert()`` or ``draw_masks()``.
+            A ``Tensor`` wrapping the imported DMA-BUF, suitable for
+            passing to ``processor.convert()`` or ``Decoder.draw_onto()``.
         """
         tensor = self._entries[index]
         if tensor is None:
             planes = framebuffer.planes
             fd0 = planes[0].fd
             # Semi-planar formats (NV12) may have a separate chroma plane
-            if len(planes) >= 2 and fmt == hal.PixelFormat.Nv12:
+            if len(planes) >= 2 and fmt == ef_image.PixelFormat.Nv12:
                 chroma_fd = planes[1].fd
                 chroma_offset = planes[1].offset or None
             else:
@@ -553,12 +738,12 @@ def main() -> None:
        ``.dvm`` file for display.
     3. **ARA-2 session** -- connect to the NPU proxy, load the model,
        and allocate DMA-BUF tensors.
-    4. **Decoder** -- build the HAL post-processor from output shapes
+    4. **Decoder** -- build the edgefirst-decoder post-processor from shapes
        and quantization parameters.
-    5. **HAL processor** -- import the model's input tensor and set up
+    5. **Image processor** -- import the model's input tensor and set up
        the letterbox transform for aspect-ratio-preserving resize.
     6. **Output canvas** -- allocate a single RGBA DMA-BUF that
-       ``draw_masks`` renders into and the compositor displays.
+       ``draw_onto`` renders into and the compositor displays.
     7. **libcamera** -- configure the camera, allocate frame buffers,
        and populate the frame cache.
     8. **Wayland display** -- create the window for DMA-BUF presentation.
@@ -598,18 +783,18 @@ def main() -> None:
 
     cam_w, cam_h = args.width, args.height
 
-    # Map --format to libcamera and HAL pixel formats
+    # Map --format to libcamera and edgefirst-image pixel formats
     format_map = {
-        "nv12": (libcamera.formats.NV12, hal.PixelFormat.Nv12),
-        "yuyv": (libcamera.formats.YUYV, hal.PixelFormat.Yuyv),
+        "nv12": (libcamera.formats.NV12, ef_image.PixelFormat.Nv12),
+        "yuyv": (libcamera.formats.YUYV, ef_image.PixelFormat.Yuyv),
     }
-    libcam_fmt, hal_fmt = format_map[args.format]
+    libcam_fmt, ef_fmt = format_map[args.format]
 
-    # Map --color-mode to the HAL ColorMode enum
+    # Map --color-mode to the edgefirst-image ColorMode enum
     color_mode = {
-        "class": hal.ColorMode.Class,
-        "instance": hal.ColorMode.Instance,
-        "track": hal.ColorMode.Track,
+        "class": ef_image.ColorMode.Class,
+        "instance": ef_image.ColorMode.Instance,
+        "track": ef_image.ColorMode.Track,
     }[args.color_mode]
 
     # ── 1. Read model metadata ───────────────────────────────────────────
@@ -647,43 +832,50 @@ def main() -> None:
         print(f"Input: {c}x{h}x{w} (CHW)")
 
         # ── 4. Build decoder ─────────────────────────────────────────────
-        shapes, quants = [], []
+        # The runtime supplies shape and quantization; the DVM's
+        # `edgefirst.json` adds the named dshape and the `normalized` flag.
+        meta_by_shape = index_metadata_by_shape(metadata)
+        shapes, quants, specs = [], [], []
         for i in range(model.n_outputs):
-            shapes.append(normalize_shape(model.output_shape(i)))
+            shape = normalize_shape(model.output_shape(i))
+            shapes.append(shape)
             quants.append(model.output_quants(i))
+            specs.append(meta_by_shape.get(tuple(shape)))
 
-        decoder = build_decoder(shapes, quants, input_dim, args.threshold, args.iou)
+        decoder = build_decoder(
+            shapes, quants, specs, input_dim, args.threshold, args.iou
+        )
 
-        # ── 5. Setup HAL processor and model I/O tensors ─────────────────
-        processor = hal.ImageProcessor()
+        # ── 5. Setup image processor and model I/O tensors ───────────────
+        processor = ef_image.ImageProcessor()
 
         input_fd = model.input_tensor_fd(0)
         try:
             model_input = processor.import_image(
-                input_fd, w, h, hal.PixelFormat.PlanarRgb,
+                input_fd, w, h, ef_image.PixelFormat.PlanarRgb,
                 dtype="int8" if iq.is_signed else "uint8",
             )
         finally:
             os.close(input_fd)
 
-        letterbox_rect, letterbox_norm = compute_letterbox(cam_w, cam_h, w, h)
+        letterbox_norm = compute_letterbox(cam_w, cam_h, w, h)
         pad_color = (114, 114, 114, 255)
 
         output_tensors = []
         for i in range(model.n_outputs):
             fd = model.output_tensor_fd(i)
             output_tensors.append(
-                hal.Tensor.from_fd(
+                ef_tensor.Tensor.from_fd(
                     fd, shapes[i],
                     output_dtype(model.output_info(i).bpp, model.output_quants(i).is_signed),
                 )
             )
 
-        # ── 6. Output canvas for draw_masks ─────────────────────────────
-        # Single RGBA canvas.  HAL calls glFinish() before returning from
-        # draw_masks(), so the DMA-BUF is fully written and safe to submit
-        # to the Wayland compositor.
-        canvas = processor.create_image(cam_w, cam_h, hal.PixelFormat.Rgba)
+        # ── 6. Output canvas for draw_onto ──────────────────────────────
+        # Single RGBA canvas.  The HAL calls glFinish() before returning
+        # from draw_onto(), so the DMA-BUF is fully written and safe to
+        # submit to the Wayland compositor.
+        canvas = processor.create_image(cam_w, cam_h, ef_image.PixelFormat.Rgba)
         canvas_fd = canvas.fd  # dup'd fd, we own it
 
         # ── 7. Setup libcamera ───────────────────────────────────────────
@@ -761,7 +953,7 @@ def main() -> None:
         req = ready[0]
         idx = req.cookie
         fb = req.buffers[stream]
-        src = frame_cache.get_or_import(idx, processor, fb, cam_w, cam_h, hal_fmt)
+        src = frame_cache.get_or_import(idx, processor, fb, cam_w, cam_h, ef_fmt)
         req.reuse()
         cam_obj.queue_request(req)
         # Requeue any extra ready requests
@@ -770,14 +962,13 @@ def main() -> None:
             cam_obj.queue_request(r)
 
         processor.convert(
-            src, model_input,
-            dst_crop=letterbox_rect, dst_color=pad_color,
+            src, model_input, letterbox=pad_color,
         )
         model.run()
-        processor.draw_masks(
-            decoder=decoder,
-            model_output=output_tensors,
-            dst=canvas,
+        decoder.draw_onto(
+            processor,
+            output_tensors,
+            canvas,
             background=src,
             letterbox=letterbox_norm,
             color_mode=color_mode,
@@ -813,24 +1004,27 @@ def main() -> None:
 
             idx = req.cookie
             fb = req.buffers[stream]
-            src = frame_cache.get_or_import(idx, processor, fb, cam_w, cam_h, hal_fmt)
+            src = frame_cache.get_or_import(idx, processor, fb, cam_w, cam_h, ef_fmt)
             req.reuse()
             cam_obj.queue_request(req)
             t2 = time.monotonic()
 
             processor.convert(
-                src, model_input,
-                dst_crop=letterbox_rect, dst_color=pad_color,
+                src, model_input, letterbox=pad_color,
             )
             t3 = time.monotonic()
 
             timing = model.run()
             t4 = time.monotonic()
 
-            boxes, scores, classes = processor.draw_masks(
-                decoder=decoder,
-                model_output=output_tensors,
-                dst=canvas,
+            # An int8 *segmentation* model needs edgefirst-image and
+            # edgefirst-decoder >= 0.31.0; see the note in examples/yolov8.py.
+            # Only the detection count is used here; the overlay is drawn
+            # in-place onto `canvas` by draw_onto itself.
+            _, scores, _ = decoder.draw_onto(
+                processor,
+                output_tensors,
+                canvas,
                 background=src,
                 letterbox=letterbox_norm,
                 color_mode=color_mode,

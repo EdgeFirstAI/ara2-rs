@@ -1,10 +1,8 @@
 use ara2::Session;
 use criterion::{Criterion, criterion_group, criterion_main};
-use edgefirst_hal::{
-    codec::{ImageDecoder, ImageLoad as _, peek_info},
-    image::{Crop, Flip, G2DProcessor, ImageProcessorTrait as _, Rotation},
-    tensor::{CpuAccess, PixelFormat, Tensor, TensorDyn, TensorMemory, TensorTrait as _},
-};
+use edgefirst_codec::{ImageDecoder, ImageLoad as _, peek_info};
+use edgefirst_image::{Crop, Flip, G2DProcessor, ImageProcessorTrait as _, Rotation};
+use edgefirst_tensor::{CpuAccess, PixelFormat, Tensor, TensorDyn, TensorMemory, TensorTrait as _};
 use std::{env, path::Path};
 
 fn model_benchmark(c: &mut Criterion) {
@@ -26,7 +24,7 @@ fn model_benchmark(c: &mut Criterion) {
                 info.width,
                 info.height,
                 PixelFormat::Rgba,
-                Some(TensorMemory::Dma),
+                Some(TensorMemory::DmaBuf),
                 CpuAccess::Write,
             )
             .expect("Failed to allocate tensor");
@@ -43,7 +41,7 @@ fn model_benchmark(c: &mut Criterion) {
         info.width,
         info.height,
         PixelFormat::Rgba,
-        Some(TensorMemory::Dma),
+        Some(TensorMemory::DmaBuf),
         CpuAccess::Write,
     )
     .expect("Failed to allocate tensor");
