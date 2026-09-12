@@ -169,7 +169,7 @@ impl Endpoint {
     /// voltage, temperature, operational state, and DRAM usage.
     ///
     /// This is the dNPU's power-and-thermal telemetry. The Ara SDK does
-    /// not expose a power-in-watts reading, so [`EndpointStatistics`]
+    /// not expose a power-in-watts reading, so [`crate::EndpointStatistics`]
     /// surfaces the temperature and core voltage instead.
     pub fn statistics(&self) -> Result<EndpointStatistics, Error> {
         let mut ep_count = 1;

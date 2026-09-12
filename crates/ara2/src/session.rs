@@ -213,7 +213,7 @@ impl Session {
 
     /// Get the number of in-flight inference requests for this session.
     ///
-    /// Returns the count of requests submitted via [`Model::submit`] that
+    /// Returns the count of requests submitted via [`crate::Model::submit`] that
     /// the client library has not yet received a response for from the
     /// proxy. Useful for monitoring pipeline depth.
     ///

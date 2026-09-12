@@ -5,7 +5,7 @@ use ara2_sys::{
     DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_RUNNING, DV_LAYER_OUTPUT_TYPE, dv_blob, dv_endpoint,
     dv_infer_request, dv_model, dv_shm_descriptor,
 };
-use edgefirst_hal::tensor::{Tensor, TensorMap, TensorMapTrait as _, TensorMemory, TensorTrait};
+use edgefirst_tensor::{HostView, Tensor, TensorMapTrait as _, TensorMemory, TensorTrait};
 use log::debug;
 use ndarray::parallel::prelude::{
     IndexedParallelIterator as _, IntoParallelRefMutIterator as _, ParallelIterator as _,
@@ -68,12 +68,12 @@ pub const DEFAULT_TIMEOUT_MS: i32 = 1000;
 ///
 /// ```no_run
 /// use ara2::{Session, DEFAULT_SOCKET, DEFAULT_TIMEOUT_MS};
-/// use edgefirst_hal::tensor::TensorMemory;
+/// use edgefirst_tensor::TensorMemory;
 ///
 /// let session = Session::create_via_unix_socket(DEFAULT_SOCKET)?;
 /// let endpoints = session.list_endpoints()?;
 /// let mut model = endpoints[0].load_model_from_file("model.dvm".as_ref())?;
-/// model.allocate_tensors(Some(TensorMemory::Dma))?;
+/// model.allocate_tensors(Some(TensorMemory::DmaBuf))?;
 ///
 /// // Synchronous inference
 /// let timing = model.run()?;
@@ -110,7 +110,7 @@ impl std::fmt::Debug for Model {
 unsafe impl Send for Model {}
 
 /// Blob descriptors paired with map guards that keep memory mappings alive.
-type BlobsWithGuards = (Vec<dv_blob>, Vec<dv_blob>, Vec<TensorMap<u8>>);
+type BlobsWithGuards = (Vec<dv_blob>, Vec<dv_blob>, Vec<HostView<'static, u8>>);
 
 impl Model {
     /// Create a new Model instance.
@@ -145,7 +145,7 @@ impl Model {
     /// `map_guards` vector keeps the memory mappings alive — callers must
     /// hold it until the FFI call using the blobs has completed.
     fn build_blobs(&self) -> Result<BlobsWithGuards, Error> {
-        let mut map_guards: Vec<TensorMap<u8>> = Vec::new();
+        let mut map_guards: Vec<HostView<'static, u8>> = Vec::new();
 
         let input_blobs = self
             .inputs
@@ -338,9 +338,9 @@ impl Model {
     /// Allocate a standalone output buffer set for rebindable inference.
     ///
     /// Returns an [`OutputSet`] whose output tensors match this model's output
-    /// sizes and memory type. Pass it to [`submit_with_output_set`] to write
+    /// sizes and memory type. Pass it to [`Self::submit_with_output_set`] to write
     /// inference outputs into that set instead of the model's own
-    /// [`allocate_tensors`]-allocated outputs, decoupling the output buffer
+    /// [`Self::allocate_tensors`]-allocated outputs, decoupling the output buffer
     /// from the model slot.
     ///
     /// Allocate more sets than pipeline slots so a decoder can hold some sets
@@ -351,7 +351,7 @@ impl Model {
                 let size = self.output_size(i);
                 let tensor = Tensor::<u8>::new(&[size], memory, None)?;
                 match tensor.memory() {
-                    TensorMemory::Shm | TensorMemory::Dma => {
+                    TensorMemory::Shm | TensorMemory::DmaBuf => {
                         let desc = self.shmfd_register(&tensor)?;
                         Ok((tensor, desc))
                     }
@@ -368,7 +368,7 @@ impl Model {
     /// Allocate a pool input tensor set for the rebindable inference path.
     ///
     /// Returns an [`InputSet`] whose input tensors match this model's input
-    /// sizes and memory type. Pass it to [`submit_with_io_set`] to read from
+    /// sizes and memory type. Pass it to [`Self::submit_with_io_set`] to read from
     /// an arbitrary pool tensor instead of the model's own input, decoupling
     /// the input DMA-BUF from the model slot.
     pub fn allocate_input_set(&self, memory: Option<TensorMemory>) -> Result<InputSet, Error> {
@@ -379,7 +379,7 @@ impl Model {
                 let shape = self.input_shape(i);
                 let tensor = Tensor::<u8>::new(&shape, memory, None)?;
                 match tensor.memory() {
-                    TensorMemory::Shm | TensorMemory::Dma => {
+                    TensorMemory::Shm | TensorMemory::DmaBuf => {
                         let desc = self.shmfd_register(&tensor)?;
                         Ok((tensor, desc))
                     }
@@ -395,9 +395,9 @@ impl Model {
 
     /// Submit inference asynchronously, writing outputs into `output_set`.
     ///
-    /// Identical to [`submit`] but passes `output_set`'s pre-registered
+    /// Identical to [`Self::submit`] but passes `output_set`'s pre-registered
     /// DMA/SHM descriptors as the output blobs instead of the model's own
-    /// [`allocate_tensors`]-allocated outputs. This decouples the output
+    /// [`Self::allocate_tensors`]-allocated outputs. This decouples the output
     /// buffer from the model slot: the caller can cycle a pool of output sets
     /// through a decoder while the model keeps inferring at full concurrency.
     ///
@@ -428,7 +428,7 @@ impl Model {
                 return Err(Error::TensorSizeMismatch { expected, got });
             }
         }
-        let mut map_guards: Vec<TensorMap<u8>> = Vec::new();
+        let mut map_guards: Vec<HostView<'static, u8>> = Vec::new();
 
         let mut input_blobs = self
             .inputs
@@ -565,7 +565,7 @@ impl Model {
                 return Err(Error::TensorSizeMismatch { expected, got });
             }
         }
-        let mut map_guards: Vec<TensorMap<u8>> = Vec::new();
+        let mut map_guards: Vec<HostView<'static, u8>> = Vec::new();
 
         let mut input_blobs = input_set
             .tensors
@@ -659,7 +659,7 @@ impl Model {
     /// Allocate input and output tensors for this model.
     ///
     /// # Arguments
-    /// * `memory` - The memory type to use for tensors. Use `TensorMemory::Dma`
+    /// * `memory` - The memory type to use for tensors. Use `TensorMemory::DmaBuf`
     ///   or `TensorMemory::Shm` for zero-copy inference.
     ///
     /// Input tensors are allocated with CHW shape `[channels, height, width]`
@@ -673,7 +673,7 @@ impl Model {
                 let shape = self.input_shape(i);
                 let tensor = Tensor::<u8>::new(&shape, memory, None)?;
                 match tensor.memory() {
-                    TensorMemory::Shm | TensorMemory::Dma => {
+                    TensorMemory::Shm | TensorMemory::DmaBuf => {
                         let desc = self.shmfd_register(&tensor)?;
                         Ok((tensor, desc))
                     }
@@ -687,7 +687,7 @@ impl Model {
                 let size = self.output_size(i);
                 let tensor = Tensor::<u8>::new(&[size], memory, None)?;
                 match tensor.memory() {
-                    TensorMemory::Shm | TensorMemory::Dma => {
+                    TensorMemory::Shm | TensorMemory::DmaBuf => {
                         let desc = self.shmfd_register(&tensor)?;
                         Ok((tensor, desc))
                     }
@@ -704,7 +704,7 @@ impl Model {
     fn shmfd_register(&self, tensor: &Tensor<u8>) -> Result<*mut dv_shm_descriptor, Error> {
         let mut desc: *mut dv_shm_descriptor = std::ptr::null_mut();
         match tensor.memory() {
-            TensorMemory::Shm | TensorMemory::Dma => {}
+            TensorMemory::Shm | TensorMemory::DmaBuf => {}
             other => {
                 return Err(Error::UnsupportedLayout(format!(
                     "shmfd_register only supports Shm or Dma memory, got {other:?}"
@@ -1100,7 +1100,7 @@ pub struct InferRequest {
     /// For `RAW_POINTER` blobs the NPU references the mapped pointers
     /// throughout execution, so these guards must not be dropped until
     /// after `wait()` or cancellation via `Drop`.
-    _map_guards: Vec<TensorMap<u8>>,
+    _map_guards: Vec<HostView<'static, u8>>,
 }
 
 // Safety: The C library is internally synchronized for inference

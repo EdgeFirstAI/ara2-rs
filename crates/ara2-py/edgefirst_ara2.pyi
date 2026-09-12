@@ -369,10 +369,13 @@ class Model:
             timing = model.run()
             output = model.get_output_tensor(0)
 
-    For zero-copy preprocessing with edgefirst-hal::
+    For zero-copy preprocessing with edgefirst-image::
 
+        import edgefirst.image as ef_image
+
+        processor = ef_image.ImageProcessor()
         fd = model.input_tensor_fd(0)
-        dst = hal.import_image(fd, w, h, hal.PixelFormat.PlanarRgb)
+        dst = processor.import_image(fd, w, h, ef_image.PixelFormat.PlanarRgb)
         processor.convert(src, dst)
         model.run()
     """
@@ -388,7 +391,7 @@ class Model:
         Args:
             memory: Memory type — ``"dma"``, ``"shm"``, ``"mem"``, or
                     ``None`` (auto-select, tries DMA first). Use ``"dma"``
-                    for zero-copy workflows with edgefirst-hal.
+                    for zero-copy workflows with edgefirst-image.
         """
         ...
 
@@ -527,8 +530,8 @@ class Model:
         """Get a cloned DMA-BUF file descriptor for an input tensor.
 
         The returned FD is owned by the caller. Pass it to
-        ``edgefirst_hal.import_image()`` for zero-copy GPU preprocessing.
-        Close with ``os.close(fd)`` when done.
+        ``edgefirst.image.ImageProcessor.import_image()`` for zero-copy GPU
+        preprocessing. Close with ``os.close(fd)`` when done.
 
         Args:
             index: Input tensor index (0-based)
@@ -542,8 +545,10 @@ class Model:
     def output_tensor_fd(self, index: int) -> int:
         """Get a cloned DMA-BUF file descriptor for an output tensor.
 
-        The returned FD is owned by the caller. Close with ``os.close(fd)``
-        when done.
+        The returned FD is owned by the caller. Pass it to
+        ``edgefirst.tensor.Tensor.from_fd()`` to decode the raw NPU output
+        without a copy — that call takes ownership of the FD. Otherwise
+        close it with ``os.close(fd)`` when done.
 
         Args:
             index: Output tensor index (0-based)
@@ -836,6 +841,25 @@ class OutputSpec:
     def dtype(self) -> str | None: ...
     @property
     def shape(self) -> list[int]: ...
+    @property
+    def dshape(self) -> list[tuple[str, int]]:
+        """Physical axis names in memory order, as ``(name, extent)`` pairs.
+
+        Names use the metadata spellings (``"batch"``, ``"num_boxes"``,
+        ``"num_protos"``, ...), which map onto ``edgefirst.decoder.DimName``.
+        Empty when the producer omitted the field.
+        """
+        ...
+    @property
+    def normalized(self) -> bool | None:
+        """Whether box coordinates are already normalized to ``[0, 1]``.
+
+        ``None`` when the metadata does not say — the caller must then treat
+        the coordinates as pixel-space and divide the box quantization scale
+        by the model's input dimension. Only meaningful for ``boxes`` and
+        ``detection`` outputs.
+        """
+        ...
 
 class CompilationInfo:
     """Compilation information from the DVM build process."""

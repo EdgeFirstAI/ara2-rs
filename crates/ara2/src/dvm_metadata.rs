@@ -9,7 +9,7 @@
 //! interference.
 
 use crate::Error;
-use edgefirst_hal::decoder::configs::{DimName, deserialize_dshape};
+use edgefirst_decoder::configs::{DimName, deserialize_dshape};
 use serde::Deserialize;
 use std::io::{Cursor, Read as _};
 use zip::ZipArchive;

@@ -30,7 +30,14 @@ classifiers = [
 keywords = ["ara2", "neural-network", "accelerator", "inference", "edgefirst"]
 
 [project.optional-dependencies]
-hal = ["edgefirst-hal"]
+# The EdgeFirst HAL ships one wheel per library; `edgefirst-image` pulls
+# `edgefirst-tensor` with it. Add `edgefirst-codec` / `edgefirst-decoder`
+# explicitly for JPEG/PNG decode and YOLO post-processing.
+#
+# 0.31 is a floor, not a preference: earlier releases dropped a tensor's
+# quantization crossing between the `edgefirst.*` packages, which makes int8
+# instance segmentation fail outright.
+hal = ["edgefirst-image>=0.31"]
 
 [project.urls]
 Homepage = "https://edgefirst.ai"
