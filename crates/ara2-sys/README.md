@@ -25,3 +25,5 @@ which provides safe, high-level Rust APIs built on top of these bindings.
 ## License
 
 Licensed under the Apache License 2.0. See [LICENSE](../../LICENSE) for details.
+
+<img referrerpolicy="no-referrer" src="https://px.edgefirst.ai/a.png?x-pxid=67b03702-12df-456b-86f9-f246395421b5" alt="" width="1" height="1" style="position:absolute; width:1px; height:1px; opacity:0; pointer-events:none;" />
