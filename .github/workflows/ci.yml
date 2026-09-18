@@ -9,7 +9,7 @@
 # Action Versions (hash-pinned):
 # - actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 (v7.0.1)
 # - dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d (v4.0.3)
-# - EdgeFirstAI/.github@41947187ad817514d1843dfd979f629db443c971 (main, 2026-09-18)
+# - EdgeFirstAI/.github@68dd89aa7f781e2a26f2fdb6430c6a43368f9063 (main, 2026-09-18)
 
 name: CI
 
@@ -82,7 +82,7 @@ jobs:
   quick:
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    uses: EdgeFirstAI/.github/.github/workflows/rust-quick.yml@41947187ad817514d1843dfd979f629db443c971  # main (2026-09-18)
+    uses: EdgeFirstAI/.github/.github/workflows/rust-quick.yml@68dd89aa7f781e2a26f2fdb6430c6a43368f9063  # main (2026-09-18)
     # No `clippy-args` override. `codec` and `decoder` are off by default, so
     # the stock `--workspace --all-targets` pass covers the default build; the
     # cfg-gated arms and the `yolov8` example belong to the feature-enabled
@@ -104,10 +104,6 @@ jobs:
       # feature would also satisfy pyo3, but the wheel's ABI is a packaging
       # decision and must not be made by a linter.
       env: PYO3_CROSS_PYTHON_VERSION=3.11
-      # The ARM larger-runner image has no C compiler, and the aarch64
-      # cross-clippy pass needs one for its target; neither is something the
-      # lane can infer. See .github/scripts/ci-setup.sh.
-      pre-command: bash .github/scripts/ci-setup.sh
       # Every other test needs an ARA-2 NPU and the ara2-proxy service, which
       # no hosted runner has. They are not #[ignore]d because on a target they
       # are the point of the suite, so the filter lives here.
@@ -117,7 +113,7 @@ jobs:
   full:
     needs: changes
     if: needs.changes.outputs.full == 'true' || needs.changes.outputs.hardware == 'true'
-    uses: EdgeFirstAI/.github/.github/workflows/rust-full.yml@41947187ad817514d1843dfd979f629db443c971  # main (2026-09-18)
+    uses: EdgeFirstAI/.github/.github/workflows/rust-full.yml@68dd89aa7f781e2a26f2fdb6430c6a43368f9063  # main (2026-09-18)
     with:
       # `lanes: host` and no `boards` input: ARA-2 is a PCIe card in an NXP
       # i.MX host and the fleet has no such runner, so there is no board lane
@@ -136,10 +132,6 @@ jobs:
       runner-class-linux-arm: larger
       nextest-args: --workspace --locked -E 'test(dvm_metadata)'
       env: PYO3_CROSS_PYTHON_VERSION=3.11
-      # The ARM larger-runner image has no C compiler, and the aarch64
-      # cross-clippy pass needs one for its target; neither is something the
-      # lane can infer. See .github/scripts/ci-setup.sh.
-      pre-command: bash .github/scripts/ci-setup.sh
       # Nightly only. This is what reaches the cfg-gated code: the powerset
       # checks `--no-default-features` (the `String` dshape and an `Error` with
       # no `Codec` arm), each feature alone, and the two together. `camera`
