@@ -17,12 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   | Feature | Effect |
   |---------|--------|
-  | `decoder` | Types `OutputSpec::dshape` as `edgefirst_decoder::configs::DimName` pairs |
+  | `decoder` | Adds `OutputSpec::dshape_typed()`, returning `edgefirst_decoder::configs::DimName` pairs |
   | `codec` | Adds `Error::Codec` and `From<edgefirst_codec::CodecError> for Error` |
 
-- **`OutputSpec::dshape` is `Vec<(String, usize)>` by default**, carrying the metadata's own axis spellings (`"batch"`, `"num_boxes"`, `"num_protos"`, ...) rather than `Vec<(edgefirst_decoder::configs::DimName, usize)>`. This is the shape the Python bindings have always exposed, for the same reason. Enable the `decoder` feature to get the typed form back. The string form also preserves an axis name the HAL does not model, where `DimName` collapses it to `DimName::Unknown`.
+- **`OutputSpec::dshape` is `Vec<(String, usize)>`**, carrying the metadata's own axis spellings (`"batch"`, `"num_boxes"`, `"num_protos"`, ...) rather than `Vec<(edgefirst_decoder::configs::DimName, usize)>`. This is the shape the Python bindings have always exposed, for the same reason, and it preserves an axis name the HAL does not model, where `DimName` collapses it to `DimName::Unknown`.
 
-- **`Error::Codec` is behind the `codec` feature.** Nothing in the library constructed it; it existed so a caller could `?` an `edgefirst-codec` call inside a function returning `ara2::Error`. A `match` on `Error` without the feature loses the arm. `edgefirst-ara2` does not enable the feature, so no codec error can reach its exception mapping and the Python surface is unchanged.
+  The type does not vary by feature. `decoder` adds `OutputSpec::dshape_typed()`, which returns the `DimName` pairs. Cargo unifies features across the whole dependency graph, so a feature that changed a public type would change it for every crate in the build the moment any dependency enabled it — a downstream crate written against the string form would stop compiling because something unrelated to it turned `ara2/decoder` on. A feature may add to the API; it must not reshape it.
+
+- **`Error` is `#[non_exhaustive]`, and `Error::Codec` is behind the `codec` feature.** Nothing in the library constructed `Codec`; it existed so a caller could `?` an `edgefirst-codec` call inside a function returning `ara2::Error`. Because the variant set now depends on a feature, and features unify across the graph, an exhaustive `match` downstream could otherwise stop compiling because an unrelated dependency enabled `ara2/codec`. `#[non_exhaustive]` requires a wildcard arm and makes that a stable contract instead. `edgefirst-ara2` does not enable the feature, so no codec error can reach its exception mapping and the Python surface is unchanged.
 
 - **`ara2`'s `camera` feature now implies `decoder`.** `yolov8_live` builds a HAL decoder, so the feature that builds it has to supply one.
 

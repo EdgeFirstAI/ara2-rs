@@ -10,7 +10,7 @@
 
 use crate::Error;
 #[cfg(feature = "decoder")]
-use edgefirst_decoder::configs::{DimName, deserialize_dshape};
+use edgefirst_decoder::configs::DimName;
 use serde::Deserialize;
 use std::io::{Cursor, Read as _};
 use zip::ZipArchive;
@@ -19,12 +19,10 @@ use zip::ZipArchive;
 /// (`[{"batch": 1}, {"num_features": 84}]`) or serde's default array of
 /// tuples (`[["batch", 1]]`).
 ///
-/// This mirrors `edgefirst_decoder::configs::deserialize_dshape`, which the
-/// `decoder` feature substitutes to land typed [`DimName`] axes rather than
-/// the raw metadata spellings.
-///
-/// [`DimName`]: https://docs.rs/edgefirst-decoder/latest/edgefirst_decoder/configs/enum.DimName.html
-#[cfg(not(feature = "decoder"))]
+/// This mirrors `edgefirst_decoder::configs::deserialize_dshape`, but lands
+/// the raw metadata spellings so the field's type does not depend on a
+/// feature. `OutputSpec::dshape_typed` converts when the `decoder` feature
+/// is on.
 fn deserialize_dshape<'de, D>(deserializer: D) -> Result<Vec<(String, usize)>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -226,23 +224,14 @@ pub struct OutputSpec {
     ///
     /// Names are the metadata spellings (`"batch"`, `"num_boxes"`,
     /// `"num_protos"`, ...) so a caller can map them onto the decoder's
-    /// `DimName` without this crate linking a model decoder. Enable the
-    /// `decoder` feature to get `edgefirst_decoder::configs::DimName` pairs
-    /// directly instead.
-    #[cfg(not(feature = "decoder"))]
+    /// `DimName` without this crate linking a model decoder. With the
+    /// `decoder` feature, [`OutputSpec::dshape_typed`] does that mapping.
+    ///
+    /// The type does not vary by feature. Cargo unifies features across the
+    /// whole graph, so a field whose type changed with one would change for
+    /// every crate in a build the moment an unrelated dependency enabled it.
     #[serde(default, deserialize_with = "deserialize_dshape")]
     pub dshape: Vec<(String, usize)>,
-
-    /// Physical axis names in memory order, as `(DimName, extent)` pairs
-    /// ready to hand to a decoder configuration. Used by the HAL decoder to
-    /// stride-swap into its canonical axis order without copying bytes.
-    /// Empty when the producer omitted the field.
-    ///
-    /// Without the `decoder` feature this carries the raw metadata
-    /// spellings as `Vec<(String, usize)>` instead.
-    #[cfg(feature = "decoder")]
-    #[serde(default, deserialize_with = "deserialize_dshape")]
-    pub dshape: Vec<(DimName, usize)>,
 
     /// Whether box coordinates are normalized to `[0, 1]` (true) or in
     /// pixel space `[0, input_dim]` (false). Only meaningful for `boxes`
@@ -263,6 +252,38 @@ pub struct OutputSpec {
     /// Per-tensor quantization parameters (null for float models).
     #[serde(default)]
     pub quantization: Option<QuantizationSpec>,
+}
+
+/// Resolve a `dshape` axis name onto the decoder's `DimName`.
+///
+/// Deserialized rather than matched by hand so the decoder's own
+/// `#[serde(rename)]` spellings stay the single source of truth, and so a
+/// name it does not model lands on its `#[serde(other)]` variant instead of
+/// failing. That keeps `dshape_typed().len() == dshape.len()`, which the
+/// decoder's validator requires.
+#[cfg(feature = "decoder")]
+fn dim_name(name: &str) -> DimName {
+    use serde::de::IntoDeserializer as _;
+    let parsed: Result<DimName, serde::de::value::Error> =
+        DimName::deserialize(name.into_deserializer());
+    parsed.unwrap_or(DimName::Unknown)
+}
+
+#[cfg(feature = "decoder")]
+impl OutputSpec {
+    /// [`Self::dshape`] with its axis names resolved to the HAL decoder's
+    /// `DimName`, ready to hand to a decoder configuration.
+    ///
+    /// An accessor rather than a change to `dshape`'s type: a feature that
+    /// alters a public type is not additive under Cargo's feature
+    /// unification, so enabling `decoder` anywhere in a build would otherwise
+    /// change this field for every crate in it.
+    pub fn dshape_typed(&self) -> Vec<(DimName, usize)> {
+        self.dshape
+            .iter()
+            .map(|(name, extent)| (dim_name(name), *extent))
+            .collect()
+    }
 }
 
 /// Per-tensor quantization parameters carried alongside a quantized
@@ -565,7 +586,6 @@ mod tests {
 
     /// The spec writes a dshape as an array of single-key maps. Without the
     /// `decoder` feature the axis names land as the raw metadata spellings.
-    #[cfg(not(feature = "decoder"))]
     #[test]
     fn dshape_parses_map_form() {
         let json = r#"{
@@ -591,7 +611,6 @@ mod tests {
 
     /// serde's own representation of `Vec<(String, usize)>` is accepted too,
     /// matching what the decoder's deserializer takes.
-    #[cfg(not(feature = "decoder"))]
     #[test]
     fn dshape_parses_tuple_form() {
         let json = r#"{
@@ -609,7 +628,6 @@ mod tests {
 
     /// An axis name the HAL does not recognise is preserved rather than
     /// collapsed, so the dshape length still matches the shape.
-    #[cfg(not(feature = "decoder"))]
     #[test]
     fn dshape_preserves_unknown_axis_names() {
         let json = r#"{
@@ -627,7 +645,6 @@ mod tests {
 
     /// A map entry naming more than one axis is ambiguous and is rejected
     /// rather than resolved by iteration order.
-    #[cfg(not(feature = "decoder"))]
     #[test]
     fn dshape_rejects_multi_key_map_entry() {
         let json = r#"{
@@ -638,9 +655,43 @@ mod tests {
         assert!(read_metadata(&data).is_err());
     }
 
+    /// `dshape_typed` resolves the metadata spellings onto the decoder's
+    /// axis names, and lands an axis the decoder does not model on its
+    /// catch-all rather than dropping it -- the length has to keep matching
+    /// the shape for the decoder's validator to accept it.
+    #[cfg(feature = "decoder")]
+    #[test]
+    fn dshape_typed_resolves_names() {
+        use edgefirst_decoder::configs::DimName;
+
+        let json = r#"{
+            "model": {},
+            "outputs": [{
+                "shape": [1, 84, 8400, 3],
+                "dshape": [{"batch": 1}, {"num_features": 84},
+                           {"num_boxes": 8400}, {"channels": 3}]
+            }]
+        }"#;
+        let data = make_dvm_with_metadata(json, None);
+        let meta = read_metadata(&data).unwrap().unwrap();
+        let spec = &meta.outputs[0];
+
+        assert_eq!(
+            spec.dshape_typed(),
+            vec![
+                (DimName::Batch, 1),
+                (DimName::NumFeatures, 84),
+                (DimName::NumBoxes, 8400),
+                (DimName::Unknown, 3),
+            ]
+        );
+        // The string form is what was parsed and is unchanged by the feature.
+        assert_eq!(spec.dshape.len(), spec.dshape_typed().len());
+        assert_eq!(spec.dshape[3].0, "channels");
+    }
+
     /// An omitted dshape is empty, not an error -- older DVMs predate the
     /// field.
-    #[cfg(not(feature = "decoder"))]
     #[test]
     fn dshape_absent_is_empty() {
         let json = r#"{"model": {}, "outputs": [{"shape": [1, 84, 8400]}]}"#;

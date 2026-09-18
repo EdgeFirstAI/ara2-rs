@@ -43,10 +43,11 @@ client library's, so the examples take them as their own dependencies:
 | [`edgefirst-codec`](https://crates.io/crates/edgefirst-codec) | JPEG/PNG decode straight into a pre-allocated tensor |
 
 Two off-by-default features opt back into the HAL types they contribute to
-`ara2`'s own API: `decoder` types `OutputSpec::dshape` as
+`ara2`'s own API: `decoder` adds `OutputSpec::dshape_typed()`, returning
 `edgefirst_decoder::configs::DimName` pairs rather than the metadata's raw
 axis names, and `codec` adds `Error::Codec` with its
-`From<edgefirst_codec::CodecError>` conversion.
+`From<edgefirst_codec::CodecError>` conversion. Both are additive: a feature
+may add to this crate's API, never reshape it.
 
 ### Python Bindings
 

@@ -56,6 +56,11 @@ jobs:
               - 'tests/**'
               - 'Cargo.*'
               - 'rust-toolchain.toml'
+              # The lint configs decide what Quick enforces, so a change to one
+              # has to be validated by the lane it configures. Without these a
+              # PR touching only ruff.toml skips Quick and merges unchecked.
+              - 'ruff.toml'
+              - 'rustfmt.toml'
               - '.github/**'
       - id: mode
         env:
@@ -83,11 +88,12 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     uses: EdgeFirstAI/.github/.github/workflows/rust-quick.yml@68dd89aa7f781e2a26f2fdb6430c6a43368f9063  # main (2026-09-18)
-    # No `clippy-args` override. `codec` and `decoder` are off by default, so
-    # the stock `--workspace --all-targets` pass covers the default build; the
-    # cfg-gated arms and the `yolov8` example belong to the feature-enabled
-    # build, which the nightly feature-combination lane below reaches. This
-    # replaces the two clippy invocations the old test.yml ran per push.
+    # The stock clippy pass covers the default build, where `codec` and
+    # `decoder` are off. The cfg-gated arms and the `yolov8` example only exist
+    # with them on, and the nightly feature-combination lane is up to a day
+    # away -- and does not run on a pull request at all, since rust-full gates
+    # it on `nightly`. A second pass is what gives them PR-time signal, which
+    # is what the old test.yml's two clippy invocations did.
     with:
       # ruff over the Python bindings package and the Python examples. Lint
       # only -- the bindings need maturin to import, which is Full-tier work.
@@ -107,6 +113,9 @@ jobs:
       # Every other test needs an ARA-2 NPU and the ara2-proxy service, which
       # no hosted runner has. They are not #[ignore]d because on a target they
       # are the point of the suite, so the filter lives here.
+      clippy-extra-args: >-
+        --workspace --all-targets --locked
+        --features ara2/codec,ara2/decoder -- -D warnings
       nextest-args: --workspace --locked -E 'test(dvm_metadata)'
       cache-key: quick-x86_64
 
@@ -132,12 +141,11 @@ jobs:
       runner-class-linux-arm: larger
       nextest-args: --workspace --locked -E 'test(dvm_metadata)'
       env: PYO3_CROSS_PYTHON_VERSION=3.11
-      # Nightly only. This is what reaches the cfg-gated code: the powerset
-      # checks `--no-default-features` (the `String` dshape and an `Error` with
-      # no `Codec` arm), each feature alone, and the two together. `camera`
-      # needs libcamera and Wayland headers that a hosted runner does not
-      # carry, so it is excluded rather than skipped after a failed link.
-      hack-args: --feature-powerset --depth 2 --exclude-features camera
+      # No `hack-args` here. rust-full gates the feature-combination lane on
+      # `nightly`, so passing it to a pull-request Full run configures a job
+      # that never starts. The powerset runs from nightly.yml; the
+      # feature-enabled build gets PR-time cover from Quick's second clippy
+      # pass above.
     secrets: inherit
 
   ci-gate:

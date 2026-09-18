@@ -54,7 +54,7 @@ cargo zigbuild --release --target aarch64-unknown-linux-gnu
 | Feature | Default | Description |
 |---------|---------|-------------|
 | `codec` | no | Adds `Error::Codec` plus `From<edgefirst_codec::CodecError>` |
-| `decoder` | no | Types `OutputSpec::dshape` as `edgefirst_decoder::configs::DimName` pairs instead of raw axis-name strings |
+| `decoder` | no | Adds `OutputSpec::dshape_typed()`, returning `edgefirst_decoder::configs::DimName` pairs. `dshape` itself is always `Vec<(String, usize)>` — a feature must not reshape a public type, because Cargo unifies features graph-wide |
 | `camera` | no | Build the libcamera-based live-inference example (`yolov8_live`); implies `decoder` and turns on `edgefirst-image/decode` for its fused `draw_masks` call |
 
 `edgefirst-tensor` and `edgefirst-image` are required dependencies — the

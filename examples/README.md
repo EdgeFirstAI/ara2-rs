@@ -64,8 +64,9 @@ Supports benchmarking with `--benchmark N` for per-stage timing statistics.
 
 ### Build
 
-The `decoder` feature is off by default -- it types `OutputSpec::dshape` as
-the HAL decoder's `DimName` pairs, which this example hands straight to a
+The `decoder` feature is off by default -- it adds
+`OutputSpec::dshape_typed()`, which resolves the metadata's axis names onto
+the HAL decoder's `DimName` and which this example hands straight to a
 `DecoderBuilder` -- so it has to be named on the build:
 
 ```bash

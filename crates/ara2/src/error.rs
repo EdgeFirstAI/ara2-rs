@@ -1,6 +1,13 @@
 use ara2_sys::{DV_ENDPOINT_STATE, DV_LAYER_OUTPUT_TYPE, dv_status_code};
 
+/// `#[non_exhaustive]` because the variant set is not fixed: `Error::Codec`
+/// exists only with the `codec` feature, and Cargo unifies features across the
+/// whole graph, so an unrelated dependency turning that feature on would
+/// otherwise make a downstream exhaustive `match` stop compiling. A wildcard
+/// arm is required either way; declaring it makes that a stable contract
+/// rather than something a sibling crate's feature choice can change.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum Error {
     Io(std::io::Error),
     #[cfg(feature = "codec")]

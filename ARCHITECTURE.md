@@ -168,7 +168,7 @@ For multi-model parallelism, load separate `Model` instances per thread.
 | Feature | Default | Description |
 |---------|---------|-------------|
 | `codec` | no | Adds `Error::Codec` and its `From<edgefirst_codec::CodecError>` conversion, for callers that decode JPEGs or PNGs inside a function returning `ara2::Error` |
-| `decoder` | no | Types `OutputSpec::dshape` as `edgefirst_decoder::configs::DimName` pairs instead of the metadata's raw axis-name strings, so a decoder configuration can be built straight from parsed DVM metadata |
+| `decoder` | no | Adds `OutputSpec::dshape_typed()`, returning `edgefirst_decoder::configs::DimName` pairs, so a decoder configuration can be built straight from parsed DVM metadata. `dshape` itself is always `Vec<(String, usize)>`: features unify across the dependency graph, so one that reshaped a public type would reshape it for every crate in the build |
 | `camera` | no | Builds the libcamera/Wayland live example (`yolov8_live`). Implies `decoder`, and turns on `edgefirst-image/decode` for its fused `draw_masks` call |
 
 `edgefirst-tensor` and `edgefirst-image` are unconditional dependencies:
