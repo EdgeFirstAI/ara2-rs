@@ -12,7 +12,7 @@
 # Design: https://au-zone.atlassian.net/wiki/spaces/EAM/pages/2750906369/CICD+Pipelines
 #
 # Action Versions (hash-pinned):
-# - EdgeFirstAI/.github@07b46d78c7ff5034216044a7fc86ec3a37b8cabd (main, 2026-09-18)
+# - EdgeFirstAI/.github@41947187ad817514d1843dfd979f629db443c971 (main, 2026-09-18)
 
 name: Tag Release
 
@@ -24,7 +24,7 @@ on:
 jobs:
   tag:
     if: github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'release/')
-    uses: EdgeFirstAI/.github/.github/workflows/tag-release.yml@07b46d78c7ff5034216044a7fc86ec3a37b8cabd  # main (2026-09-18)
+    uses: EdgeFirstAI/.github/.github/workflows/tag-release.yml@41947187ad817514d1843dfd979f629db443c971  # main (2026-09-18)
     with:
       # No tag unless the release build is green for the exact commit being
       # merged. Branch protection requires ci-gate only, and release.yml runs

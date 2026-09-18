@@ -9,7 +9,7 @@
 # Action Versions (hash-pinned):
 # - actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 (v7.0.1)
 # - dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d (v4.0.3)
-# - EdgeFirstAI/.github@07b46d78c7ff5034216044a7fc86ec3a37b8cabd (main, 2026-09-18)
+# - EdgeFirstAI/.github@41947187ad817514d1843dfd979f629db443c971 (main, 2026-09-18)
 
 name: CI
 
@@ -83,7 +83,7 @@ jobs:
   quick:
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    uses: EdgeFirstAI/.github/.github/workflows/rust-quick.yml@07b46d78c7ff5034216044a7fc86ec3a37b8cabd  # main (2026-09-18)
+    uses: EdgeFirstAI/.github/.github/workflows/rust-quick.yml@41947187ad817514d1843dfd979f629db443c971  # main (2026-09-18)
     # No `clippy-args` override. `codec` and `decoder` are off by default, so
     # the stock `--workspace --all-targets` pass covers the default build; the
     # cfg-gated arms and the `yolov8` example belong to the feature-enabled
@@ -114,7 +114,7 @@ jobs:
   full:
     needs: changes
     if: needs.changes.outputs.full == 'true' || needs.changes.outputs.hardware == 'true'
-    uses: EdgeFirstAI/.github/.github/workflows/rust-full.yml@07b46d78c7ff5034216044a7fc86ec3a37b8cabd  # main (2026-09-18)
+    uses: EdgeFirstAI/.github/.github/workflows/rust-full.yml@41947187ad817514d1843dfd979f629db443c971  # main (2026-09-18)
     with:
       # `lanes: host` and no `boards` input: ARA-2 is a PCIe card in an NXP
       # i.MX host and the fleet has no such runner, so there is no board lane

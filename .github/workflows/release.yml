@@ -21,7 +21,7 @@
 # Design: https://au-zone.atlassian.net/wiki/spaces/EAM/pages/2750906369/CICD+Pipelines
 #
 # Action Versions (hash-pinned):
-# - EdgeFirstAI/.github@07b46d78c7ff5034216044a7fc86ec3a37b8cabd (main, 2026-09-18)
+# - EdgeFirstAI/.github@41947187ad817514d1843dfd979f629db443c971 (main, 2026-09-18)
 
 name: Release Build
 
@@ -43,7 +43,7 @@ jobs:
   # release version a second time -- the CHANGELOG section publish.yml turns
   # into release notes, the full SBOM, and the .crate files crates.io receives.
   verify:
-    uses: EdgeFirstAI/.github/.github/workflows/release-rust.yml@07b46d78c7ff5034216044a7fc86ec3a37b8cabd  # main (2026-09-18)
+    uses: EdgeFirstAI/.github/.github/workflows/release-rust.yml@41947187ad817514d1843dfd979f629db443c971  # main (2026-09-18)
     with:
       sbom: true
       # The dependency graph differs by target: the ARA-2 client links G2D and
@@ -61,7 +61,7 @@ jobs:
   # so there is no macOS or Windows target.
   wheels:
     needs: verify
-    uses: EdgeFirstAI/.github/.github/workflows/release-wheels.yml@07b46d78c7ff5034216044a7fc86ec3a37b8cabd  # main (2026-09-18)
+    uses: EdgeFirstAI/.github/.github/workflows/release-wheels.yml@41947187ad817514d1843dfd979f629db443c971  # main (2026-09-18)
     with:
       manifest: crates/ara2-py/Cargo.toml
       # maturin infers abi3 from requires-python, so one wheel serves 3.11+.
