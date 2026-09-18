@@ -1,0 +1,14 @@
+# Reviewers requested automatically when a pull request opens.
+#
+# A catch-all, so nothing in the repository can be changed without a review
+# being asked for. `EdgeFirstAI/.github` omits its catch-all deliberately —
+# GitHub treats that repository's community health files as org-wide defaults
+# — but this is an ordinary repository, so the catch-all is the point.
+#
+# Requesting a review is not requiring one: that comes from the `main` ruleset.
+# This file decides WHO is asked; the ruleset decides whether the answer is
+# needed before merge.
+#
+# Later matching patterns override earlier ones, so add path-specific entries below
+# the catch-all to route each area to its owner.
+* @sebastient
