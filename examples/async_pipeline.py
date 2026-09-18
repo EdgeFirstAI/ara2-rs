@@ -54,7 +54,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="ARA-2 async pipeline example")
     parser.add_argument("model", help="Path to a compiled .dvm model file")
     parser.add_argument(
-        "iterations", nargs="?", type=int, default=100, help="Number of iterations (> 0)"
+        "iterations",
+        nargs="?",
+        type=int,
+        default=100,
+        help="Number of iterations (> 0)",
     )
     parser.add_argument(
         "depth", nargs="?", type=int, default=2, help="Ring buffer depth (> 0)"
@@ -107,7 +111,9 @@ def main() -> None:
         read_outputs(slot)
     sync_ms = (time.perf_counter() - start) * 1000
     sync_fps = n / (sync_ms / 1000)
-    print(f"  Total: {sync_ms:.2f}ms, Avg: {sync_ms / n:.2f}ms/iter, Throughput: {sync_fps:.1f} fps")
+    print(
+        f"  Total: {sync_ms:.2f}ms, Avg: {sync_ms / n:.2f}ms/iter, Throughput: {sync_fps:.1f} fps"
+    )
 
     # ── Pipelined async ──────────────────────────────────────────────
     print(f"\n=== Pipelined async (depth={depth}) x {n} ===")
@@ -138,7 +144,9 @@ def main() -> None:
 
     # ── Summary ──────────────────────────────────────────────────────
     speedup = sync_ms / pipeline_ms
-    print(f"\nSpeedup: {speedup:.2f}x (sync {sync_ms:.2f}ms vs pipeline {pipeline_ms:.2f}ms)")
+    print(
+        f"\nSpeedup: {speedup:.2f}x (sync {sync_ms:.2f}ms vs pipeline {pipeline_ms:.2f}ms)"
+    )
     print(f"In-flight requests remaining: {session.inflight_count()}")
     print("\nDone.")
 

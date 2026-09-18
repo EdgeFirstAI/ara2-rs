@@ -77,10 +77,14 @@ def main() -> None:
             state = endpoint.check_status()
             stats = endpoint.dram_statistics()
             print(f"Endpoint {i}: {state}")
-            print(f"  DRAM: {stats.free_size / 1048576:.1f} MB free "
-                  f"/ {stats.dram_size / 1048576:.1f} MB total")
-            print(f"  Model: {stats.model_occupancy_size / 1048576:.1f} MB, "
-                  f"Tensor: {stats.tensor_occupancy_size / 1048576:.1f} MB")
+            print(
+                f"  DRAM: {stats.free_size / 1048576:.1f} MB free "
+                f"/ {stats.dram_size / 1048576:.1f} MB total"
+            )
+            print(
+                f"  Model: {stats.model_occupancy_size / 1048576:.1f} MB, "
+                f"Tensor: {stats.tensor_occupancy_size / 1048576:.1f} MB"
+            )
         except ara2.HardwareError as e:
             print(f"Endpoint {i}: error - {e}")
         print()

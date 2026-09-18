@@ -53,11 +53,26 @@ cargo zigbuild --release --target aarch64-unknown-linux-gnu
 
 | Feature | Default | Description |
 |---------|---------|-------------|
-| `camera` | no | Build the libcamera-based live-inference example (`yolov8_live`); also turns on `edgefirst-image/decode` for its fused `draw_masks` call |
+| `codec` | no | Adds `Error::Codec` plus `From<edgefirst_codec::CodecError>` |
+| `decoder` | no | Adds `OutputSpec::dshape_typed()`, returning `edgefirst_decoder::configs::DimName` pairs. `dshape` itself is always `Vec<(String, usize)>` — a feature must not reshape a public type, because Cargo unifies features graph-wide |
+| `camera` | no | Build the libcamera-based live-inference example (`yolov8_live`); implies `decoder` and turns on `edgefirst-image/decode` for its fused `draw_masks` call |
 
-The EdgeFirst HAL crates are required dependencies — the `Model` API exposes
-`Tensor<u8>` / `TensorMemory` in its public surface, so there is no
-FFI-only build mode.
+`edgefirst-tensor` and `edgefirst-image` are required dependencies — the
+`Model` API exposes `Tensor<u8>` / `TensorMemory` in its public surface, so
+there is no FFI-only build mode. `edgefirst-decoder` and `edgefirst-codec`
+are not: they belong to the examples, and `cargo tree -e normal -p ara2`
+must not reach either. Keep it that way — `edgefirst-image` is deliberately
+taken with `default-features = false` because its default set turns on
+`codec`.
+
+Because both features are off by default, lint and check with them on as
+well, or the gated code and the `yolov8` example (which
+`required-features = ["decoder"]` would skip) never get compiled:
+
+```bash
+cargo clippy --workspace --exclude ara2-py --all-targets --features ara2/codec,ara2/decoder -- -D warnings
+cargo clippy --workspace --exclude ara2-py --all-targets -- -D warnings
+```
 
 ### Python Wheel
 
@@ -75,13 +90,13 @@ maturin build --release --features pyo3/abi3-py311
 
 ### Crate Dependencies
 
-| Dependency | Purpose |
-|-----------|---------|
-| `edgefirst-tensor` | Tensor memory management (DMA/SHM/heap) |
-| `edgefirst-image` | Hardware-accelerated image conversion and overlay rendering |
-| `edgefirst-decoder` | YOLO/ModelPack output decoding, NMS, segmentation masks |
-| `edgefirst-codec` | JPEG/PNG decode into a pre-allocated tensor |
-| `libloading` | Dynamic loading of libaraclient.so.1 |
+| Dependency | Scope | Purpose |
+|-----------|-------|---------|
+| `edgefirst-tensor` | library | Tensor memory management (DMA/SHM/heap) |
+| `edgefirst-image` | library | Hardware-accelerated image conversion and overlay rendering |
+| `edgefirst-decoder` | examples, `decoder` feature | YOLO/ModelPack output decoding, NMS, segmentation masks |
+| `edgefirst-codec` | examples, benches, `codec` feature | JPEG/PNG decode into a pre-allocated tensor |
+| `libloading` | library | Dynamic loading of libaraclient.so.1 |
 | `ndarray` | N-dimensional array operations for tensor data |
 | `serde` / `serde_json` | DVM metadata parsing |
 | `zip` | Reading embedded metadata from DVM files |
@@ -205,47 +220,101 @@ All unsafe blocks are in the FFI layer. When adding new FFI calls:
 
 ## CI/CD
 
+CI is tiered, and the workflows are callers of reusable workflows in
+[`EdgeFirstAI/.github`](https://github.com/EdgeFirstAI/.github) pinned by SHA.
+Local files declare inputs, never steps. The design is
+[CICD Pipelines](https://au-zone.atlassian.net/wiki/spaces/EAM/pages/2750906369/CICD+Pipelines)
+in the EAM space; read it before changing a workflow.
+
 ### Workflows
 
 | Workflow | Trigger | What it does |
 |----------|---------|-------------|
-| `test.yml` | Push/PR to main, develop | Lint (fmt, clippy), build check, test (dvm_metadata only) |
-| `build.yml` | Push/PR to main, develop | Release build (x86_64, aarch64) |
-| `python.yml` | Push/PR to main, develop | Build Python wheels (x86_64, aarch64) with maturin+zig |
-| `sbom.yml` | Push/PR to main | SBOM generation, license compliance |
-| `release.yml` | Tag (v*) | Trusted publish to crates.io + PyPI, GitHub Release with SBOM + wheels |
+| `ci.yml` | PR push, `merge_group`, push to `main`, dispatch | Quick on every non-draft push; Full only on a `ci:full` label, a dispatch, or a merge-queue batch. One required check, `ci-gate`. |
+| `nightly.yml` | 03:17 daily, dispatch | `cargo audit` every night regardless; Full plus the feature-combination lane only when `main` has moved since the last nightly that reached a verdict. |
+| `release.yml` | push to `release/*.*.*` | **Builds** every artifact: version check, CHANGELOG check, full SBOM, `.crate` packages, wheels. Publishes nothing. |
+| `tag-release.yml` | `release/*.*.*` PR merged to `main` | **Tags.** Creates the annotated `vX.Y.Z` tag, and refuses if `release.yml` was not green for that commit. |
+| `publish.yml` | push of a `v*.*.*` tag, dispatch | **Publishes** what `release.yml` already built: crates.io, PyPI, GitHub Release. Builds nothing. |
+
+Three rules are not negotiable, because the shared workflows assume them:
+
+- **`Cargo.lock` is committed.** Every shared lane runs `--locked` — clippy,
+  cross-clippy, nextest and `cargo publish`. A missing lockfile fails the lane
+  before it runs anything.
+- **The toolchain is pinned** in `rust-toolchain.toml` (1.94.0). The lint set
+  is a property of the compiler, so an unpinned toolchain turns CI red on a
+  release with no change to this repository.
+- **A tag deploys; it never builds.** See the Publishing section.
+
+### Quick tier notes specific to this repository
+
+- **`PYO3_CROSS_PYTHON_VERSION`** is set through the `pre-command` hook. The
+  shared cross-clippy lane lints the whole workspace with hardcoded arguments,
+  so `ara2-py` reaches it, and pyo3 refuses to configure a cross build without
+  an interpreter for the target. Nothing is executed; naming the version is
+  enough.
+- **`nextest-args` carries `-E 'test(dvm_metadata)'`.** Every other test needs
+  an ARA-2 NPU and a running `ara2-proxy`. They are deliberately not
+  `#[ignore]`d, because on a target they are the point of the suite.
+- **No `clippy-args` override.** `codec` and `decoder` are off by default, so
+  the stock pass covers the default build; the cfg-gated arms and the `yolov8`
+  example are reached by the nightly feature-combination lane
+  (`cargo hack check --feature-powerset --depth 2 --exclude-features camera`).
+- **`ruff` is pinned to 0.16.7** and `ruff.toml` declares only this
+  repository's exceptions to ruff's default rule set.
 
 ### Test Gap
 
-Hardware-dependent tests (session, endpoint, model) require a self-hosted runner
-with ARA-2 hardware. Only `dvm_metadata` tests run in CI.
+Hardware-dependent tests (session, endpoint, model) need an NXP i.MX host with
+an ARA-2 PCIe card. No such runner exists in the fleet, so `ci.yml` passes
+`lanes: host` with no `boards` input and the `ci:hardware` label escalates to
+the same host lanes as `ci:full`. When [EDGEAI-1577](https://au-zone.atlassian.net/browse/EDGEAI-1577)
+provisions one, add its label to `boards` and switch `lanes` to the template's
+conditional `all`/`hardware`.
 
 ## Publishing
 
+**A tag deploys; it never builds.** A tag-triggered workflow cannot be run by
+a pull request, so anything it builds is built at the one point in the process
+where nothing can test it first, and its failures are found only after the tag
+exists. The release is therefore three workflows, each owning one action, and
+the only build sits on a branch a pull request can see.
+
 ### Release Checklist
 
-All workspace crates share a single version. When releasing:
+All workspace crates share a single version.
 
-1. **Update version** in `Cargo.toml` (root):
+1. **Branch**: `git switch -c release/X.Y.Z` (or `release/X.Y.Z-rcN`).
+2. **Update version** in `Cargo.toml` (root):
    - `workspace.package.version`
    - `workspace.dependencies.ara2.version`
    - `workspace.dependencies.ara2-sys.version`
-2. **Update `CHANGELOG.md`**:
-   - Add new `## [x.y.z] - YYYY-MM-DD` section under `[Unreleased]`
-   - Add comparison link at the bottom
-   - Update `[Unreleased]` comparison link to new version
-3. **Commit, tag, push**:
-   ```bash
-   git add -A && git commit -s -m "chore: release vX.Y.Z"
-   git tag -s vX.Y.Z -m "vX.Y.Z"
-   git push && git push --tags
-   ```
-4. The `release.yml` workflow handles the rest:
-   - Waits for lint + build + SBOM checks
-   - Builds Python wheels (x86_64 + aarch64, manylinux2014)
-   - Publishes `ara2-sys` then `ara2` to crates.io (trusted publishing)
-   - Publishes `edgefirst-ara2` to PyPI (trusted publishing)
-   - Creates GitHub Release with SBOM, wheels, and changelog
+   - then `cargo check` so `Cargo.lock` picks the new version up, and commit it.
+3. **Update `CHANGELOG.md`**: add `## [X.Y.Z] - YYYY-MM-DD` under
+   `[Unreleased]`, add the comparison link, update the `[Unreleased]` link.
+   `release.yml` fails without this section, and `publish.yml` turns it into
+   the GitHub Release body.
+4. **Push the branch.** `release.yml` runs on the push and builds everything
+   the release will ship. Open the PR into `main` and label it `ci:full`.
+5. **Rehearse the publish** once per repository, and again whenever
+   `publish.yml` changes: dispatch `publish.yml` with the tag name. It
+   resolves the build, verifies the tree and version, downloads the artifacts
+   and publishes nothing.
+6. **Merge the release PR** once Full and `release.yml` are both green.
+   `tag-release.yml` creates the annotated `vX.Y.Z` tag at the merge commit.
+7. `publish.yml` fires on the tag and publishes what step 4 built.
+
+Do not create release tags by hand. The tag is the deployment trigger, and a
+hand-made tag points at artifacts that do not exist.
+
+### Pre-releases
+
+`release/X.Y.Z-rcN` runs the same machinery. If the manifests carry the base
+version (`X.Y.Z`) rather than the pre-release spelling, `publish.yml` attaches
+the artifacts to a GitHub pre-release and **skips crates.io and PyPI**, so the
+final release can still claim that version. Give the manifests the
+pre-release version if the candidate should reach the registries — note that
+PEP 440 wants `1.0.0rc1` and crates.io wants `1.0.0-rc.1`.
 
 ### Python Wheel
 
@@ -258,35 +327,46 @@ for manylinux2014 compatibility.
 cd crates/ara2-py
 maturin develop --release
 
-# Build release wheel
-maturin build --release -m crates/ara2-py/Cargo.toml --zig --compatibility manylinux2014
+# Build release wheel, as release.yml builds it
+maturin build --release --locked -m crates/ara2-py/Cargo.toml \
+    --zig --compatibility manylinux2014
 ```
 
 ### Trusted Publishing
 
-Releases are published automatically via OIDC trusted publishing when a `v*` tag is pushed.
-No API tokens needed — authentication uses GitHub environments.
+Publishing uses OIDC trusted publishing, with no API tokens. Both publishers
+match on the workflow **filename**, so the release-chain split moved the
+identity: they authenticate `publish.yml`, not `release.yml`.
 
-| Registry | Environment | Trusted Publisher |
-|----------|-------------|-------------------|
-| crates.io | `crates-io` | EdgeFirstAI/ara2-rs, release.yml |
-| PyPI | `pypi` | EdgeFirstAI/ara2-rs, release.yml |
+| Registry | Environment | Trusted publisher workflow |
+|----------|-------------|---------------------------|
+| crates.io | `crates-io` | EdgeFirstAI/ara2-rs, `publish.yml` |
+| PyPI | `pypi` | EdgeFirstAI/ara2-rs, `publish.yml` |
 
-For manual publishing (e.g., initial release):
+PyPI matches `job_workflow_ref` in the publishing repository, so a reusable
+workflow in `EdgeFirstAI/.github` cannot be the Trusted Publisher. The wheel
+upload therefore stays in this repository's `publish.yml` as the
+`publish-pypi` job, while crates.io — which matches the *caller's*
+`workflow_ref` — publishes from inside the shared workflow.
 
-```bash
-# Rust crates
-cargo publish -p ara2-sys
-cargo publish -p ara2
-
-# Python wheel (requires PyPI API token)
-cd crates/ara2-py
-maturin publish --skip-existing
-```
+`publish.yml` runs `cargo publish --no-verify`. `--no-verify` skips the
+verification compile, which is the only part of `cargo publish` that would be
+a build on the tag path; the same tree was compiled and tested by Full and
+packaged by `release.yml`. Crates go out in dependency order — `ara2-sys`,
+then `ara2` — because crates.io is the one target where a partial publish
+cannot be undone by re-running the job.
 
 ### Trusted Publishing Setup
 
-1. Manually publish the initial release of each crate/package
-2. On crates.io: each crate → Settings → Trusted Publishers → Add `EdgeFirstAI/ara2-rs`
-3. On PyPI: project → Settings → Publishing → Add `EdgeFirstAI/ara2-rs`, workflow: `release.yml`, environment: `pypi`
-4. On GitHub: Settings → Environments → Create `crates-io` and `pypi` environments
+1. On crates.io: each crate → Settings → Trusted Publishers → repository
+   `EdgeFirstAI/ara2-rs`, workflow `publish.yml`, environment `crates-io`.
+2. On PyPI: `edgefirst-ara2` → Settings → Publishing → repository
+   `EdgeFirstAI/ara2-rs`, workflow `publish.yml`, environment `pypi`.
+3. On GitHub: Settings → Environments → `crates-io` and `pypi` must exist.
+4. Organisation secret `RELEASE_TAG_TOKEN` must be readable by this
+   repository, or `tag-release.yml` cannot create the tag.
+
+**If a publisher still names `release.yml`, the publish fails at the upload
+step with a claim mismatch, after the release PR has already merged and the
+tag exists.** The dispatch rehearsal does not catch it, because a rehearsal
+skips the upload. Re-point first, rehearse second, tag third.

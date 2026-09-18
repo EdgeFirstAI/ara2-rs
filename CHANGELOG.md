@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-09-18
+
+### Changed (BREAKING)
+
+- **`edgefirst-decoder` and `edgefirst-codec` are no longer dependencies of the `ara2` library.** Decoding model outputs and loading images from disk are application concerns; the client library did neither. Each crate had exactly one point of contact — `edgefirst-decoder` typed `OutputSpec::dshape`, and `edgefirst-codec` supplied `Error::Codec` — and between them they pulled a YOLO decoder, an NMS implementation and a PNG decoder into every build of a crate that only talks to the NPU, along with `serde_yaml_ng`, `unsafe-libyaml`, `ndarray-stats`, `argminmax`, `noisy_float` and `rand`. `cargo tree -e normal -p ara2` now reaches `edgefirst-tensor` and `edgefirst-image` and nothing else from the HAL: 83 crates, down from 101.
+
+  `edgefirst-codec` stays available to the examples and benches as a dev-dependency, so it never propagates to a consumer. Two new off-by-default features put both crates' types back into `ara2`'s own API for callers that want them:
+
+  | Feature | Effect |
+  |---------|--------|
+  | `decoder` | Adds `OutputSpec::dshape_typed()`, returning `edgefirst_decoder::configs::DimName` pairs |
+  | `codec` | Adds `Error::Codec` and `From<edgefirst_codec::CodecError> for Error` |
+
+- **`OutputSpec::dshape` is `Vec<(String, usize)>`**, carrying the metadata's own axis spellings (`"batch"`, `"num_boxes"`, `"num_protos"`, ...) rather than `Vec<(edgefirst_decoder::configs::DimName, usize)>`. This is the shape the Python bindings have always exposed, for the same reason, and it preserves an axis name the HAL does not model, where `DimName` collapses it to `DimName::Unknown`.
+
+  The type does not vary by feature. `decoder` adds `OutputSpec::dshape_typed()`, which returns the `DimName` pairs. Cargo unifies features across the whole dependency graph, so a feature that changed a public type would change it for every crate in the build the moment any dependency enabled it — a downstream crate written against the string form would stop compiling because something unrelated to it turned `ara2/decoder` on. A feature may add to the API; it must not reshape it.
+
+- **`Error` is `#[non_exhaustive]`, and `Error::Codec` is behind the `codec` feature.** Nothing in the library constructed `Codec`; it existed so a caller could `?` an `edgefirst-codec` call inside a function returning `ara2::Error`. Because the variant set now depends on a feature, and features unify across the graph, an exhaustive `match` downstream could otherwise stop compiling because an unrelated dependency enabled `ara2/codec`. `#[non_exhaustive]` requires a wildcard arm and makes that a stable contract instead. `edgefirst-ara2` does not enable the feature, so no codec error can reach its exception mapping and the Python surface is unchanged.
+
+- **`ara2`'s `camera` feature now implies `decoder`.** `yolov8_live` builds a HAL decoder, so the feature that builds it has to supply one.
+
+- **`edgefirst-image` is taken with `default-features = false` plus `opengl` and `static`.** Its default set turns on `codec`, which would have pulled `edgefirst-codec` back in transitively and undone the trim.
+
+### Changed (BREAKING) — release process
+
+- **A tag no longer builds anything, and release tags are no longer created by hand.** `release.yml` triggered on `v*.*.*` and built the wheels there; a tag-triggered workflow cannot be run by a pull request, so those builds were unreviewable and their failures surfaced only once the tag existed. The release is now three workflows, each owning one action: `release.yml` **builds** every artifact on a push to `release/X.Y.Z`, `tag-release.yml` **tags** the merge commit when that branch's PR is merged, and `publish.yml` **publishes** what was already built when the tag appears. Accepting the release PR is the gate — it cannot merge until `release.yml` is green, and green means every artifact the release ships already exists. `publish.yml` builds nothing; the sole exception is `cargo publish --no-verify`, which has no pre-built input.
+
+  **Both Trusted Publishers must be re-pointed from `release.yml` to `publish.yml` before the next tag.** They match on workflow filename, so the split breaks them until updated, and the dispatch rehearsal does not catch it because a rehearsal skips the upload. Re-point first, rehearse second, tag third. The checklist is in `.github/copilot-instructions.md`.
+
+- **`Cargo.lock` is committed.** Every shared CI lane runs `--locked` — clippy, cross-clippy, nextest and `cargo publish` — and fails outright when the lockfile has to be created. A lockfile in a library is ignored by downstream consumers, so this changes nothing for anyone depending on `ara2`.
+
+- **The toolchain is pinned to 1.94.0** in `rust-toolchain.toml`, with `rustfmt` and `clippy`. Clippy's lint set is a property of the compiler, so an unpinned toolchain turns CI red on a Rust release with no change to this repository. It also removes the `--exclude ara2-py` carve-out the old lint job carried: the whole workspace lints clean on the pinned compiler.
+
+### Changed
+
+- **EdgeFirst HAL crates updated to `0.32`** (`edgefirst-tensor`, `edgefirst-image`, `edgefirst-decoder`, `edgefirst-codec`). No API changes reach `ara2`; the release is fixes and hardening upstream — GL convert deadlocks on PBO-backed sources, Mach-O alignment in release builds, and `crossbeam-epoch` 0.9.21 clearing RUSTSEC-2026-0204.
+
+- **The `yolov8` example declares `required-features = ["decoder"]`**, so it is built with `cargo build --features decoder --example yolov8`. CI lints and checks twice — once with `--features ara2/codec,ara2/decoder` and once with the defaults — because `required-features` would otherwise drop the example from `--all-targets` and the gated code would never be compiled.
+
+### Changed — CI
+
+- **CI is tiered, and the workflows are callers of the shared reusable workflows in `EdgeFirstAI/.github`, pinned by SHA** ([CICD Pipelines](https://au-zone.atlassian.net/wiki/spaces/EAM/pages/2750906369/CICD+Pipelines)). `test.yml`, `build.yml`, `python.yml` and `sbom.yml` are replaced by `ci.yml` and `nightly.yml`. The four removed workflows ran unconditionally on every push to every branch: nine jobs, a release build for two architectures and two manylinux2014 wheels, with no concurrency group, no required check and no path filtering.
+
+  A push to a non-draft PR now runs **Quick** only: format, host clippy, aarch64 cross-clippy, the host-runnable tests, ruff, and the dependency licence policy, budgeted at ten minutes. **Full** — the aarch64 lane, the full scancode SBOM — runs when a reviewer adds `ci:full`, on a dispatch, or on a merge-queue batch. **Nightly** runs `cargo audit` every night regardless, and the rest only when `main` has moved since the last nightly that reached a verdict. Draft PRs run nothing. One check, `ci-gate`, is required.
+
+- **`ruff` runs over the Python bindings and examples**, pinned to 0.16.7. `ruff.toml` declares only this repository's exceptions to ruff's default set: the four rules that object to a `.pyi` whose bodies are a docstring followed by `...`, which for a compiled extension module is the documentation surface, and `RUF022`, because `__all__` is grouped by comment section to match the module layout.
+
+- **The `yolov8_live.py` example no longer imports `numpy`** (unused) and no longer assigns an unused `timing`. Its `pywayland` import probe now names every protocol type explicitly with `# noqa: F401`, so a partial install fails at the probe rather than several hundred lines into a camera loop. The Python examples became executable, matching their shebangs.
+
+- **`edgefirst_ara2.pyi` drops `from __future__ import annotations`** (no effect in a stub) and corrects the context-manager signatures: `__enter__` returns `Self`, and `__exit__`'s first parameter is `type[BaseException] | None`.
+
+### Added
+
+- **Tests for `dshape` parsing on the default build.** The metadata spec writes a dshape as an array of single-key maps and serde's own form is an array of tuples; both are accepted, an unrecognised axis name is preserved rather than collapsed, a map entry naming two axes is rejected rather than resolved by iteration order, and an absent `dshape` is empty rather than an error.
+
 ## [0.17.0] - 2026-09-11
 
 ### Changed (BREAKING)
@@ -837,7 +892,8 @@ Non-qmode-9 DVMs now raise `Ara2Error("unsupported quantization mode: qmode=N ..
 - Requires `edgefirst-hal` for HAL integration
 - Requires `libaraclient.so` runtime library
 
-[Unreleased]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.17.0...HEAD
+[Unreleased]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.18.0...HEAD
+[0.18.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.14.0...v0.15.0

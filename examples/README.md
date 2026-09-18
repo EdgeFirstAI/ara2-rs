@@ -64,12 +64,18 @@ Supports benchmarking with `--benchmark N` for per-stage timing statistics.
 
 ### Build
 
+The `decoder` feature is off by default -- it adds
+`OutputSpec::dshape_typed()`, which resolves the metadata's axis names onto
+the HAL decoder's `DimName` and which this example hands straight to a
+`DecoderBuilder` -- so it has to be named on the build:
+
 ```bash
 # Cross-compile (from development host):
-cargo zigbuild --release --target aarch64-unknown-linux-gnu --example yolov8
+cargo zigbuild --release --target aarch64-unknown-linux-gnu \
+    --features decoder --example yolov8
 
 # Or on target:
-cargo build --release --example yolov8
+cargo build --release --features decoder --example yolov8
 ```
 
 ### Run

@@ -61,7 +61,9 @@ def model_name(path: str) -> str:
 def print_stats(elapsed_ms: float, n: int) -> None:
     """Print throughput statistics."""
     fps = n / (elapsed_ms / 1000) if elapsed_ms > 0 else 0
-    print(f"  Total: {elapsed_ms:.2f}ms, Avg: {elapsed_ms / n:.2f}ms/iter, Throughput: {fps:.1f} fps")
+    print(
+        f"  Total: {elapsed_ms:.2f}ms, Avg: {elapsed_ms / n:.2f}ms/iter, Throughput: {fps:.1f} fps"
+    )
 
 
 def main() -> None:
@@ -69,7 +71,11 @@ def main() -> None:
     parser.add_argument("model_a", help="Path to first .dvm model file")
     parser.add_argument("model_b", help="Path to second .dvm model file")
     parser.add_argument(
-        "iterations", nargs="?", type=int, default=100, help="Number of iterations (> 0)"
+        "iterations",
+        nargs="?",
+        type=int,
+        default=100,
+        help="Number of iterations (> 0)",
     )
     args = parser.parse_args()
     if args.iterations <= 0:
@@ -211,10 +217,18 @@ def main() -> None:
     dual_async_fps = n / (dual_async_ms / 1000) if dual_async_ms > 0 else 0
     alt_sync_fps = n / (alt_sync_ms / 1000) if alt_sync_ms > 0 else 0
     alt_async_fps = n / (alt_async_ms / 1000) if alt_async_ms > 0 else 0
-    print(f"║ Dual sync:     {dual_sync_fps:7.1f} fps  ({dual_sync_ms / n:.2f}ms/iter)    ║")
-    print(f"║ Dual async:    {dual_async_fps:7.1f} fps  ({dual_async_ms / n:.2f}ms/iter)    ║")
-    print(f"║ A/B alt sync:  {alt_sync_fps:7.1f} fps  ({alt_sync_ms / n:.2f}ms/iter)    ║")
-    print(f"║ A/B alt async: {alt_async_fps:7.1f} fps  ({alt_async_ms / n:.2f}ms/iter)    ║")
+    print(
+        f"║ Dual sync:     {dual_sync_fps:7.1f} fps  ({dual_sync_ms / n:.2f}ms/iter)    ║"
+    )
+    print(
+        f"║ Dual async:    {dual_async_fps:7.1f} fps  ({dual_async_ms / n:.2f}ms/iter)    ║"
+    )
+    print(
+        f"║ A/B alt sync:  {alt_sync_fps:7.1f} fps  ({alt_sync_ms / n:.2f}ms/iter)    ║"
+    )
+    print(
+        f"║ A/B alt async: {alt_async_fps:7.1f} fps  ({alt_async_ms / n:.2f}ms/iter)    ║"
+    )
     print("╚══════════════════════════════════════════════════════╝")
     print(f"In-flight requests remaining: {session.inflight_count()}")
     print("\nDone.")

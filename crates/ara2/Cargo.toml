@@ -13,6 +13,20 @@ categories = ["hardware-support", "science", "embedded"]
 exclude = ["target/", "*.dvm", "*.onnx"]
 
 [features]
+# `From<edgefirst_codec::CodecError> for Error`, and the `Error::Codec`
+# variant carrying it. Off by default: the client library never loads an
+# image itself, so this exists only for callers that decode JPEGs or PNGs
+# inside a function already returning `ara2::Error`.
+codec = ["dep:edgefirst-codec"]
+
+# Types `OutputSpec::dshape` as `edgefirst_decoder::configs::DimName` pairs
+# instead of the metadata's raw axis-name strings, so a decoder
+# configuration can be built straight from parsed DVM metadata. Off by
+# default so reading metadata does not link a model decoder -- the default
+# string form carries the same names (`"batch"`, `"num_boxes"`, ...) for
+# callers that map them themselves, which is what the Python bindings do.
+decoder = ["dep:edgefirst-decoder"]
+
 # Enables the libcamera-based live-inference example (yolov8_live).
 # Off by default so building the library and file-based examples does not
 # require libcamera or Wayland client libraries on the host.
@@ -23,14 +37,19 @@ camera = [
     "dep:libcamera",
     "dep:wayland-client",
     "dep:wayland-protocols",
+    "decoder",
     "edgefirst-image/decode",
 ]
 
 [dependencies]
 ara2-sys.workspace = true
-edgefirst-codec.workspace = true
-edgefirst-decoder.workspace = true
-edgefirst-image.workspace = true
+edgefirst-codec = { workspace = true, optional = true }
+edgefirst-decoder = { workspace = true, optional = true }
+# The workspace entry drops edgefirst-image's defaults, whose `codec` would
+# otherwise pull edgefirst-codec into every build of this crate. `opengl` and
+# `static` are the rest of that default set, re-listed so the GPU conversion
+# engines and the statically linked tensor backend stay on.
+edgefirst-image = { workspace = true, features = ["opengl", "static"] }
 edgefirst-tensor.workspace = true
 libcamera = { workspace = true, optional = true }
 libloading.workspace = true
@@ -45,6 +64,10 @@ zip = { version = "8.6", default-features = false }
 [dev-dependencies]
 clap.workspace = true
 criterion.workspace = true
+# The benches and the `yolov8` example load JPEGs straight into a tensor.
+# A dev-dependency never propagates, so `cargo tree -e normal -p ara2` stays
+# at edgefirst-tensor and edgefirst-image.
+edgefirst-codec.workspace = true
 
 [[bench]]
 name = "model_benchmark"
@@ -57,6 +80,7 @@ path = "../../examples/test_dvm_metadata.rs"
 [[example]]
 name = "yolov8"
 path = "../../examples/yolov8.rs"
+required-features = ["decoder"]
 
 [[example]]
 name = "yolov8_live"

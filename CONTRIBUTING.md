@@ -191,14 +191,63 @@ Signed-off-by: Developer Name <dev@example.com>
 
 7. **Ensure CI passes** before requesting merge
 
+### What CI runs on your PR
+
+CI is tiered. A push to a non-draft PR runs **Quick** only — format, clippy on
+the host and cross-compiled for aarch64, the host-runnable tests, ruff, and the
+dependency licence policy. It is budgeted at ten minutes.
+
+**Full** does not run on every push. A reviewer adds the `ci:full` label to
+request it, and it re-runs on later pushes while the label is present. Draft
+PRs run nothing, so opening a PR as a draft and pushing freely until it is
+ready is the intended way to work on a long change.
+
+One check, `ci-gate`, is required. It reports success when every lane that ran
+succeeded and every lane that did not run was skipped.
+
+Reproduce Quick locally before pushing:
+
+```bash
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+PYO3_CROSS_PYTHON_VERSION=3.11 cargo clippy \
+    --target aarch64-unknown-linux-gnu --workspace --all-targets --locked -- -D warnings
+cargo nextest run --workspace --locked -E 'test(dvm_metadata)'
+uvx ruff@0.16.7 format --check crates/ara2-py examples
+uvx ruff@0.16.7 check crates/ara2-py examples
+```
+
+The toolchain comes from `rust-toolchain.toml` — clippy's lint set is a
+property of the compiler, so running these on a different toolchain can
+disagree with CI in both directions.
+
 ### PR Requirements
 
 - [ ] All commits are signed off (DCO)
-- [ ] Tests pass (`cargo test`)
-- [ ] Linting passes (`cargo clippy`)
-- [ ] Formatting is correct (`cargo fmt --check`)
+- [ ] Tests pass (`cargo nextest run --workspace --locked -E 'test(dvm_metadata)'`)
+- [ ] Linting passes (`cargo clippy --workspace --all-targets --locked -- -D warnings`)
+- [ ] Formatting is correct (`cargo fmt --all --check`)
+- [ ] `Cargo.lock` is committed if dependencies changed
 - [ ] Documentation is updated (if applicable)
 - [ ] CHANGELOG.md is updated (for user-facing changes)
+
+## Releasing
+
+A tag deploys; it never builds. The release is three workflows:
+
+| Step | Trigger | Result |
+|------|---------|--------|
+| `release.yml` | push to `release/X.Y.Z` | builds the `.crate` files, the wheels and the SBOM |
+| `tag-release.yml` | that branch's PR merged to `main` | creates the annotated `vX.Y.Z` tag |
+| `publish.yml` | the `vX.Y.Z` tag | publishes what was already built |
+
+So: push the release branch and the artifacts are built; merge the release PR
+and the tag is created; the tag publishes what was built. Accepting the
+release PR is the gate — it cannot merge until `release.yml` is green, and
+green means every artifact the release ships already exists.
+
+Never create a `v*` tag by hand. The full checklist, including the publish
+rehearsal, is in `.github/copilot-instructions.md`.
 
 ## Testing
 

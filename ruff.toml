@@ -1,0 +1,23 @@
+# Ruff configuration for the Python bindings package and the Python examples.
+#
+# The rule set is ruff's own default; only the exceptions below are declared,
+# and each records a deliberate choice rather than a deferral. CI pins the ruff
+# version (see .github/workflows/ci.yml) so the default set cannot change
+# underneath this file.
+
+[lint.per-file-ignores]
+# `edgefirst_ara2.pyi` is the documentation surface for a PyO3 extension
+# module, not a typing-only stub. Its bodies are `"""docstring"""` followed by
+# `...` because that docstring is what `help()` and an IDE show for a compiled
+# module, which carries none of its own. Four rules object to exactly that
+# shape, and taking any of them would mean deleting the documentation:
+#
+#   PIE790  the `...` is redundant once a docstring is present
+#   PYI048  a stub function body must be a single statement
+#   PYI013  a non-empty class body must not contain `...`
+#   PYI029  `__str__` / `__repr__` are redundant in a stub
+#
+# RUF022 wants `__all__` sorted alphabetically; it is grouped by comment
+# section (constants, exceptions, types) to match the module layout, and
+# ruff offers only an unsafe fix that would discard the grouping.
+"*.pyi" = ["PIE790", "PYI048", "PYI013", "PYI029", "RUF022"]

@@ -508,7 +508,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // dshape; the converter should be fixed upstream.
         let dshape: Vec<(DimName, usize)> = spec
             .map(|s| {
-                let mut d = s.dshape.clone();
+                let mut d = s.dshape_typed();
                 d.truncate(shape.len());
                 if s.output_type.as_deref() == Some("mask_coefs") {
                     for (name, _) in d.iter_mut() {

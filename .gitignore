@@ -1,7 +1,11 @@
 # Rust
 /target
 /.debug
-Cargo.lock
+# Cargo.lock is committed. Every shared CI lane runs --locked -- clippy,
+# cross-clippy, nextest and cargo publish -- which fails outright when the
+# lockfile has to be created. It also pins what CI resolved, so a yanked or
+# newly-published transitive dependency cannot turn a green tree red with no
+# change to it. A lockfile in a library is ignored by downstream consumers.
 
 # Performance profiling
 perf.data*
