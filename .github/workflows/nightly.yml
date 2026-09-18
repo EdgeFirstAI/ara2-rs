@@ -54,5 +54,9 @@ jobs:
       runner-class-linux-arm: larger
       nextest-args: --workspace --locked -E 'test(dvm_metadata)'
       env: PYO3_CROSS_PYTHON_VERSION=3.11
+      # The ARM larger-runner image has no C compiler, and the aarch64
+      # cross-clippy pass needs one for its target; neither is something the
+      # lane can infer. See .github/scripts/ci-setup.sh.
+      pre-command: bash .github/scripts/ci-setup.sh
       hack-args: --feature-powerset --depth 2 --exclude-features camera
     secrets: inherit

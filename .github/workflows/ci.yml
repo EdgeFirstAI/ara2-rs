@@ -32,15 +32,14 @@ concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-permissions:
-  contents: read
-  pull-requests: read
-
 jobs:
   changes:
     if: github.event.pull_request.draft != true
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      contents: read        # checkout
+      pull-requests: read   # paths-filter compares the PR through the API
     outputs:
       code: ${{ steps.f.outputs.code }}
       full: ${{ steps.mode.outputs.full }}
@@ -105,6 +104,10 @@ jobs:
       # feature would also satisfy pyo3, but the wheel's ABI is a packaging
       # decision and must not be made by a linter.
       env: PYO3_CROSS_PYTHON_VERSION=3.11
+      # The ARM larger-runner image has no C compiler, and the aarch64
+      # cross-clippy pass needs one for its target; neither is something the
+      # lane can infer. See .github/scripts/ci-setup.sh.
+      pre-command: bash .github/scripts/ci-setup.sh
       # Every other test needs an ARA-2 NPU and the ara2-proxy service, which
       # no hosted runner has. They are not #[ignore]d because on a target they
       # are the point of the suite, so the filter lives here.
@@ -133,6 +136,10 @@ jobs:
       runner-class-linux-arm: larger
       nextest-args: --workspace --locked -E 'test(dvm_metadata)'
       env: PYO3_CROSS_PYTHON_VERSION=3.11
+      # The ARM larger-runner image has no C compiler, and the aarch64
+      # cross-clippy pass needs one for its target; neither is something the
+      # lane can infer. See .github/scripts/ci-setup.sh.
+      pre-command: bash .github/scripts/ci-setup.sh
       # Nightly only. This is what reaches the cfg-gated code: the powerset
       # checks `--no-default-features` (the `String` dshape and an `Error` with
       # no `Codec` arm), each feature alone, and the two together. `camera`
@@ -146,6 +153,8 @@ jobs:
     needs: [changes, quick, full]
     runs-on: ubuntu-24.04
     timeout-minutes: 2
+    # Reads its own `needs` context and nothing else.
+    permissions: {}
     steps:
       - env:
           RESULTS: ${{ toJSON(needs) }}
