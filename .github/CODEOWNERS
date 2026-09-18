@@ -9,6 +9,6 @@
 # This file decides WHO is asked; the ruleset decides whether the answer is
 # needed before merge.
 #
-# More specific paths win over less specific ones, which is the mechanism for
-# routing an area to whoever owns it as more owners are added.
+# Later matching patterns override earlier ones, so add path-specific entries below
+# the catch-all to route each area to its owner.
 * @sebastient
