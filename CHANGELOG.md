@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The release build's `wheels` job grants `id-token: write` and `attestations: write`, so the wheels carry build provenance once the shared workflow attests them. Provenance is generated where an artifact was built rather than where it is later uploaded from, because provenance generated at the download describes the download. A reusable workflow cannot grant itself what the caller has not, so the permissions are granted here — ahead of the revision that needs them, where they are inert, rather than in the same change and risking the order.
+
 ## [0.18.0] - 2026-09-18
 
 ### Changed (BREAKING)

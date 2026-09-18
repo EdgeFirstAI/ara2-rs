@@ -62,6 +62,18 @@ jobs:
   wheels:
     needs: verify
     uses: EdgeFirstAI/.github/.github/workflows/release-wheels.yml@68dd89aa7f781e2a26f2fdb6430c6a43368f9063  # main (2026-09-18)
+    permissions:
+      contents: read
+      # Build provenance for the wheels, generated in the job that built them:
+      # provenance generated where an artifact was downloaded describes the
+      # download. The shared workflow attests by default from the revision that
+      # adds `maturin-build`; without these two the step fails there, and a
+      # reusable workflow cannot grant itself what the caller has not.
+      #
+      # Granted ahead of that pin rather than with it, so the ordering cannot
+      # go wrong: they are inert at this revision, which does not attest.
+      id-token: write
+      attestations: write
     with:
       manifest: crates/ara2-py/Cargo.toml
       # maturin infers abi3 from requires-python, so one wheel serves 3.11+.
