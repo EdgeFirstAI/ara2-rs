@@ -8,10 +8,8 @@ running on NXP i.MX platforms with Kinara ARA-2 hardware.
 The actual implementation is in Rust via PyO3.
 """
 
-from __future__ import annotations
-
 import os
-from typing import Any, Literal
+from typing import Any, Literal, Self
 
 import numpy as np
 import numpy.typing as npt
@@ -27,30 +25,37 @@ DEFAULT_SOCKET: str
 
 class Ara2Error(RuntimeError):
     """Base exception for all ARA-2 errors."""
+
     ...
 
 class LibraryError(Ara2Error):
     """Failed to load libaraclient.so.1."""
+
     ...
 
 class HardwareError(Ara2Error):
     """NPU hardware fault or endpoint state error."""
+
     ...
 
 class ProxyError(Ara2Error):
     """Proxy connection or communication error."""
+
     ...
 
 class ModelError(Ara2Error):
     """Model loading or inference error."""
+
     ...
 
 class TensorError(Ara2Error):
     """Tensor allocation, shape, or DMA-BUF error."""
+
     ...
 
 class MetadataError(Ara2Error):
     """DVM metadata parsing error (ZIP/JSON)."""
+
     ...
 
 # =============================================================================
@@ -318,8 +323,13 @@ class Session:
         """
         ...
 
-    def __enter__(self) -> Session: ...
-    def __exit__(self, exc_type: type | None, exc_val: BaseException | None, exc_tb: object) -> bool: ...
+    def __enter__(self) -> Self: ...
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: object,
+    ) -> bool: ...
     def __repr__(self) -> str: ...
     def __str__(self) -> str: ...
 
@@ -631,8 +641,13 @@ class Model:
         """Get quantization parameters for an output tensor."""
         ...
 
-    def __enter__(self) -> Model: ...
-    def __exit__(self, exc_type: type | None, exc_val: BaseException | None, exc_tb: object) -> bool: ...
+    def __enter__(self) -> Self: ...
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: object,
+    ) -> bool: ...
     def __repr__(self) -> str: ...
 
 class InferRequest:

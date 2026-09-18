@@ -3,6 +3,7 @@ use ara2_sys::{DV_ENDPOINT_STATE, DV_LAYER_OUTPUT_TYPE, dv_status_code};
 #[derive(Debug)]
 pub enum Error {
     Io(std::io::Error),
+    #[cfg(feature = "codec")]
     Codec(edgefirst_codec::CodecError),
     Library(libloading::Error),
     Ara2(dv_status_code),
@@ -18,7 +19,10 @@ pub enum Error {
     Zip(zip::result::ZipError),
     Json(serde_json::Error),
     UnsupportedQmode(i32),
-    TensorSizeMismatch { expected: usize, got: usize },
+    TensorSizeMismatch {
+        expected: usize,
+        got: usize,
+    },
     InferenceFailed,
     InferenceNotCompleted(u32),
 }
@@ -29,6 +33,7 @@ impl From<std::io::Error> for Error {
     }
 }
 
+#[cfg(feature = "codec")]
 impl From<edgefirst_codec::CodecError> for Error {
     fn from(e: edgefirst_codec::CodecError) -> Self {
         Error::Codec(e)
@@ -81,6 +86,7 @@ impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Error::Io(e) => write!(f, "{e}"),
+            #[cfg(feature = "codec")]
             Error::Codec(e) => write!(f, "{e}"),
             Error::Library(e) => write!(f, "{e}"),
             Error::Ara2(e) => write!(f, "Ara2 error: {e:?}"),
@@ -115,6 +121,7 @@ impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Error::Io(e) => Some(e),
+            #[cfg(feature = "codec")]
             Error::Codec(e) => Some(e),
             Error::Library(e) => Some(e),
             Error::TensorError(e) => Some(e),

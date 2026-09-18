@@ -1,0 +1,152 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2025 Au-Zone Technologies
+#
+# Tiered CI. Quick runs on every push to a non-draft PR; Full runs only when a
+# reviewer asks for it. One required check, `ci-gate`, covers both.
+#
+# Design: https://au-zone.atlassian.net/wiki/spaces/EAM/pages/2750906369/CICD+Pipelines
+#
+# Action Versions (hash-pinned):
+# - actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 (v7.0.1)
+# - dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d (v4.0.3)
+# - EdgeFirstAI/.github@f86411f9b2c7a2dbd12f65f1d9f233b08084e142 (main, 2026-09-18)
+
+name: CI
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, labeled]
+  merge_group:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      full:
+        type: boolean
+        default: false
+      hardware:
+        type: boolean
+        default: false
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  changes:
+    if: github.event.pull_request.draft != true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.f.outputs.code }}
+      full: ${{ steps.mode.outputs.full }}
+      hardware: ${{ steps.mode.outputs.hardware }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d  # v4.0.3
+        id: f
+        with:
+          filters: |
+            code:
+              - 'crates/**'
+              - 'examples/**'
+              - 'tests/**'
+              - 'Cargo.*'
+              - 'rust-toolchain.toml'
+              - '.github/**'
+      - id: mode
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          DISPATCH_FULL: ${{ inputs.full }}
+          DISPATCH_HARDWARE: ${{ inputs.hardware }}
+        run: |
+          full=false
+          hardware=false
+          case "$EVENT_NAME" in
+            merge_group) full=true ;;
+            workflow_dispatch)
+              full="$DISPATCH_FULL"
+              hardware="$DISPATCH_HARDWARE"
+              ;;
+          esac
+          # Re-run Full on later pushes while the label is still present.
+          case ",$LABELS," in *,ci:full,*) full=true ;; esac
+          case ",$LABELS," in *,ci:hardware,*) hardware=true ;; esac
+          echo "full=$full" >> "$GITHUB_OUTPUT"
+          echo "hardware=$hardware" >> "$GITHUB_OUTPUT"
+
+  quick:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    uses: EdgeFirstAI/.github/.github/workflows/rust-quick.yml@f86411f9b2c7a2dbd12f65f1d9f233b08084e142  # main (2026-09-18)
+    # No `clippy-args` override. `codec` and `decoder` are off by default, so
+    # the stock `--workspace --all-targets` pass covers the default build; the
+    # cfg-gated arms and the `yolov8` example belong to the feature-enabled
+    # build, which the nightly feature-combination lane below reaches. This
+    # replaces the two clippy invocations the old test.yml ran per push.
+    with:
+      # ruff over the Python bindings package and the Python examples. Lint
+      # only -- the bindings need maturin to import, which is Full-tier work.
+      python: true
+      ruff-paths: crates/ara2-py examples
+      # Pinned: ruff's default rule set changes between releases, and uvx
+      # would otherwise resolve whatever the runner's cache holds. ruff.toml
+      # declares only this repository's exceptions to that set, so the set
+      # itself has to be fixed for the file to mean anything.
+      ruff-version: 0.16.7
+      # pyo3 refuses to configure a cross build without an interpreter for the
+      # target, and the shared cross-clippy lane lints the whole workspace, so
+      # ara2-py reaches it and fails the lane. Naming the version is enough;
+      # nothing is executed. An abi3 feature would also satisfy pyo3, but the
+      # wheel's ABI is a packaging decision and must not be made by a linter.
+      pre-command: echo "PYO3_CROSS_PYTHON_VERSION=3.11" >> "$GITHUB_ENV"
+      # Every other test needs an ARA-2 NPU and the ara2-proxy service, which
+      # no hosted runner has. They are not #[ignore]d because on a target they
+      # are the point of the suite, so the filter lives here.
+      nextest-args: --workspace --locked -E 'test(dvm_metadata)'
+      cache-key: quick-x86_64
+
+  full:
+    needs: changes
+    if: needs.changes.outputs.full == 'true' || needs.changes.outputs.hardware == 'true'
+    uses: EdgeFirstAI/.github/.github/workflows/rust-full.yml@f86411f9b2c7a2dbd12f65f1d9f233b08084e142  # main (2026-09-18)
+    with:
+      # `lanes: host` and no `boards` input: ARA-2 is a PCIe card in an NXP
+      # i.MX host and the fleet has no such runner, so there is no board lane
+      # to dispatch to and `ci:hardware` escalates to the same host lanes as
+      # `ci:full`. Once such a runner exists, add its label to `boards` and
+      # make this the conditional `all`/`hardware` the shared workflow takes.
+      lanes: host
+      # ARA-2 is Linux-only (NXP i.MX). libaraclient.so.1 has no macOS or
+      # Windows build, so those lanes would test nothing.
+      skip-macos: true
+      skip-windows: true
+      # No sonar-project.properties in this repository; nothing to decorate.
+      sonar: false
+      runner-class-linux: hosted
+      runner-class-linux-arm: hosted
+      nextest-args: --workspace --locked -E 'test(dvm_metadata)'
+      pre-command: echo "PYO3_CROSS_PYTHON_VERSION=3.11" >> "$GITHUB_ENV"
+      # Nightly only. This is what reaches the cfg-gated code: the powerset
+      # checks `--no-default-features` (the `String` dshape and an `Error` with
+      # no `Codec` arm), each feature alone, and the two together. `camera`
+      # needs libcamera and Wayland headers that a hosted runner does not
+      # carry, so it is excluded rather than skipped after a failed link.
+      hack-args: --feature-powerset --depth 2 --exclude-features camera
+    secrets: inherit
+
+  ci-gate:
+    if: always()
+    needs: [changes, quick, full]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS" | jq -e 'to_entries | all(.value.result == "success" or .value.result == "skipped")'

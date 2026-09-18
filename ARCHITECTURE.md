@@ -19,13 +19,16 @@ ARA-2 neural network accelerator devices via the ARA-2 proxy service.
                 │                           │
                 ▼                           ▼
 ┌───────────────────────────┐   ┌──────────────────────────────────┐
-│          ara2             │   │  edgefirst-tensor / -image /     │
-│     (Core Library)        │   │  -decoder / -codec               │
-│                           │   │                                  │
-│  • Session management     │──▶│  • DMA/SHM tensor allocation     │
-│  • Endpoint enumeration   │   │  • G2D/OpenGL image processing   │
-│  • Model loading/infer    │   │  • YOLO decode + overlay render  │
-│  • DVM metadata parsing   │   │  • JPEG/PNG decode into a tensor │
+│          ara2             │   │  edgefirst-tensor / -image       │
+│     (Core Library)        │   │                                  │
+│                           │──▶│  • DMA/SHM tensor allocation     │
+│  • Session management     │   │  • G2D/OpenGL image processing   │
+│  • Endpoint enumeration   │   │  • Overlay / mask rendering      │
+│  • Model loading/infer    │   ├──────────────────────────────────┤
+│  • DVM metadata parsing   │   │  edgefirst-decoder / -codec      │
+│                           │   │  (examples only)                 │
+│                           │   │  • YOLO decode + NMS             │
+│                           │   │  • JPEG/PNG decode into a tensor │
 └─────────────┬─────────────┘   └──────────────────────────────────┘
               │
               ▼
@@ -164,11 +167,24 @@ For multi-model parallelism, load separate `Model` instances per thread.
 
 | Feature | Default | Description |
 |---------|---------|-------------|
-| `camera` | no | Builds the libcamera/Wayland live example (`yolov8_live`), and turns on `edgefirst-image/decode` for its fused `draw_masks` call |
+| `codec` | no | Adds `Error::Codec` and its `From<edgefirst_codec::CodecError>` conversion, for callers that decode JPEGs or PNGs inside a function returning `ara2::Error` |
+| `decoder` | no | Types `OutputSpec::dshape` as `edgefirst_decoder::configs::DimName` pairs instead of the metadata's raw axis-name strings, so a decoder configuration can be built straight from parsed DVM metadata |
+| `camera` | no | Builds the libcamera/Wayland live example (`yolov8_live`). Implies `decoder`, and turns on `edgefirst-image/decode` for its fused `draw_masks` call |
 
-The EdgeFirst HAL crates are unconditional dependencies: `edgefirst-tensor`
-types appear in the public API of `Model`, and tensor allocation and
-inference cannot be expressed without them.
+`edgefirst-tensor` and `edgefirst-image` are unconditional dependencies:
+`edgefirst-tensor` types appear in the public API of `Model`, so tensor
+allocation and inference cannot be expressed without them, and
+`edgefirst-image` supplies the `Error::ImageError` variant that carries a
+preprocessing failure.
+
+`edgefirst-decoder` and `edgefirst-codec` are not. Decoding model outputs and
+loading images from disk are application concerns, so the examples and
+benches take those crates as their own dependencies and `cargo tree -e normal
+-p ara2` reaches neither. The `codec` and `decoder` features exist only for
+callers that want those crates' types in `ara2`'s own API. `edgefirst-image`
+is taken with `default-features = false` plus `opengl` and `static` for the
+same reason — its default set turns on `codec`, which would pull
+`edgefirst-codec` back in transitively.
 
 ## FFI Layer (ara2-sys)
 

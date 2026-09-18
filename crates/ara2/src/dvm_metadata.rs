@@ -9,10 +9,49 @@
 //! interference.
 
 use crate::Error;
+#[cfg(feature = "decoder")]
 use edgefirst_decoder::configs::{DimName, deserialize_dshape};
 use serde::Deserialize;
 use std::io::{Cursor, Read as _};
 use zip::ZipArchive;
+
+/// Deserialize a `dshape` from either the spec's array of single-key maps
+/// (`[{"batch": 1}, {"num_features": 84}]`) or serde's default array of
+/// tuples (`[["batch", 1]]`).
+///
+/// This mirrors `edgefirst_decoder::configs::deserialize_dshape`, which the
+/// `decoder` feature substitutes to land typed [`DimName`] axes rather than
+/// the raw metadata spellings.
+///
+/// [`DimName`]: https://docs.rs/edgefirst-decoder/latest/edgefirst_decoder/configs/enum.DimName.html
+#[cfg(not(feature = "decoder"))]
+fn deserialize_dshape<'de, D>(deserializer: D) -> Result<Vec<(String, usize)>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum DShapeItem {
+        Tuple(String, usize),
+        Map(std::collections::HashMap<String, usize>),
+    }
+
+    Vec::<DShapeItem>::deserialize(deserializer)?
+        .into_iter()
+        .map(|item| match item {
+            DShapeItem::Tuple(name, size) => Ok((name, size)),
+            DShapeItem::Map(map) => {
+                let mut entries = map.into_iter();
+                match (entries.next(), entries.next()) {
+                    (Some(entry), None) => Ok(entry),
+                    _ => Err(serde::de::Error::custom(
+                        "dshape map entry must have exactly one key",
+                    )),
+                }
+            }
+        })
+        .collect()
+}
 
 /// Filename for the EdgeFirst metadata JSON.
 pub const METADATA_FILENAME: &str = "edgefirst.json";
@@ -181,9 +220,27 @@ pub struct OutputSpec {
     #[serde(default)]
     pub shape: Vec<i64>,
 
-    /// Physical axis names in memory order. Used by the HAL decoder to
+    /// Physical axis names in memory order, as `(name, extent)` pairs. Used
+    /// by the HAL decoder to stride-swap into its canonical axis order
+    /// without copying bytes. Empty when the producer omitted the field.
+    ///
+    /// Names are the metadata spellings (`"batch"`, `"num_boxes"`,
+    /// `"num_protos"`, ...) so a caller can map them onto the decoder's
+    /// `DimName` without this crate linking a model decoder. Enable the
+    /// `decoder` feature to get `edgefirst_decoder::configs::DimName` pairs
+    /// directly instead.
+    #[cfg(not(feature = "decoder"))]
+    #[serde(default, deserialize_with = "deserialize_dshape")]
+    pub dshape: Vec<(String, usize)>,
+
+    /// Physical axis names in memory order, as `(DimName, extent)` pairs
+    /// ready to hand to a decoder configuration. Used by the HAL decoder to
     /// stride-swap into its canonical axis order without copying bytes.
     /// Empty when the producer omitted the field.
+    ///
+    /// Without the `decoder` feature this carries the raw metadata
+    /// spellings as `Vec<(String, usize)>` instead.
+    #[cfg(feature = "decoder")]
     #[serde(default, deserialize_with = "deserialize_dshape")]
     pub dshape: Vec<(DimName, usize)>,
 
@@ -504,6 +561,92 @@ mod tests {
 
         let labels = read_labels(&data).unwrap();
         assert_eq!(labels, vec!["person", "car", "bike"]);
+    }
+
+    /// The spec writes a dshape as an array of single-key maps. Without the
+    /// `decoder` feature the axis names land as the raw metadata spellings.
+    #[cfg(not(feature = "decoder"))]
+    #[test]
+    fn dshape_parses_map_form() {
+        let json = r#"{
+            "model": {},
+            "outputs": [{
+                "name": "output0",
+                "shape": [1, 84, 8400],
+                "dshape": [{"batch": 1}, {"num_features": 84}, {"num_boxes": 8400}]
+            }]
+        }"#;
+        let data = make_dvm_with_metadata(json, None);
+        let meta = read_metadata(&data).unwrap().unwrap();
+
+        assert_eq!(
+            meta.outputs[0].dshape,
+            vec![
+                ("batch".to_string(), 1),
+                ("num_features".to_string(), 84),
+                ("num_boxes".to_string(), 8400),
+            ]
+        );
+    }
+
+    /// serde's own representation of `Vec<(String, usize)>` is accepted too,
+    /// matching what the decoder's deserializer takes.
+    #[cfg(not(feature = "decoder"))]
+    #[test]
+    fn dshape_parses_tuple_form() {
+        let json = r#"{
+            "model": {},
+            "outputs": [{"shape": [1, 32], "dshape": [["batch", 1], ["num_protos", 32]]}]
+        }"#;
+        let data = make_dvm_with_metadata(json, None);
+        let meta = read_metadata(&data).unwrap().unwrap();
+
+        assert_eq!(
+            meta.outputs[0].dshape,
+            vec![("batch".to_string(), 1), ("num_protos".to_string(), 32)]
+        );
+    }
+
+    /// An axis name the HAL does not recognise is preserved rather than
+    /// collapsed, so the dshape length still matches the shape.
+    #[cfg(not(feature = "decoder"))]
+    #[test]
+    fn dshape_preserves_unknown_axis_names() {
+        let json = r#"{
+            "model": {},
+            "outputs": [{"shape": [1, 3], "dshape": [{"batch": 1}, {"channels": 3}]}]
+        }"#;
+        let data = make_dvm_with_metadata(json, None);
+        let meta = read_metadata(&data).unwrap().unwrap();
+
+        assert_eq!(
+            meta.outputs[0].dshape,
+            vec![("batch".to_string(), 1), ("channels".to_string(), 3)]
+        );
+    }
+
+    /// A map entry naming more than one axis is ambiguous and is rejected
+    /// rather than resolved by iteration order.
+    #[cfg(not(feature = "decoder"))]
+    #[test]
+    fn dshape_rejects_multi_key_map_entry() {
+        let json = r#"{
+            "model": {},
+            "outputs": [{"shape": [1, 4], "dshape": [{"batch": 1, "box_coords": 4}]}]
+        }"#;
+        let data = make_dvm_with_metadata(json, None);
+        assert!(read_metadata(&data).is_err());
+    }
+
+    /// An omitted dshape is empty, not an error -- older DVMs predate the
+    /// field.
+    #[cfg(not(feature = "decoder"))]
+    #[test]
+    fn dshape_absent_is_empty() {
+        let json = r#"{"model": {}, "outputs": [{"shape": [1, 84, 8400]}]}"#;
+        let data = make_dvm_with_metadata(json, None);
+        let meta = read_metadata(&data).unwrap().unwrap();
+        assert!(meta.outputs[0].dshape.is_empty());
     }
 
     #[test]

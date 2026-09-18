@@ -331,11 +331,7 @@ impl OutputSpec {
     /// decoder. Empty when the producer omitted the field.
     #[getter]
     fn dshape(&self) -> Vec<(String, usize)> {
-        self.0
-            .dshape
-            .iter()
-            .map(|(name, extent)| (name.to_string(), *extent))
-            .collect()
+        self.0.dshape.clone()
     }
 
     /// Whether box coordinates are already normalized to `[0, 1]`.

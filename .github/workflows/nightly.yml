@@ -1,0 +1,56 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2025 Au-Zone Technologies
+#
+# Nightly safety net for anything a reviewer skipped by not labelling `ci:full`.
+#
+# Design: https://au-zone.atlassian.net/wiki/spaces/EAM/pages/2750906369/CICD+Pipelines
+#
+# Action Versions (hash-pinned):
+# - EdgeFirstAI/.github@f86411f9b2c7a2dbd12f65f1d9f233b08084e142 (main, 2026-09-18)
+
+name: Nightly
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Run even if main has not moved since the last nightly.
+        type: boolean
+        required: false
+        default: false
+
+jobs:
+  changed:
+    uses: EdgeFirstAI/.github/.github/workflows/nightly-gate.yml@f86411f9b2c7a2dbd12f65f1d9f233b08084e142  # main (2026-09-18)
+    with:
+      # `inputs` is null on a schedule trigger, so the fallback is required;
+      # without it the expression yields an empty string and the gate's
+      # boolean input rejects it.
+      force: ${{ inputs.force || false }}
+
+  # Deliberately not `needs: changed`. cargo audit answers a question about the
+  # RustSec database, which changes daily whether this repository does or not,
+  # so gating it would go quiet exactly when a new advisory lands against an
+  # unchanged main. It reads Cargo.lock without building, on a free standard
+  # runner, so running it every night costs nothing.
+  advisories:
+    uses: EdgeFirstAI/.github/.github/workflows/advisories.yml@f86411f9b2c7a2dbd12f65f1d9f233b08084e142  # main (2026-09-18)
+
+  nightly:
+    needs: changed
+    if: needs.changed.outputs.run == 'true'
+    uses: EdgeFirstAI/.github/.github/workflows/rust-full.yml@f86411f9b2c7a2dbd12f65f1d9f233b08084e142  # main (2026-09-18)
+    with:
+      lanes: host
+      nightly: true
+      skip-macos: true
+      skip-windows: true
+      sonar: false
+      runner-class-linux: hosted
+      runner-class-linux-arm: hosted
+      nextest-args: --workspace --locked -E 'test(dvm_metadata)'
+      pre-command: echo "PYO3_CROSS_PYTHON_VERSION=3.11" >> "$GITHUB_ENV"
+      hack-args: --feature-powerset --depth 2 --exclude-features camera
+    secrets: inherit

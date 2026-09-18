@@ -66,14 +66,12 @@ import os
 import sys
 import time
 
-import numpy as np
-
 import edgefirst.codec as ef_codec
 import edgefirst.decoder as ef_decoder
 import edgefirst.image as ef_image
 import edgefirst.tensor as ef_tensor
 import edgefirst_ara2 as ara2
-
+import numpy as np
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -232,7 +230,9 @@ def metadata_dshape(
     return out
 
 
-def canonical_dshape(role: str, shape: list[int]) -> list[tuple[ef_decoder.DimName, int]]:
+def canonical_dshape(
+    role: str, shape: list[int]
+) -> list[tuple[ef_decoder.DimName, int]]:
     """Name each dimension of an Ultralytics output tensor.
 
     An anonymous ``shape=`` leaves the decoder to guess which axis carries
@@ -378,7 +378,9 @@ def build_decoder(
 
 def _row(label: str, data: list[float]) -> None:
     a = np.array(data)
-    print(f"  {label:<30} {a.mean():6.2f}  {a.min():6.2f}  {a.max():6.2f}  {a.std():6.2f}")
+    print(
+        f"  {label:<30} {a.mean():6.2f}  {a.min():6.2f}  {a.max():6.2f}  {a.std():6.2f}"
+    )
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -395,12 +397,18 @@ def main() -> None:
     # benefits from surfacing lower-confidence detections for visual review.
     parser.add_argument("--threshold", type=float, default=0.25)
     parser.add_argument("--iou", type=float, default=0.45)
-    parser.add_argument("--benchmark", type=int, default=0,
-                        help="Run N iterations and print timing statistics")
-    parser.add_argument("--save", action="store_true",
-                        help="Save overlay image next to the input image")
     parser.add_argument(
-        "--color-mode", default="class",
+        "--benchmark",
+        type=int,
+        default=0,
+        help="Run N iterations and print timing statistics",
+    )
+    parser.add_argument(
+        "--save", action="store_true", help="Save overlay image next to the input image"
+    )
+    parser.add_argument(
+        "--color-mode",
+        default="class",
         choices=["class", "instance", "track"],
         help="Segmentation mask color assignment (default: class)",
     )
@@ -416,19 +424,23 @@ def main() -> None:
 
     # ── 1. Read DVM metadata ─────────────────────────────────────────────
     # Each library reports its own version; they are released in lockstep.
-    print(f"edgefirst-ara2 v{ara2.__version__}, "
-          f"edgefirst-tensor v{ef_tensor.version()}, "
-          f"edgefirst-codec v{ef_codec.version()}, "
-          f"edgefirst-image v{ef_image.version()}, "
-          f"edgefirst-decoder v{ef_decoder.version()}")
+    print(
+        f"edgefirst-ara2 v{ara2.__version__}, "
+        f"edgefirst-tensor v{ef_tensor.version()}, "
+        f"edgefirst-codec v{ef_codec.version()}, "
+        f"edgefirst-image v{ef_image.version()}, "
+        f"edgefirst-decoder v{ef_decoder.version()}"
+    )
     metadata = ara2.read_metadata(args.model)
     labels = ara2.read_labels(args.model) or COCO_LABELS
     if metadata:
         print(f"Task: {metadata.task}, Classes: {len(labels)}")
         if metadata.compilation and metadata.compilation.ppa:
             ppa = metadata.compilation.ppa
-            print(f"Target: {metadata.compilation.target}, "
-                  f"IPS: {ppa.ips:.0f}, Power: {ppa.power_mw:.0f} mW")
+            print(
+                f"Target: {metadata.compilation.target}, "
+                f"IPS: {ppa.ips:.0f}, Power: {ppa.power_mw:.0f} mW"
+            )
 
     # ── 2. Connect to ARA-2 and load model ───────────────────────────────
     session = ara2.Session.create_via_unix_socket(args.socket)
@@ -439,8 +451,10 @@ def main() -> None:
 
     endpoint = endpoints[0]
     stats = endpoint.dram_statistics()
-    print(f"Endpoint: {endpoint.check_status()}, "
-          f"DRAM: {stats.free_size / 1048576:.0f} / {stats.dram_size / 1048576:.0f} MB free")
+    print(
+        f"Endpoint: {endpoint.check_status()}, "
+        f"DRAM: {stats.free_size / 1048576:.0f} / {stats.dram_size / 1048576:.0f} MB free"
+    )
 
     with endpoint.load_model(args.model) as model:
         model.allocate_tensors("dma")
@@ -460,8 +474,10 @@ def main() -> None:
             info = model.output_info(i)
             spec = meta_by_shape.get(tuple(shape))
             norm = spec.normalized if spec is not None else None
-            print(f"  output[{i}]: {shape}  bpp={info.bpp}  "
-                  f"qn={oq.qn:.6g}  signed={oq.is_signed}  normalized={norm}")
+            print(
+                f"  output[{i}]: {shape}  bpp={info.bpp}  "
+                f"qn={oq.qn:.6g}  signed={oq.is_signed}  normalized={norm}"
+            )
             shapes.append(shape)
             quants.append(oq)
             specs.append(spec)
@@ -490,9 +506,7 @@ def main() -> None:
         # The overlay is a separate concern: `background=` must be the same
         # format as the canvas it composites into, so the display base layer
         # gets its own one-off RGBA conversion.
-        background = processor.create_image(
-            img_w, img_h, ef_image.PixelFormat.Rgba
-        )
+        background = processor.create_image(img_w, img_h, ef_image.PixelFormat.Rgba)
         processor.convert(frame, background)
 
         # ── 5. Import NPU input tensor and compute letterbox ──────────────
@@ -503,7 +517,10 @@ def main() -> None:
         input_fd = model.input_tensor_fd(0)
         try:
             dst = processor.import_image(
-                input_fd, w, h, ef_image.PixelFormat.PlanarRgb,
+                input_fd,
+                w,
+                h,
+                ef_image.PixelFormat.PlanarRgb,
                 dtype="int8" if iq.is_signed else "uint8",
             )
         finally:
@@ -522,8 +539,9 @@ def main() -> None:
             t = ef_tensor.Tensor.from_fd(
                 fd,
                 shapes[i],
-                output_dtype(model.output_info(i).bpp,
-                             model.output_quants(i).is_signed),
+                output_dtype(
+                    model.output_info(i).bpp, model.output_quants(i).is_signed
+                ),
             )
             output_tensors.append(t)
 
@@ -535,12 +553,21 @@ def main() -> None:
         processor.convert(frame, dst, letterbox=(114, 114, 114, 255))
         model.run()
         _wb, _ws, _wc, _wp = decoder.decode_proto(output_tensors)
-        _wm = processor.materialize_masks(_wb, _ws, _wc, _wp,
-                                          letterbox=letterbox_norm) if _wp else []
-        processor.draw_decoded_masks(canvas, _wb, _ws, _wc, seg=_wm,
-                                     background=background,
-                                     letterbox=letterbox_norm,
-                                     color_mode=color_mode)
+        _wm = (
+            processor.materialize_masks(_wb, _ws, _wc, _wp, letterbox=letterbox_norm)
+            if _wp
+            else []
+        )
+        processor.draw_decoded_masks(
+            canvas,
+            _wb,
+            _ws,
+            _wc,
+            seg=_wm,
+            background=background,
+            letterbox=letterbox_norm,
+            color_mode=color_mode,
+        )
 
         # ── 9. Single-shot timed run ──────────────────────────────────────
         t0 = time.monotonic()
@@ -564,17 +591,27 @@ def main() -> None:
         # edgefirst.decoder, and this raised "I8 mask_coefficients require
         # quantization metadata".
         t3 = time.monotonic()
-        masks = (processor.materialize_masks(boxes, scores, classes, proto_data,
-                                             letterbox=letterbox_norm)
-                 if proto_data else [])
+        masks = (
+            processor.materialize_masks(
+                boxes, scores, classes, proto_data, letterbox=letterbox_norm
+            )
+            if proto_data
+            else []
+        )
         mat_ms = (time.monotonic() - t3) * 1000
 
         # Step 3 — Draw: GL-accelerated overlay of bitmaps onto canvas
         t4 = time.monotonic()
-        processor.draw_decoded_masks(canvas, boxes, scores, classes,
-                                     seg=masks, background=background,
-                                     letterbox=letterbox_norm,
-                                     color_mode=color_mode)
+        processor.draw_decoded_masks(
+            canvas,
+            boxes,
+            scores,
+            classes,
+            seg=masks,
+            background=background,
+            letterbox=letterbox_norm,
+            color_mode=color_mode,
+        )
         draw_ms = (time.monotonic() - t4) * 1000
 
         # ── 10. Print results ─────────────────────────────────────────────
@@ -584,20 +621,24 @@ def main() -> None:
             cls = int(classes[i])
             name = labels[cls] if cls < len(labels) else f"class_{cls}"
             x1, y1, x2, y2 = unletterbox(boxes[i], letterbox_norm, img_w, img_h)
-            print(f"  {name:>12} ({cls:2}): {scores[i]*100:5.1f}%  "
-                  f"[{x1:.0f}, {y1:.0f}, {x2:.0f}, {y2:.0f}]")
+            print(
+                f"  {name:>12} ({cls:2}): {scores[i] * 100:5.1f}%  "
+                f"[{x1:.0f}, {y1:.0f}, {x2:.0f}, {y2:.0f}]"
+            )
 
         total = pre_ms + inf_ms + dec_ms + mat_ms + draw_ms
         print("\n--- Timing ---")
         print(f"  Preprocess:  {pre_ms:6.2f} ms")
-        print(f"  Inference:   {inf_ms:6.2f} ms"
-              f"  (npu: {timing.run_time_us/1000:.2f} ms,"
-              f"  in: {timing.input_time_us/1000:.2f} ms,"
-              f"  out: {timing.output_time_us/1000:.2f} ms)")
+        print(
+            f"  Inference:   {inf_ms:6.2f} ms"
+            f"  (npu: {timing.run_time_us / 1000:.2f} ms,"
+            f"  in: {timing.input_time_us / 1000:.2f} ms,"
+            f"  out: {timing.output_time_us / 1000:.2f} ms)"
+        )
         print(f"  Decode:      {dec_ms:6.2f} ms")
         print(f"  Materialize: {mat_ms:6.2f} ms")
         print(f"  Draw:        {draw_ms:6.2f} ms")
-        print(f"  Total:       {total:6.2f} ms  ({1000/total:.1f} FPS)")
+        print(f"  Total:       {total:6.2f} ms  ({1000 / total:.1f} FPS)")
 
         # ── 11. Save overlay ──────────────────────────────────────────────
         if args.save:
@@ -674,16 +715,26 @@ def _benchmark(
         t3 = time.monotonic()
 
         # Step 2 — Materialize: CPU dot-product → per-detection bitmaps
-        masks = (processor.materialize_masks(boxes, scores, classes, proto_data,
-                                             letterbox=letterbox_norm)
-                 if proto_data else [])
+        masks = (
+            processor.materialize_masks(
+                boxes, scores, classes, proto_data, letterbox=letterbox_norm
+            )
+            if proto_data
+            else []
+        )
         t4 = time.monotonic()
 
         # Step 3 — Draw: GL overlay of bitmaps onto canvas
-        processor.draw_decoded_masks(canvas, boxes, scores, classes,
-                                     seg=masks, background=background,
-                                     letterbox=letterbox_norm,
-                                     color_mode=color_mode)
+        processor.draw_decoded_masks(
+            canvas,
+            boxes,
+            scores,
+            classes,
+            seg=masks,
+            background=background,
+            letterbox=letterbox_norm,
+            color_mode=color_mode,
+        )
         t5 = time.monotonic()
 
         pre_ms.append((t1 - t0) * 1000)
@@ -695,8 +746,10 @@ def _benchmark(
         mat_ms.append((t4 - t3) * 1000)
         draw_ms.append((t5 - t4) * 1000)
 
-    total_ms = [pre_ms[i] + inf_ms[i] + dec_ms[i] + mat_ms[i] + draw_ms[i]
-                for i in range(n_iter)]
+    total_ms = [
+        pre_ms[i] + inf_ms[i] + dec_ms[i] + mat_ms[i] + draw_ms[i]
+        for i in range(n_iter)
+    ]
 
     print(f"\n--- Benchmark ({n_iter} iterations) ---")
     print(f"  {'':30} {'mean':>6}  {'min':>6}  {'max':>6}  {'std':>6}")
@@ -717,19 +770,86 @@ def _benchmark(
 # ── COCO labels (fallback when DVM has no embedded labels) ────────────────────
 
 COCO_LABELS = [
-    "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train",
-    "truck", "boat", "traffic light", "fire hydrant", "stop sign",
-    "parking meter", "bench", "bird", "cat", "dog", "horse", "sheep",
-    "cow", "elephant", "bear", "zebra", "giraffe", "backpack", "umbrella",
-    "handbag", "tie", "suitcase", "frisbee", "skis", "snowboard",
-    "sports ball", "kite", "baseball bat", "baseball glove", "skateboard",
-    "surfboard", "tennis racket", "bottle", "wine glass", "cup", "fork",
-    "knife", "spoon", "bowl", "banana", "apple", "sandwich", "orange",
-    "broccoli", "carrot", "hot dog", "pizza", "donut", "cake", "chair",
-    "couch", "potted plant", "bed", "dining table", "toilet", "tv",
-    "laptop", "mouse", "remote", "keyboard", "cell phone", "microwave",
-    "oven", "toaster", "sink", "refrigerator", "book", "clock", "vase",
-    "scissors", "teddy bear", "hair drier", "toothbrush",
+    "person",
+    "bicycle",
+    "car",
+    "motorcycle",
+    "airplane",
+    "bus",
+    "train",
+    "truck",
+    "boat",
+    "traffic light",
+    "fire hydrant",
+    "stop sign",
+    "parking meter",
+    "bench",
+    "bird",
+    "cat",
+    "dog",
+    "horse",
+    "sheep",
+    "cow",
+    "elephant",
+    "bear",
+    "zebra",
+    "giraffe",
+    "backpack",
+    "umbrella",
+    "handbag",
+    "tie",
+    "suitcase",
+    "frisbee",
+    "skis",
+    "snowboard",
+    "sports ball",
+    "kite",
+    "baseball bat",
+    "baseball glove",
+    "skateboard",
+    "surfboard",
+    "tennis racket",
+    "bottle",
+    "wine glass",
+    "cup",
+    "fork",
+    "knife",
+    "spoon",
+    "bowl",
+    "banana",
+    "apple",
+    "sandwich",
+    "orange",
+    "broccoli",
+    "carrot",
+    "hot dog",
+    "pizza",
+    "donut",
+    "cake",
+    "chair",
+    "couch",
+    "potted plant",
+    "bed",
+    "dining table",
+    "toilet",
+    "tv",
+    "laptop",
+    "mouse",
+    "remote",
+    "keyboard",
+    "cell phone",
+    "microwave",
+    "oven",
+    "toaster",
+    "sink",
+    "refrigerator",
+    "book",
+    "clock",
+    "vase",
+    "scissors",
+    "teddy bear",
+    "hair drier",
+    "toothbrush",
 ]
 
 

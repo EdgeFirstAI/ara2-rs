@@ -1,0 +1,32 @@
+version: 2
+# Dependabot bumps action SHAs in workflow YAML, including the
+# `uses: EdgeFirstAI/.github@…` pins. That bump is complete on its own: the
+# shared workflows resolve their own commit from the job context, so there is
+# no second value to update alongside it.
+#
+# Each bump PR is itself the test — it runs Quick on the revision it proposes.
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns:
+          - "*"
+    open-pull-requests-limit: 5
+
+  # Cargo.lock is committed (every shared lane runs --locked), so a transitive
+  # bump now needs a commit. Grouped, because the EdgeFirst HAL crates release
+  # together and must move together: ara2 exposes edgefirst-tensor types in its
+  # public API, so a partial bump is a type-unification failure rather than a
+  # version skew.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      edgefirst-hal:
+        patterns:
+          - "edgefirst-*"
+    open-pull-requests-limit: 5

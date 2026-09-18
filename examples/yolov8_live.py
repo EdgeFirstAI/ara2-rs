@@ -69,8 +69,6 @@ import signal
 import sys
 import time
 
-import numpy as np
-
 import edgefirst.decoder as ef_decoder
 import edgefirst.image as ef_image
 import edgefirst.tensor as ef_tensor
@@ -87,18 +85,28 @@ except ImportError as exc:
 
 # Wayland display via pywayland (no EGL/GL needed)
 try:
+    # Every protocol type this example binds is imported here, including the
+    # ones only named through the registry, so a partial pywayland install
+    # fails at this probe with a message naming the package rather than at
+    # first use, several hundred lines into a camera loop.
     from pywayland.client import Display as WlDisplay
-    from pywayland.protocol.wayland import WlCompositor, WlSurface, WlCallback, WlBuffer
-    from pywayland.protocol.xdg_shell import XdgWmBase, XdgSurface, XdgToplevel
-    from pywayland.protocol.linux_dmabuf_unstable_v1 import (
-        ZwpLinuxDmabufV1,
+    from pywayland.protocol.linux_dmabuf_unstable_v1 import (  # noqa: F401
         ZwpLinuxBufferParamsV1,
+        ZwpLinuxDmabufV1,
+    )
+    from pywayland.protocol.wayland import (  # noqa: F401
+        WlBuffer,
+        WlCallback,
+        WlCompositor,
+        WlSurface,
+    )
+    from pywayland.protocol.xdg_shell import (  # noqa: F401
+        XdgSurface,
+        XdgToplevel,
+        XdgWmBase,
     )
 except ImportError as exc:
-    sys.exit(
-        f"pywayland not available: {exc}\n"
-        "Install: pip install pywayland"
-    )
+    sys.exit(f"pywayland not available: {exc}\nInstall: pip install pywayland")
 
 
 # ── Wayland display (direct DMA-BUF submission via pywayland) ────────────────
@@ -265,7 +273,10 @@ class WaylandDisplay:
         params = self._dmabuf.create_params()
         params.add(fd, 0, 0, self.width * 4, 0, 0)
         buf = params.create_immed(
-            self.width, self.height, DRM_FORMAT_ABGR8888, 0,
+            self.width,
+            self.height,
+            DRM_FORMAT_ABGR8888,
+            0,
         )
         params.destroy()
         self._buffer_cache[fd] = buf
@@ -492,7 +503,9 @@ def metadata_dshape(
     return out
 
 
-def canonical_dshape(role: str, shape: list[int]) -> list[tuple[ef_decoder.DimName, int]]:
+def canonical_dshape(
+    role: str, shape: list[int]
+) -> list[tuple[ef_decoder.DimName, int]]:
     """Name each dimension of an Ultralytics output tensor.
 
     An anonymous ``shape=`` leaves the decoder to guess which axis carries
@@ -714,7 +727,10 @@ class FrameCache:
                 chroma_fd = None
                 chroma_offset = None
             tensor = processor.import_image(
-                fd0, width, height, fmt,
+                fd0,
+                width,
+                height,
+                fmt,
                 chroma_fd=chroma_fd,
                 chroma_offset=chroma_offset,
             )
@@ -766,15 +782,19 @@ def main() -> None:
     ap.add_argument("--width", type=int, default=1920, help="Camera width")
     ap.add_argument("--height", type=int, default=1080, help="Camera height")
     ap.add_argument(
-        "--camera-name", default=None,
+        "--camera-name",
+        default=None,
         help="libcamera camera ID",
     )
     ap.add_argument(
-        "--format", default="nv12", choices=["nv12", "yuyv"],
+        "--format",
+        default="nv12",
+        choices=["nv12", "yuyv"],
         help="Camera pixel format (default: nv12)",
     )
     ap.add_argument(
-        "--color-mode", default="class",
+        "--color-mode",
+        default="class",
         choices=["class", "instance", "track"],
         help="Segmentation mask color assignment (default: class)",
     )
@@ -852,7 +872,10 @@ def main() -> None:
         input_fd = model.input_tensor_fd(0)
         try:
             model_input = processor.import_image(
-                input_fd, w, h, ef_image.PixelFormat.PlanarRgb,
+                input_fd,
+                w,
+                h,
+                ef_image.PixelFormat.PlanarRgb,
                 dtype="int8" if iq.is_signed else "uint8",
             )
         finally:
@@ -866,8 +889,11 @@ def main() -> None:
             fd = model.output_tensor_fd(i)
             output_tensors.append(
                 ef_tensor.Tensor.from_fd(
-                    fd, shapes[i],
-                    output_dtype(model.output_info(i).bpp, model.output_quants(i).is_signed),
+                    fd,
+                    shapes[i],
+                    output_dtype(
+                        model.output_info(i).bpp, model.output_quants(i).is_signed
+                    ),
                 )
             )
 
@@ -885,9 +911,7 @@ def main() -> None:
             sys.exit("No cameras found")
 
         if args.camera_name:
-            cam_obj = next(
-                (c for c in cameras if c.id == args.camera_name), None
-            )
+            cam_obj = next((c for c in cameras if c.id == args.camera_name), None)
             if cam_obj is None:
                 print(f"Camera '{args.camera_name}' not found. Available:")
                 for c in cameras:
@@ -962,7 +986,9 @@ def main() -> None:
             cam_obj.queue_request(r)
 
         processor.convert(
-            src, model_input, letterbox=pad_color,
+            src,
+            model_input,
+            letterbox=pad_color,
         )
         model.run()
         decoder.draw_onto(
@@ -982,8 +1008,13 @@ def main() -> None:
         t_start = time.monotonic()
 
         # Per-stage timing accumulators (in seconds)
-        t_pull = 0.0; t_import = 0.0; t_convert = 0.0
-        t_npu = 0.0; t_draw = 0.0; t_display = 0.0; t_sync = 0.0
+        t_pull = 0.0
+        t_import = 0.0
+        t_convert = 0.0
+        t_npu = 0.0
+        t_draw = 0.0
+        t_display = 0.0
+        t_sync = 0.0
         total_dropped = 0
 
         while running and display.is_open():
@@ -1010,11 +1041,13 @@ def main() -> None:
             t2 = time.monotonic()
 
             processor.convert(
-                src, model_input, letterbox=pad_color,
+                src,
+                model_input,
+                letterbox=pad_color,
             )
             t3 = time.monotonic()
 
-            timing = model.run()
+            model.run()
             t4 = time.monotonic()
 
             # An int8 *segmentation* model needs edgefirst-image and
@@ -1050,17 +1083,18 @@ def main() -> None:
                 n = 30  # frames in this reporting window
                 print(
                     f"\r  FPS: {fps:5.1f}  "
-                    f"pull:{t_pull/n*1000:5.1f} "
-                    f"imp:{t_import/n*1000:4.1f} "
-                    f"cvt:{t_convert/n*1000:4.1f} "
-                    f"npu:{t_npu/n*1000:5.1f} "
-                    f"draw:{t_draw/n*1000:5.1f} "
-                    f"disp:{t_display/n*1000:4.1f} "
-                    f"tot:{t_sync/n*1000:5.1f}ms "
+                    f"pull:{t_pull / n * 1000:5.1f} "
+                    f"imp:{t_import / n * 1000:4.1f} "
+                    f"cvt:{t_convert / n * 1000:4.1f} "
+                    f"npu:{t_npu / n * 1000:5.1f} "
+                    f"draw:{t_draw / n * 1000:5.1f} "
+                    f"disp:{t_display / n * 1000:4.1f} "
+                    f"tot:{t_sync / n * 1000:5.1f}ms "
                     f"drop:{total_dropped} "
                     f"det:{len(scores)} "
                     f"f:{frame_count}",
-                    end="", flush=True,
+                    end="",
+                    flush=True,
                 )
                 t_pull = t_import = t_convert = 0.0
                 t_npu = t_draw = t_display = t_sync = 0.0
@@ -1083,19 +1117,86 @@ def main() -> None:
 # ── COCO labels (fallback) ────────────────────────────────────────────────────
 
 COCO_LABELS = [
-    "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train",
-    "truck", "boat", "traffic light", "fire hydrant", "stop sign",
-    "parking meter", "bench", "bird", "cat", "dog", "horse", "sheep",
-    "cow", "elephant", "bear", "zebra", "giraffe", "backpack", "umbrella",
-    "handbag", "tie", "suitcase", "frisbee", "skis", "snowboard",
-    "sports ball", "kite", "baseball bat", "baseball glove", "skateboard",
-    "surfboard", "tennis racket", "bottle", "wine glass", "cup", "fork",
-    "knife", "spoon", "bowl", "banana", "apple", "sandwich", "orange",
-    "broccoli", "carrot", "hot dog", "pizza", "donut", "cake", "chair",
-    "couch", "potted plant", "bed", "dining table", "toilet", "tv",
-    "laptop", "mouse", "remote", "keyboard", "cell phone", "microwave",
-    "oven", "toaster", "sink", "refrigerator", "book", "clock", "vase",
-    "scissors", "teddy bear", "hair drier", "toothbrush",
+    "person",
+    "bicycle",
+    "car",
+    "motorcycle",
+    "airplane",
+    "bus",
+    "train",
+    "truck",
+    "boat",
+    "traffic light",
+    "fire hydrant",
+    "stop sign",
+    "parking meter",
+    "bench",
+    "bird",
+    "cat",
+    "dog",
+    "horse",
+    "sheep",
+    "cow",
+    "elephant",
+    "bear",
+    "zebra",
+    "giraffe",
+    "backpack",
+    "umbrella",
+    "handbag",
+    "tie",
+    "suitcase",
+    "frisbee",
+    "skis",
+    "snowboard",
+    "sports ball",
+    "kite",
+    "baseball bat",
+    "baseball glove",
+    "skateboard",
+    "surfboard",
+    "tennis racket",
+    "bottle",
+    "wine glass",
+    "cup",
+    "fork",
+    "knife",
+    "spoon",
+    "bowl",
+    "banana",
+    "apple",
+    "sandwich",
+    "orange",
+    "broccoli",
+    "carrot",
+    "hot dog",
+    "pizza",
+    "donut",
+    "cake",
+    "chair",
+    "couch",
+    "potted plant",
+    "bed",
+    "dining table",
+    "toilet",
+    "tv",
+    "laptop",
+    "mouse",
+    "remote",
+    "keyboard",
+    "cell phone",
+    "microwave",
+    "oven",
+    "toaster",
+    "sink",
+    "refrigerator",
+    "book",
+    "clock",
+    "vase",
+    "scissors",
+    "teddy bear",
+    "hair drier",
+    "toothbrush",
 ]
 
 

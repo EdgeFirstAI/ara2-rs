@@ -27,14 +27,26 @@ Requires [EdgeFirst Yocto Images](https://github.com/EdgeFirstAI/yocto) with ARA
 ### Integration with the EdgeFirst HAL
 
 The EdgeFirst HAL ships as one crate per library rather than a single
-`edgefirst-hal` crate. The `ara2` crate depends on four of them:
+`edgefirst-hal` crate. The `ara2` crate depends on two of them:
 
 | Crate | Used for |
 |-------|----------|
 | [`edgefirst-tensor`](https://crates.io/crates/edgefirst-tensor) | Tensor memory management — DMA-backed tensors for zero-copy NPU transfers |
 | [`edgefirst-image`](https://crates.io/crates/edgefirst-image) | Image preprocessing — hardware-accelerated format conversion, scaling, and overlay rendering |
+
+Post-processing and image loading are the application's concern, not the
+client library's, so the examples take them as their own dependencies:
+
+| Crate | Used for |
+|-------|----------|
 | [`edgefirst-decoder`](https://crates.io/crates/edgefirst-decoder) | Post-processing — YOLO decoding, NMS, segmentation masks |
 | [`edgefirst-codec`](https://crates.io/crates/edgefirst-codec) | JPEG/PNG decode straight into a pre-allocated tensor |
+
+Two off-by-default features opt back into the HAL types they contribute to
+`ara2`'s own API: `decoder` types `OutputSpec::dshape` as
+`edgefirst_decoder::configs::DimName` pairs rather than the metadata's raw
+axis names, and `codec` adds `Error::Codec` with its
+`From<edgefirst_codec::CodecError>` conversion.
 
 ### Python Bindings
 
@@ -172,7 +184,7 @@ physical buffers with no CPU copies in the data path.
 
 | Example | Description |
 |---------|-------------|
-| [`yolov8.rs`](examples/yolov8.rs) | Rust — YOLOv8 detection + segmentation with letterbox preprocessing and 3-step mask pipeline |
+| [`yolov8.rs`](examples/yolov8.rs) | Rust — YOLOv8 detection + segmentation with letterbox preprocessing and 3-step mask pipeline (needs `--features decoder`) |
 | [`yolov8.py`](examples/yolov8.py) | Python — Same 3-step pipeline via the `edgefirst.*` and `edgefirst-ara2` Python packages |
 | [`yolov8_live.rs`](examples/yolov8_live.rs) | Rust — Live camera inference: libcamera capture → NPU → Wayland display (needs `--features camera`) |
 | [`yolov8_live.py`](examples/yolov8_live.py) | Python — Same live pipeline via the libcamera Python bindings and pywayland |
@@ -222,8 +234,9 @@ version.
 Cross-compile from your development machine and deploy to the target:
 
 ```bash
-# Build
-cargo zigbuild --release --example yolov8 --target aarch64-unknown-linux-gnu
+# Build (`decoder` is off by default; the example needs the HAL decoder types)
+cargo zigbuild --release --features decoder --example yolov8 \
+    --target aarch64-unknown-linux-gnu
 
 # Deploy and run
 scp target/aarch64-unknown-linux-gnu/release/examples/yolov8 <target>:/root/yolov8-ara2
@@ -237,8 +250,8 @@ Create a virtual environment on the target and install the packages from PyPI:
 ```bash
 # On target
 python3 -m venv ~/venv
-~/venv/bin/pip install edgefirst-ara2 'edgefirst-codec>=0.31' \
-    'edgefirst-decoder>=0.31' 'edgefirst-image>=0.31'
+~/venv/bin/pip install edgefirst-ara2 'edgefirst-codec>=0.32' \
+    'edgefirst-decoder>=0.32' 'edgefirst-image>=0.32'
 ```
 
 Copy the script and run:
