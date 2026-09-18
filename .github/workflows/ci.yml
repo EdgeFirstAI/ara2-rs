@@ -9,7 +9,7 @@
 # Action Versions (hash-pinned):
 # - actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 (v7.0.1)
 # - dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d (v4.0.3)
-# - EdgeFirstAI/.github@f86411f9b2c7a2dbd12f65f1d9f233b08084e142 (main, 2026-09-18)
+# - EdgeFirstAI/.github@07b46d78c7ff5034216044a7fc86ec3a37b8cabd (main, 2026-09-18)
 
 name: CI
 
@@ -83,7 +83,7 @@ jobs:
   quick:
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    uses: EdgeFirstAI/.github/.github/workflows/rust-quick.yml@f86411f9b2c7a2dbd12f65f1d9f233b08084e142  # main (2026-09-18)
+    uses: EdgeFirstAI/.github/.github/workflows/rust-quick.yml@07b46d78c7ff5034216044a7fc86ec3a37b8cabd  # main (2026-09-18)
     # No `clippy-args` override. `codec` and `decoder` are off by default, so
     # the stock `--workspace --all-targets` pass covers the default build; the
     # cfg-gated arms and the `yolov8` example belong to the feature-enabled
@@ -100,11 +100,11 @@ jobs:
       # itself has to be fixed for the file to mean anything.
       ruff-version: 0.16.7
       # pyo3 refuses to configure a cross build without an interpreter for the
-      # target, and the shared cross-clippy lane lints the whole workspace, so
-      # ara2-py reaches it and fails the lane. Naming the version is enough;
-      # nothing is executed. An abi3 feature would also satisfy pyo3, but the
-      # wheel's ABI is a packaging decision and must not be made by a linter.
-      pre-command: echo "PYO3_CROSS_PYTHON_VERSION=3.11" >> "$GITHUB_ENV"
+      # target, and the cross-clippy lane lints the whole workspace, so ara2-py
+      # reaches it. Naming the version is enough; nothing is executed. An abi3
+      # feature would also satisfy pyo3, but the wheel's ABI is a packaging
+      # decision and must not be made by a linter.
+      env: PYO3_CROSS_PYTHON_VERSION=3.11
       # Every other test needs an ARA-2 NPU and the ara2-proxy service, which
       # no hosted runner has. They are not #[ignore]d because on a target they
       # are the point of the suite, so the filter lives here.
@@ -114,7 +114,7 @@ jobs:
   full:
     needs: changes
     if: needs.changes.outputs.full == 'true' || needs.changes.outputs.hardware == 'true'
-    uses: EdgeFirstAI/.github/.github/workflows/rust-full.yml@f86411f9b2c7a2dbd12f65f1d9f233b08084e142  # main (2026-09-18)
+    uses: EdgeFirstAI/.github/.github/workflows/rust-full.yml@07b46d78c7ff5034216044a7fc86ec3a37b8cabd  # main (2026-09-18)
     with:
       # `lanes: host` and no `boards` input: ARA-2 is a PCIe card in an NXP
       # i.MX host and the fleet has no such runner, so there is no board lane
@@ -126,12 +126,13 @@ jobs:
       # Windows build, so those lanes would test nothing.
       skip-macos: true
       skip-windows: true
-      # No sonar-project.properties in this repository; nothing to decorate.
-      sonar: false
-      runner-class-linux: hosted
-      runner-class-linux-arm: hosted
+      # The runner selection policy puts Full on the larger class: it runs
+      # once per labelled PR rather than per push, so the spend is bounded by
+      # review cadence. Quick, which does run per push, stays free.
+      runner-class-linux: larger
+      runner-class-linux-arm: larger
       nextest-args: --workspace --locked -E 'test(dvm_metadata)'
-      pre-command: echo "PYO3_CROSS_PYTHON_VERSION=3.11" >> "$GITHUB_ENV"
+      env: PYO3_CROSS_PYTHON_VERSION=3.11
       # Nightly only. This is what reaches the cfg-gated code: the powerset
       # checks `--no-default-features` (the `String` dshape and an `Error` with
       # no `Codec` arm), each feature alone, and the two together. `camera`

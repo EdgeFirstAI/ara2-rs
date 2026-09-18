@@ -6,7 +6,7 @@
 # Design: https://au-zone.atlassian.net/wiki/spaces/EAM/pages/2750906369/CICD+Pipelines
 #
 # Action Versions (hash-pinned):
-# - EdgeFirstAI/.github@f86411f9b2c7a2dbd12f65f1d9f233b08084e142 (main, 2026-09-18)
+# - EdgeFirstAI/.github@07b46d78c7ff5034216044a7fc86ec3a37b8cabd (main, 2026-09-18)
 
 name: Nightly
 
@@ -23,7 +23,7 @@ on:
 
 jobs:
   changed:
-    uses: EdgeFirstAI/.github/.github/workflows/nightly-gate.yml@f86411f9b2c7a2dbd12f65f1d9f233b08084e142  # main (2026-09-18)
+    uses: EdgeFirstAI/.github/.github/workflows/nightly-gate.yml@07b46d78c7ff5034216044a7fc86ec3a37b8cabd  # main (2026-09-18)
     with:
       # `inputs` is null on a schedule trigger, so the fallback is required;
       # without it the expression yields an empty string and the gate's
@@ -36,21 +36,23 @@ jobs:
   # unchanged main. It reads Cargo.lock without building, on a free standard
   # runner, so running it every night costs nothing.
   advisories:
-    uses: EdgeFirstAI/.github/.github/workflows/advisories.yml@f86411f9b2c7a2dbd12f65f1d9f233b08084e142  # main (2026-09-18)
+    uses: EdgeFirstAI/.github/.github/workflows/advisories.yml@07b46d78c7ff5034216044a7fc86ec3a37b8cabd  # main (2026-09-18)
 
   nightly:
     needs: changed
     if: needs.changed.outputs.run == 'true'
-    uses: EdgeFirstAI/.github/.github/workflows/rust-full.yml@f86411f9b2c7a2dbd12f65f1d9f233b08084e142  # main (2026-09-18)
+    uses: EdgeFirstAI/.github/.github/workflows/rust-full.yml@07b46d78c7ff5034216044a7fc86ec3a37b8cabd  # main (2026-09-18)
     with:
       lanes: host
       nightly: true
       skip-macos: true
       skip-windows: true
-      sonar: false
-      runner-class-linux: hosted
-      runner-class-linux-arm: hosted
+      # The runner selection policy puts Nightly on the larger class: it runs
+      # once per labelled PR rather than per push, so the spend is bounded by
+      # review cadence. Quick, which does run per push, stays free.
+      runner-class-linux: larger
+      runner-class-linux-arm: larger
       nextest-args: --workspace --locked -E 'test(dvm_metadata)'
-      pre-command: echo "PYO3_CROSS_PYTHON_VERSION=3.11" >> "$GITHUB_ENV"
+      env: PYO3_CROSS_PYTHON_VERSION=3.11
       hack-args: --feature-powerset --depth 2 --exclude-features camera
     secrets: inherit

@@ -21,11 +21,7 @@
 # Design: https://au-zone.atlassian.net/wiki/spaces/EAM/pages/2750906369/CICD+Pipelines
 #
 # Action Versions (hash-pinned):
-# - actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 (v7.0.1)
-# - actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 (v6.2.0)
-# - actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a (v7.0.1)
-# - dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 (stable)
-# - EdgeFirstAI/.github@f86411f9b2c7a2dbd12f65f1d9f233b08084e142 (main, 2026-09-18)
+# - EdgeFirstAI/.github@07b46d78c7ff5034216044a7fc86ec3a37b8cabd (main, 2026-09-18)
 
 name: Release Build
 
@@ -42,97 +38,46 @@ permissions:
   contents: read
 
 jobs:
-  # Version consistency against the branch name, the CHANGELOG section
-  # publish.yml will turn into release notes, and the full scancode SBOM.
-  # Fails the release PR rather than the tag.
+  # Version consistency against the branch name -- including the
+  # [workspace.dependencies] entries for ara2 and ara2-sys, which carry the
+  # release version a second time -- the CHANGELOG section publish.yml turns
+  # into release notes, the full SBOM, and the .crate files crates.io receives.
   verify:
-    uses: EdgeFirstAI/.github/.github/workflows/release-rust.yml@f86411f9b2c7a2dbd12f65f1d9f233b08084e142  # main (2026-09-18)
+    uses: EdgeFirstAI/.github/.github/workflows/release-rust.yml@07b46d78c7ff5034216044a7fc86ec3a37b8cabd  # main (2026-09-18)
     with:
       sbom: true
       # The dependency graph differs by target: the ARA-2 client links G2D and
       # DMA-BUF only on aarch64, so a host-only scan under-reports what ships.
       sbom-targets: aarch64-unknown-linux-gnu
+      # Dependency order. publish.yml reads the list this records and refuses
+      # to publish a different one, so the two cannot drift. ara2-py is
+      # `publish = false`; it ships to PyPI as a wheel, built below.
+      crate-packages: ara2-sys ara2
     secrets: inherit
 
-  # The `.crate` files crates.io will receive. `cargo package --locked` is the
-  # step that catches an excluded file, a path dependency without a version or
-  # a dirty tree -- the failures that would otherwise surface inside
-  # `cargo publish` on the tag. publish.yml then runs `cargo publish
-  # --no-verify`, so this is the only place that packaging is exercised.
-  package:
-    needs: verify
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-
-      - uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7  # stable
-        with:
-          toolchain: stable
-
-      # Dependency order. `ara2` carries a path+version dependency on
-      # `ara2-sys`, so packaging it requires ara2-sys to be packageable first.
-      - name: cargo package
-        run: |
-          set -euo pipefail
-          cargo package --locked -p ara2-sys -p ara2
-          ls -la target/package/*.crate
-
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
-        with:
-          name: crates
-          path: target/package/*.crate
-          if-no-files-found: error
-          # The release-PR-to-tag gap is human-paced and publish.yml fails on
-          # an expired artifact rather than rebuilding.
-          retention-days: 30
-
-  # Wheels for the edgefirst-ara2 package. Linux only: ARA-2 is a PCIe card in
-  # an NXP i.MX host, so there is no macOS or Windows target to build for.
+  # manylinux2014 wheels for edgefirst-ara2, x86_64 and aarch64, with the sdist
+  # on x86_64 only -- which is the shared workflow's default matrix, so only the
+  # manifest needs naming. Linux only: ARA-2 is a PCIe card in an NXP i.MX host,
+  # so there is no macOS or Windows target.
   wheels:
     needs: verify
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 45
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false            # one broken target must not hide the rest
-      matrix:
-        include:
-          - name: x86_64-linux
-            runner: ubuntu-24.04
-            maturin-args: --sdist --zig --compatibility manylinux2014
-          - name: aarch64-linux
-            runner: ubuntu-24.04-arm
-            maturin-args: --zig --compatibility manylinux2014
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-
-      - uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7  # stable
-        with:
-          toolchain: stable
-
-      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
-        with:
-          python-version: '3.11'
-
-      - name: Install maturin
-        run: pip install 'maturin[patchelf,zig]'
-
-      - name: Build wheels
-        env:
-          MATURIN_ARGS: ${{ matrix.maturin-args }}
-        run: |
-          set -euo pipefail
-          # shellcheck disable=SC2086  # MATURIN_ARGS is an argument list and must split
-          maturin build --release --locked -m crates/ara2-py/Cargo.toml $MATURIN_ARGS
-          ls -la target/wheels/
-
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
-        with:
-          name: wheels-${{ matrix.name }}
-          path: target/wheels/*
-          if-no-files-found: error
-          retention-days: 30
+    uses: EdgeFirstAI/.github/.github/workflows/release-wheels.yml@07b46d78c7ff5034216044a7fc86ec3a37b8cabd  # main (2026-09-18)
+    with:
+      manifest: crates/ara2-py/Cargo.toml
+      # maturin infers abi3 from requires-python, so one wheel serves 3.11+.
+      # If that inference ever stops holding the build silently produces
+      # version-specific wheels and PyPI gains gaps no one notices until an
+      # install fails. Assert the tag instead of trusting it: a wheel that
+      # fails here never reaches the artifact store.
+      post-command: |
+        shopt -s nullglob
+        found=0
+        for whl in target/wheels/*.whl; do
+          found=1
+          case "$(basename "$whl")" in
+            *-cp311-abi3-*) echo "ok  $(basename "$whl")" ;;
+            *) echo "::error::$(basename "$whl") is not a cp311-abi3 wheel"; exit 1 ;;
+          esac
+        done
+        [[ "$found" -eq 1 ]] || { echo "::error::no wheels were built"; exit 1; }
+    secrets: inherit
