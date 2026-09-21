@@ -41,7 +41,7 @@ impl Drop for SessionInner {
 /// ```no_run
 /// use ara2::Session;
 ///
-/// let session = Session::create_via_unix_socket("/var/run/ara2.sock")?;
+/// let session = Session::connect()?;
 /// let endpoints = session.list_endpoints()?;
 /// # Ok::<(), ara2::Error>(())
 /// ```
@@ -59,10 +59,23 @@ impl std::fmt::Debug for Session {
 }
 
 impl Session {
+    /// Connect to the ARA-2 proxy over its UNIX socket, using the
+    /// `ARA2_SOCKET` environment variable if set, otherwise
+    /// [`crate::DEFAULT_SOCKET`].
+    ///
+    /// This is the recommended way to connect: it lets a deployment
+    /// override the socket path (e.g. a proxy configured to listen
+    /// somewhere other than NXP's default) without a recompile. Use
+    /// [`Session::create_via_unix_socket`] directly when the path must be
+    /// hardcoded or is chosen some other way.
+    pub fn connect() -> Result<Self, Error> {
+        Self::create_via_unix_socket(&crate::socket_path())
+    }
+
     /// Connect to the ARA-2 proxy via a UNIX socket.
     ///
     /// # Arguments
-    /// * `socket_path` - Path to the UNIX socket (e.g., `/var/run/ara2.sock`)
+    /// * `socket_path` - Path to the UNIX socket (e.g., `/var/run/proxy.sock`)
     pub fn create_via_unix_socket(socket_path: &str) -> Result<Self, Error> {
         let lib = crate::open_library()?;
         let mut ptr: *mut dv_session = std::ptr::null_mut();
@@ -220,8 +233,8 @@ impl Session {
     /// # Example
     ///
     /// ```no_run
-    /// # use ara2::{Session, DEFAULT_SOCKET, DEFAULT_TIMEOUT_MS};
-    /// # let session = Session::create_via_unix_socket(DEFAULT_SOCKET)?;
+    /// # use ara2::{Session, DEFAULT_TIMEOUT_MS};
+    /// # let session = Session::connect()?;
     /// # let endpoints = session.list_endpoints()?;
     /// # let mut model = endpoints[0].load_model_from_file("m.dvm".as_ref())?;
     /// # model.allocate_tensors(None)?;
@@ -281,14 +294,13 @@ mod tests {
 
     #[test]
     fn test_unix_socket_connect() {
-        let session = Session::create_via_unix_socket(crate::DEFAULT_SOCKET)
-            .expect("should connect to ARA-2 proxy");
+        let session = Session::connect().expect("should connect to ARA-2 proxy");
         assert!(matches!(session.socket_type(), SocketType::Unix));
     }
 
     #[test]
     fn test_unix_socket_invalid_path() {
-        let result = Session::create_via_unix_socket("/nonexistent/ara2.sock");
+        let result = Session::create_via_unix_socket("/nonexistent/proxy.sock");
         assert!(result.is_err(), "should fail with invalid socket path");
     }
 

@@ -1,10 +1,21 @@
 /*
  * Copyright (c) 2018-25, Kinara, Inc. All rights reserved.
- * Kinara  Proprietary. This software is owned or controlled by Kinara and may only be used strictly in accordance with the applicable license terms.
+ * Copyright 2025-2026 NXP
+ *
+ * NXP Proprietary. This software is owned or controlled by NXP and may only be
+ * used strictly in accordance with the applicable license terms. By expressly
+ * accepting such terms or by downloading, installing, activating and/or
+ * otherwise using the software, you are agreeing that you have read, and that
+ * you agree to comply with and are bound by, such license terms. If you do not
+ * agree to be bound by the applicable license terms, then you may not retain,
+ * install, activate or otherwise use the software.
+ *
  */
 
 #ifndef __DV_ERR_DEFINES_H__
 #define __DV_ERR_DEFINES_H__
+
+#include <stdint.h>
 
 typedef enum dv_error_category {
   DV_ERROR_CATEGORY_SUCCESS = 0,
@@ -103,6 +114,15 @@ typedef enum dv_status_code {
   DV_HIF_TIMEOUT = 304,
   DV_HIF_POP_FAILED = 305,
   DV_HIF_DEVICE_IN_CONFIG = 306,
+
+  // STANDARD LIB ERRORS
+  DV_ERROR_NULLPTR = 310,         // Null pointer passed to library
+  DV_ERROR_DEST_TOO_SMALL = 311,  // Destination buffer is small
+  DV_ERROR_SRC_TOO_SMALL = 312,   // Source buffer is small
+  DV_ERROR_MEMCPY_FAILED = 313,   // memcpy_s failed
+  DV_ERROR_MEMSET_FAILED = 314,   // memset_s failed
+  DV_ERROR_STRNCPY_FAILED = 315,  // strncpy_s failed
+
   DV_ERROR_CATEGORY_SW_CLIENT_FATAL_END = 399,
 
   // DV_ERROR_CATEGORY_SW_SERVER_FATAL
@@ -132,8 +152,9 @@ typedef enum dv_status_code {
   DV_ENDPOINT_NOT_REACHABLE = 504,          // Interface gone bad or device exception occurred (Refer Fault
                                             // Handling document for further details)
   DV_ENDPOINT_MODEL_BINDING_FAILURE = 505,  // Model binding not present in the  device.
-  DV_TENSOR_FREE_ERROR = 506,               // Failed to free the allocated tensors
+  DV_ENDPOINT_DYN_POWER_SET_FAILURE = 506,  // Unable to set dynamic power switch idle time for device
 
+  DV_TENSOR_FREE_ERROR = 519,     // Failed to free the allocated tensors
   DV_MODEL_LOAD_FAILURE = 520,    // Model load request failed on all endpoints in list due to one of
                                   // the following
                                   //  1. Model write to endpoints failed
@@ -145,7 +166,7 @@ typedef enum dv_status_code {
                                   //  6. No endpoints active in endpoint list to load model
   DV_MODEL_RELOAD_FAILURE = 521,  // Device in faulty state on trying to reload model from cache
   DV_MODEL_UNLOAD_FAILURE = 522,
-  DV_PARTIAL_SUCCESS = 523,                 // failed to load/unload model on some of the given devices
+  DV_PARTIAL_SUCCESS = 523,                 // Denotes partial completion of a request. For more details, refer to the documentation of the function that returns this status code.
   DV_TENSOR_WRITE_FAILURE = 541,            // Failed to write buffer to endpoint (Internal to Kinara)
   DV_TENSOR_READ_FAILURE = 542,             // Failed to read buffer from endpoint  (Internal to Kinara)
   DV_TENSOR_CREATE_FAILURE = 543,           // Failed to create tensor
@@ -164,6 +185,7 @@ typedef enum dv_status_code {
   DV_INFER_ABORTED = 566,                   // Inference aborted before submitting to device
   DV_INFER_SUBMIT_FAILURE = 567,            // Infer request submission to device failed
   DV_INFER_TIME_OUT_THERMAL_RUNAWAY = 568,  // Inference request failed due to increase in temperature
+  DV_INFER_TOKEN_OVERFLOW = 569,            // Inference request failed due to token overflow
 
   DV_ERROR_CATEGORY_HW_FATAL_END = 599,
 
@@ -183,5 +205,27 @@ typedef enum dv_status_code {
   DV_MMIO_READ_FAIL = 900,
   DV_MMIO_WRITE_FAIL = 901,
 } dv_status_code_t;
+
+typedef enum dv_type_code {
+  DV_TYPE_CLIENT_LIB = 0,
+  DV_TYPE_PROXY = 1,
+  DV_TYPE_DEVICE = 2,
+  DV_TYPE_DEVICE_MEMORY = 3,
+} dv_component_type_t;
+
+typedef enum dv_criticality_code {
+  DV_SEVERITY_OK = 0,         // Fully functional
+  DV_SEVERITY_RETRYABLE = 1,  // Temporary issue, retry possible
+  DV_SEVERITY_DEGRADED = 2,   // Functional but not as expected
+  DV_SEVERITY_FATAL = 3,      // Non-recoverable, abort/escalate
+} dv_error_severity_t;
+
+typedef uint32_t dv_sub_code_t;
+typedef struct dv_status {
+  dv_status_code_t main_code;   //< bits 0-31: Primary error code (backward compatible)
+  dv_sub_code_t sub_code;    //< bits 32-47: Secondary error details
+  dv_component_type_t type;         //< bits 48-55: Error category
+  dv_error_severity_t criticality;  //< bits 56-63: Severity level (0=trace, 4=error, 5=critical)
+} dv_status_t;
 
 #endif  // __DV_ERR_DEFINES_H__

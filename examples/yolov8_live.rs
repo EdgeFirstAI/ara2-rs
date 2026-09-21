@@ -502,7 +502,7 @@ struct Args {
     camera_name: Option<String>,
 
     /// UNIX socket path for the ARA-2 proxy service.
-    #[arg(long, default_value_t = ara2::DEFAULT_SOCKET.to_string())]
+    #[arg(long, default_value_t = ara2::socket_path())]
     socket: String,
 
     /// Camera pixel format.

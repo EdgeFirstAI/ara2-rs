@@ -32,8 +32,7 @@ fn main() {
     }
 
     // ── Connect ─────────────────────────────────────────────────────
-    let session = Session::create_via_unix_socket(ara2::DEFAULT_SOCKET)
-        .expect("Failed to connect to ARA-2 proxy");
+    let session = Session::connect().expect("Failed to connect to ARA-2 proxy");
     println!("Connected to ARA-2 proxy");
 
     let endpoints = session.list_endpoints().expect("Failed to list endpoints");

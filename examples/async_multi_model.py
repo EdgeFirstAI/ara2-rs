@@ -91,7 +91,7 @@ def main() -> None:
     print()
 
     # ── Connect ──────────────────────────────────────────────────────
-    session = ara2.Session.create_via_unix_socket(ara2.DEFAULT_SOCKET)
+    session = ara2.Session.connect()
     print(f"Connected via {session.socket_type} socket")
 
     endpoints = session.list_endpoints()

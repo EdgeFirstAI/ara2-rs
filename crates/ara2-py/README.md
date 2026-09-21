@@ -44,7 +44,7 @@ YOLO post-processing when you need them.
 - Python 3.11 or higher
 - Rust stable toolchain (edition 2024)
 - maturin (`pip install maturin`)
-- ARA-2 client library (`libaraclient.so.1`)
+- ARA-2 client library (`libaraclient`, see `ara2::LIBRARY_NAMES` for the names tried)
 
 ### Development Install
 
@@ -59,7 +59,7 @@ maturin develop --release --features abi3
 import edgefirst_ara2
 
 # Connect to ARA-2 proxy
-session = edgefirst_ara2.Session.create_via_unix_socket("/var/run/ara2.sock")
+session = edgefirst_ara2.Session.create_via_unix_socket("/var/run/proxy.sock")
 
 # Get version information
 versions = session.versions()
@@ -82,7 +82,7 @@ for endpoint in endpoints:
 import numpy as np
 import edgefirst_ara2
 
-session = edgefirst_ara2.Session.create_via_unix_socket("/var/run/ara2.sock")
+session = edgefirst_ara2.Session.create_via_unix_socket("/var/run/proxy.sock")
 endpoints = session.list_endpoints()
 model = endpoints[0].load_model("model.dvm")
 
@@ -344,7 +344,7 @@ Pending asynchronous inference request, created by `Model.submit()`.
 
 ```
 Ara2Error (RuntimeError)
- +-- LibraryError       - libaraclient.so loading failures
+ +-- LibraryError       - libaraclient loading failures
  +-- HardwareError      - NPU faults, endpoint errors
  +-- ProxyError         - Proxy connection failures
  +-- ModelError         - Model load/inference failures
@@ -369,7 +369,7 @@ The bindings use PyO3's stable ABI (`abi3-py311`):
 
 ## Troubleshooting
 
-### "libaraclient.so.1 not found"
+### "libaraclient not found" (or a specific `libaraclient_*.so` variant)
 
 ```bash
 export LD_LIBRARY_PATH=/path/to/ara2/lib:$LD_LIBRARY_PATH

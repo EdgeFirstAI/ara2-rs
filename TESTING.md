@@ -28,11 +28,11 @@ DVM metadata tests can run on any machine.
    ```
 3. **Proxy socket** available:
    ```bash
-   ls -la /var/run/ara2.sock
+   ls -la /var/run/proxy.sock
    ```
-4. **Client library** installed:
+4. **Client library** installed (one of `ara2::LIBRARY_NAMES`):
    ```bash
-   ls /usr/lib/libaraclient.so.1
+   ls /usr/lib/libaraclient_aarch64.so
    ```
 
 ## Running Tests
@@ -283,7 +283,7 @@ systemctl status dvproxy # other platforms
 journalctl -u ara2 --no-pager -n 50
 
 # Check socket
-ls -la /var/run/ara2.sock
+ls -la /var/run/proxy.sock
 ```
 
 ### Common error codes

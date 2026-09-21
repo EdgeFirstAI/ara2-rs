@@ -798,7 +798,7 @@ def main() -> None:
         choices=["class", "instance", "track"],
         help="Segmentation mask color assignment (default: class)",
     )
-    ap.add_argument("--socket", default=ara2.DEFAULT_SOCKET)
+    ap.add_argument("--socket", default=ara2.socket_path())
     args = ap.parse_args()
 
     cam_w, cam_h = args.width, args.height

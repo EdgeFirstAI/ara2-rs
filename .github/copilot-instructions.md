@@ -4,7 +4,9 @@
 
 Rust client library for the ARA-2 neural network accelerator (Kinara hardware).
 Communicates with NPU devices via the `ara2-proxy` system service through FFI
-bindings to `libaraclient.so.1`.
+bindings to `libaraclient`, dlopen'd by trying each name in
+`ara2::LIBRARY_NAMES` (NXP has shipped it as `libaraclient_aarch64.so`,
+`libaraclient_x86_64.so`, and `libaraclient.so.1` across SDK drops).
 
 ### Workspace Structure
 
@@ -34,7 +36,7 @@ This enables Python bindings and cross-thread usage without lifetime issues.
 ### Prerequisites
 
 - Rust **stable** toolchain (edition 2024)
-- For on-target: `libaraclient.so.1` (Kinara ARA-2 SDK)
+- For on-target: `libaraclient` (Kinara ARA-2 SDK, see `ara2::LIBRARY_NAMES` for the names tried)
 - For Python: `maturin`, Python 3.11+
 
 ### Native Build
@@ -85,7 +87,7 @@ maturin build --release --features pyo3/abi3-py311
 
 ### Runtime (on-target)
 
-- `libaraclient.so.1` — Kinara client library. Must be on `LD_LIBRARY_PATH` or in system lib dirs.
+- `libaraclient` — Kinara client library, under one of `ara2::LIBRARY_NAMES`. Must be on `LD_LIBRARY_PATH` or in system lib dirs.
 - `ara2-proxy` — System service providing NPU access. Must be running.
 
 ### Crate Dependencies
@@ -96,7 +98,7 @@ maturin build --release --features pyo3/abi3-py311
 | `edgefirst-image` | library | Hardware-accelerated image conversion and overlay rendering |
 | `edgefirst-decoder` | examples, `decoder` feature | YOLO/ModelPack output decoding, NMS, segmentation masks |
 | `edgefirst-codec` | examples, benches, `codec` feature | JPEG/PNG decode into a pre-allocated tensor |
-| `libloading` | library | Dynamic loading of libaraclient.so.1 |
+| `libloading` | library | Dynamic loading of libaraclient (name varies by SDK drop, see `ara2::LIBRARY_NAMES`) |
 | `ndarray` | N-dimensional array operations for tensor data |
 | `serde` / `serde_json` | DVM metadata parsing |
 | `zip` | Reading embedded metadata from DVM files |
@@ -107,10 +109,10 @@ maturin build --release --features pyo3/abi3-py311
 
 All tests require an NXP i.MX + ARA-2 PCIe system with:
 
-1. `libaraclient.so.1` installed and accessible
+1. `libaraclient` installed and accessible under one of `ara2::LIBRARY_NAMES`
 2. `ara2-proxy` service running: `systemctl status ara2-proxy`
 3. ARA-2 device visible: `lspci | grep -i kinara`
-4. Proxy socket available: `ls -la /var/run/ara2.sock`
+4. Proxy socket available: `ls -la /var/run/proxy.sock`
 
 ### Running Tests
 
@@ -157,7 +159,7 @@ systemctl status ara2-proxy
 journalctl -u ara2-proxy --no-pager -n 50
 
 # Check socket
-ls -la /var/run/ara2.sock
+ls -la /var/run/proxy.sock
 ```
 
 ### Debug Logging

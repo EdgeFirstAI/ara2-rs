@@ -10,13 +10,20 @@ pub mod types;
 
 use pyo3::prelude::*;
 
+/// Resolves the ARA-2 proxy socket path: the `ARA2_SOCKET` environment
+/// variable if set, otherwise `DEFAULT_SOCKET`.
+#[pyfunction]
+fn socket_path() -> String {
+    ara2::socket_path()
+}
+
 /// EdgeFirst ARA-2 Python Library
 ///
 /// Python bindings for the ARA-2 neural accelerator client library.
 ///
 /// Example:
 ///     >>> import edgefirst_ara2
-///     >>> session = edgefirst_ara2.Session.create_via_unix_socket("/var/run/ara2.sock")
+///     >>> session = edgefirst_ara2.Session.connect()
 ///     >>> endpoints = session.list_endpoints()
 ///     >>> model = endpoints[0].load_model("model.dvm")
 ///     >>> model.allocate_tensors("dma")
@@ -64,6 +71,9 @@ fn init(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(metadata::read_metadata, m)?)?;
     m.add_function(wrap_pyfunction!(metadata::read_labels, m)?)?;
     m.add_function(wrap_pyfunction!(metadata::has_metadata, m)?)?;
+
+    // Session helpers
+    m.add_function(wrap_pyfunction!(socket_path, m)?)?;
 
     Ok(())
 }

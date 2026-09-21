@@ -412,7 +412,7 @@ def main() -> None:
         choices=["class", "instance", "track"],
         help="Segmentation mask color assignment (default: class)",
     )
-    parser.add_argument("--socket", default=ara2.DEFAULT_SOCKET)
+    parser.add_argument("--socket", default=ara2.socket_path())
     args = parser.parse_args()
 
     # Map --color-mode to the edgefirst-image ColorMode enum

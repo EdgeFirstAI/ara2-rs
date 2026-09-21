@@ -14,7 +14,7 @@ use std::{collections::HashMap, net::Ipv4Addr, path::PathBuf, str::FromStr};
 ///
 /// Example:
 ///     >>> import edgefirst_ara2
-///     >>> session = edgefirst_ara2.Session.create_via_unix_socket("/var/run/ara2.sock")
+///     >>> session = edgefirst_ara2.Session.connect()
 ///     >>> versions = session.versions()
 ///     >>> endpoints = session.list_endpoints()
 ///     >>> session.close()
@@ -31,11 +31,29 @@ impl Session {
 
 #[pymethods]
 impl Session {
+    /// Create a session connected to the ARA-2 proxy over its UNIX socket,
+    /// using the `ARA2_SOCKET` environment variable if set, otherwise
+    /// `DEFAULT_SOCKET`.
+    ///
+    /// This is the recommended way to connect. Use
+    /// `create_via_unix_socket` directly when the path must be hardcoded
+    /// or is chosen some other way.
+    ///
+    /// Returns:
+    ///     Session: A new session connected to the proxy
+    ///
+    /// Raises:
+    ///     ProxyError: If the socket does not exist or the proxy is not running
+    #[staticmethod]
+    fn connect() -> PyResult<Self> {
+        Ok(Session(Some(ara2::Session::connect().map_err(to_py_err)?)))
+    }
+
     /// Create a session connected via UNIX domain socket.
     ///
     /// Args:
     ///     socket_path: Path to the UNIX socket (str or os.PathLike,
-    ///                  e.g., "/var/run/ara2.sock")
+    ///                  e.g., "/var/run/proxy.sock")
     ///
     /// Returns:
     ///     Session: A new session connected to the proxy

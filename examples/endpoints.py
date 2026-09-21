@@ -31,7 +31,7 @@ def main() -> None:
     The function performs three steps:
 
     1. **Connect** — creates a ``Session`` via the default UNIX socket
-       (``/var/run/ara2.sock``).
+       (``/var/run/proxy.sock``).
     2. **Versions** — queries the proxy for component version strings
        (proxy, firmware, driver, libaraclient).
     3. **Endpoints** — lists each NPU endpoint with its operational
@@ -46,7 +46,7 @@ def main() -> None:
 
     # ── 1. Connect to the ARA-2 proxy via UNIX socket ────────────────
     try:
-        session = ara2.Session.create_via_unix_socket(ara2.DEFAULT_SOCKET)
+        session = ara2.Session.connect()
         print(f"Connected via {session.socket_type} socket")
     except ara2.ProxyError as e:
         print(f"Failed to connect: {e}")

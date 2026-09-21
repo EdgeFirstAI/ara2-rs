@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (BREAKING)
+
+- **Requires NXP's rt-sdk-ara2 SDK 2.1.1 or later.** `ara2-sys`'s bindings are regenerated against SDK 2.1.1's `dvapi.h`/`dv_status_codes.h`. This fixes silent memory corruption when loading a real model: `dv_model_output_param` grew from 112 to 120 bytes in the new SDK (an appended `has_nms_parent` field), and the stale struct size in the old bindings meant pointer arithmetic over the output-param array (`(*model).output_param.add(idx)`) landed at the wrong address for every output index beyond 0 — reading garbage that could reach a `Vec` capacity and panic (`capacity overflow`), or silently misread tensor shape/size fields. Any model with more than one output was affected; index 0 happened to work because a stride error contributes nothing at offset 0. Also renamed to track upstream: `dv_endpoint_stats` -> `dv_endpoint_statistics`.
+- **`DEFAULT_SOCKET` changed from `/var/run/ara2.sock` to `/var/run/proxy.sock`**, matching `interface_socket_file` in NXP's rt-sdk-ara2 `proxy_config.yaml`. The proxy service itself is `rt-sdk-ara2.service` on EdgeFirst Yocto images now, not `ara2.service`/`dvproxy.service`.
+- **The library loaded internally is no longer a single hardcoded name.** NXP has renamed `libaraclient` in every SDK drop so far -- `libaraclient.so.1`, then `libaraclient_aarch64.so` in SDK 2.1.1 -- and there is no soname to rely on. `ara2::open_library()` now tries a short list of candidates, `ara2::LIBRARY_NAMES`: the architecture-suffixed name for the build target (`libaraclient_aarch64.so` on `aarch64`, `libaraclient_x86_64.so` on `x86_64`), then the unsuffixed `libaraclient.so`, then the soname-versioned `libaraclient.so.1`. A build for either architecture now finds the library under any of NXP's packaging schemes without a compile-time choice.
+
+### Added
+
+- `Session::connect()` (Rust and Python) resolves the proxy socket via the `ARA2_SOCKET` environment variable, falling back to `DEFAULT_SOCKET`, so a deployment can point at a non-default proxy socket without a recompile. `ara2::socket_path()` / `ara2.socket_path()` expose the same resolution for callers that need the path as a string (e.g. a CLI flag's default). All examples and the test/bench helpers now use `Session::connect()` in place of `Session::create_via_unix_socket(DEFAULT_SOCKET)`.
+
 ### Changed
 
 - The release build's `wheels` job grants `id-token: write` and `attestations: write`, so the wheels carry build provenance once the shared workflow attests them. Provenance is generated where an artifact was built rather than where it is later uploaded from, because provenance generated at the download describes the download. A reusable workflow cannot grant itself what the caller has not, so the permissions are granted here — ahead of the revision that needs them, where they are inert, rather than in the same change and risking the order.

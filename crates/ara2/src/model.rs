@@ -67,10 +67,10 @@ pub const DEFAULT_TIMEOUT_MS: i32 = 1000;
 /// # Example
 ///
 /// ```no_run
-/// use ara2::{Session, DEFAULT_SOCKET, DEFAULT_TIMEOUT_MS};
+/// use ara2::{Session, DEFAULT_TIMEOUT_MS};
 /// use edgefirst_tensor::TensorMemory;
 ///
-/// let session = Session::create_via_unix_socket(DEFAULT_SOCKET)?;
+/// let session = Session::connect()?;
 /// let endpoints = session.list_endpoints()?;
 /// let mut model = endpoints[0].load_model_from_file("model.dvm".as_ref())?;
 /// model.allocate_tensors(Some(TensorMemory::DmaBuf))?;
@@ -213,8 +213,8 @@ impl Model {
     /// # Example
     ///
     /// ```no_run
-    /// # use ara2::{Session, DEFAULT_SOCKET};
-    /// # let session = Session::create_via_unix_socket(DEFAULT_SOCKET)?;
+    /// # use ara2::Session;
+    /// # let session = Session::connect()?;
     /// # let endpoints = session.list_endpoints()?;
     /// # let mut model = endpoints[0].load_model_from_file("m.dvm".as_ref())?;
     /// # model.allocate_tensors(None)?;
@@ -281,8 +281,8 @@ impl Model {
     /// # Example
     ///
     /// ```no_run
-    /// # use ara2::{Session, DEFAULT_SOCKET, DEFAULT_TIMEOUT_MS};
-    /// # let session = Session::create_via_unix_socket(DEFAULT_SOCKET)?;
+    /// # use ara2::{Session, DEFAULT_TIMEOUT_MS};
+    /// # let session = Session::connect()?;
     /// # let endpoints = session.list_endpoints()?;
     /// # let mut model = endpoints[0].load_model_from_file("m.dvm".as_ref())?;
     /// # model.allocate_tensors(None)?;
@@ -1079,8 +1079,8 @@ fn extract_timing(request: *mut dv_infer_request) -> Result<ModelTiming, Error> 
 /// # Example
 ///
 /// ```no_run
-/// # use ara2::{Session, DEFAULT_SOCKET, DEFAULT_TIMEOUT_MS};
-/// # let session = Session::create_via_unix_socket(DEFAULT_SOCKET)?;
+/// # use ara2::{Session, DEFAULT_TIMEOUT_MS};
+/// # let session = Session::connect()?;
 /// # let endpoints = session.list_endpoints()?;
 /// # let mut model = endpoints[0].load_model_from_file("m.dvm".as_ref())?;
 /// # model.allocate_tensors(None)?;
@@ -1143,8 +1143,8 @@ impl InferRequest {
     /// # Example
     ///
     /// ```no_run
-    /// # use ara2::{Session, DEFAULT_SOCKET, DEFAULT_TIMEOUT_MS};
-    /// # let session = Session::create_via_unix_socket(DEFAULT_SOCKET)?;
+    /// # use ara2::{Session, DEFAULT_TIMEOUT_MS};
+    /// # let session = Session::connect()?;
     /// # let endpoints = session.list_endpoints()?;
     /// # let mut model = endpoints[0].load_model_from_file("m.dvm".as_ref())?;
     /// # model.allocate_tensors(None)?;
@@ -1227,8 +1227,8 @@ impl InferRequest {
     /// # Example
     ///
     /// ```no_run
-    /// # use ara2::{Session, DEFAULT_SOCKET};
-    /// # let session = Session::create_via_unix_socket(DEFAULT_SOCKET)?;
+    /// # use ara2::Session;
+    /// # let session = Session::connect()?;
     /// # let endpoints = session.list_endpoints()?;
     /// # let mut model = endpoints[0].load_model_from_file("m.dvm".as_ref())?;
     /// # model.allocate_tensors(None)?;

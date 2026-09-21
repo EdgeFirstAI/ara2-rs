@@ -6,7 +6,7 @@ use std::{
 
 use ara2_sys::{
     DV_ENDPOINT_STATE, DV_MODEL_PRIORITY_LEVEL_DV_MODEL_PRIORITY_LEVEL_DEFAULT, dv_endpoint,
-    dv_endpoint_dram_statistics, dv_endpoint_stats, dv_model,
+    dv_endpoint_dram_statistics, dv_endpoint_statistics, dv_model,
 };
 
 use crate::{
@@ -173,7 +173,7 @@ impl Endpoint {
     /// surfaces the temperature and core voltage instead.
     pub fn statistics(&self) -> Result<EndpointStatistics, Error> {
         let mut ep_count = 1;
-        let mut stats: *mut dv_endpoint_stats = std::ptr::null_mut();
+        let mut stats: *mut dv_endpoint_statistics = std::ptr::null_mut();
         let err = unsafe {
             self.session.lib.dv_endpoint_get_statistics(
                 self.session.ptr,
