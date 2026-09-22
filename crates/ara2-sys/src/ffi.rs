@@ -79,12 +79,6 @@ pub const dv_status_code_DV_HIF_ERROR: dv_status_code = 303;
 pub const dv_status_code_DV_HIF_TIMEOUT: dv_status_code = 304;
 pub const dv_status_code_DV_HIF_POP_FAILED: dv_status_code = 305;
 pub const dv_status_code_DV_HIF_DEVICE_IN_CONFIG: dv_status_code = 306;
-pub const dv_status_code_DV_ERROR_NULLPTR: dv_status_code = 310;
-pub const dv_status_code_DV_ERROR_DEST_TOO_SMALL: dv_status_code = 311;
-pub const dv_status_code_DV_ERROR_SRC_TOO_SMALL: dv_status_code = 312;
-pub const dv_status_code_DV_ERROR_MEMCPY_FAILED: dv_status_code = 313;
-pub const dv_status_code_DV_ERROR_MEMSET_FAILED: dv_status_code = 314;
-pub const dv_status_code_DV_ERROR_STRNCPY_FAILED: dv_status_code = 315;
 pub const dv_status_code_DV_ERROR_CATEGORY_SW_CLIENT_FATAL_END: dv_status_code = 399;
 pub const dv_status_code_DV_ERROR_CATEGORY_SW_SERVER_FATAL_START: dv_status_code = 400;
 pub const dv_status_code_DV_HOST_OUT_OF_MEMORY: dv_status_code = 400;
@@ -101,8 +95,7 @@ pub const dv_status_code_DV_ENDPOINT_FIRMWARE_BOOT_FAILURE: dv_status_code = 502
 pub const dv_status_code_DV_ENDPOINT_NO_FIRMWARE: dv_status_code = 503;
 pub const dv_status_code_DV_ENDPOINT_NOT_REACHABLE: dv_status_code = 504;
 pub const dv_status_code_DV_ENDPOINT_MODEL_BINDING_FAILURE: dv_status_code = 505;
-pub const dv_status_code_DV_ENDPOINT_DYN_POWER_SET_FAILURE: dv_status_code = 506;
-pub const dv_status_code_DV_TENSOR_FREE_ERROR: dv_status_code = 519;
+pub const dv_status_code_DV_TENSOR_FREE_ERROR: dv_status_code = 506;
 pub const dv_status_code_DV_MODEL_LOAD_FAILURE: dv_status_code = 520;
 pub const dv_status_code_DV_MODEL_RELOAD_FAILURE: dv_status_code = 521;
 pub const dv_status_code_DV_MODEL_UNLOAD_FAILURE: dv_status_code = 522;
@@ -122,7 +115,6 @@ pub const dv_status_code_DV_INFER_MODEL_NOT_FOUND: dv_status_code = 565;
 pub const dv_status_code_DV_INFER_ABORTED: dv_status_code = 566;
 pub const dv_status_code_DV_INFER_SUBMIT_FAILURE: dv_status_code = 567;
 pub const dv_status_code_DV_INFER_TIME_OUT_THERMAL_RUNAWAY: dv_status_code = 568;
-pub const dv_status_code_DV_INFER_TOKEN_OVERFLOW: dv_status_code = 569;
 pub const dv_status_code_DV_ERROR_CATEGORY_HW_FATAL_END: dv_status_code = 599;
 pub const dv_status_code_DV_CLIENT_TXRX_WRITE_FAILURE: dv_status_code = 600;
 pub const dv_status_code_DV_CLIENT_TXRX_READ_FAILURE: dv_status_code = 601;
@@ -139,47 +131,12 @@ pub const dv_status_code_DV_MMIO_READ_FAIL: dv_status_code = 900;
 pub const dv_status_code_DV_MMIO_WRITE_FAIL: dv_status_code = 901;
 pub type dv_status_code = ::std::os::raw::c_uint;
 pub use self::dv_status_code as dv_status_code_t;
-pub const dv_type_code_DV_TYPE_CLIENT_LIB: dv_type_code = 0;
-pub const dv_type_code_DV_TYPE_PROXY: dv_type_code = 1;
-pub const dv_type_code_DV_TYPE_DEVICE: dv_type_code = 2;
-pub const dv_type_code_DV_TYPE_DEVICE_MEMORY: dv_type_code = 3;
-pub type dv_type_code = ::std::os::raw::c_uint;
-pub use self::dv_type_code as dv_component_type_t;
-pub const dv_criticality_code_DV_SEVERITY_OK: dv_criticality_code = 0;
-pub const dv_criticality_code_DV_SEVERITY_RETRYABLE: dv_criticality_code = 1;
-pub const dv_criticality_code_DV_SEVERITY_DEGRADED: dv_criticality_code = 2;
-pub const dv_criticality_code_DV_SEVERITY_FATAL: dv_criticality_code = 3;
-pub type dv_criticality_code = ::std::os::raw::c_uint;
-pub use self::dv_criticality_code as dv_error_severity_t;
-pub type dv_sub_code_t = u32;
-#[repr(C)]
-#[derive(Debug, Copy, Clone)]
-pub struct dv_status {
-    pub main_code: dv_status_code_t,
-    pub sub_code: dv_sub_code_t,
-    pub type_: dv_component_type_t,
-    pub criticality: dv_error_severity_t,
-}
-#[allow(clippy::unnecessary_operation, clippy::identity_op)]
-const _: () = {
-    ["Size of dv_status"][::std::mem::size_of::<dv_status>() - 16usize];
-    ["Alignment of dv_status"][::std::mem::align_of::<dv_status>() - 4usize];
-    ["Offset of field: dv_status::main_code"]
-        [::std::mem::offset_of!(dv_status, main_code) - 0usize];
-    ["Offset of field: dv_status::sub_code"][::std::mem::offset_of!(dv_status, sub_code) - 4usize];
-    ["Offset of field: dv_status::type_"][::std::mem::offset_of!(dv_status, type_) - 8usize];
-    ["Offset of field: dv_status::criticality"]
-        [::std::mem::offset_of!(dv_status, criticality) - 12usize];
-};
-pub type dv_status_t = dv_status;
-#[doc = " @brief Opaque handle for an inference request.\n\n Forward-declared structure used as a type-safe handle to an in-flight\n or completed inference request. Managed exclusively by the client library."]
 #[repr(C)]
 #[derive(Debug)]
 pub struct dv_infer_request_handle {
     _unused: [u8; 0],
 }
 pub type dv_infer_request_handle_t = dv_infer_request_handle;
-#[doc = " @brief Opaque handle for a loaded model.\n\n Forward-declared structure used as a type-safe handle to a model loaded\n onto an endpoint. Managed exclusively by the client library."]
 #[repr(C)]
 #[derive(Debug)]
 pub struct dv_model_handle {
@@ -209,9 +166,7 @@ pub const DV_ENDPOINT_DEFAULT_GROUP_DV_ENDPOINT_DEFAULT_GROUP_ALL: DV_ENDPOINT_D
 pub const DV_ENDPOINT_DEFAULT_GROUP_DV_ENDPOINT_DEFAULT_GROUP_PCIE: DV_ENDPOINT_DEFAULT_GROUP = 1;
 #[doc = "< default group for all the usb endpoint(s) connected to inference\nproxy server"]
 pub const DV_ENDPOINT_DEFAULT_GROUP_DV_ENDPOINT_DEFAULT_GROUP_USB: DV_ENDPOINT_DEFAULT_GROUP = 2;
-#[doc = " @brief Represents predefined endpoint groupings available from the proxy server."]
 pub type DV_ENDPOINT_DEFAULT_GROUP = ::std::os::raw::c_uint;
-#[doc = " @brief Represents predefined endpoint groupings available from the proxy server."]
 pub use self::DV_ENDPOINT_DEFAULT_GROUP as dv_endpoint_default_group_t;
 #[doc = "< endpoint is in init state"]
 pub const DV_ENDPOINT_STATE_DV_ENDPOINT_STATE_INIT: DV_ENDPOINT_STATE = 0;
@@ -222,10 +177,10 @@ pub const DV_ENDPOINT_STATE_DV_ENDPOINT_STATE_ACTIVE: DV_ENDPOINT_STATE = 2;
 #[doc = "< endpoint is operating at reduced frequency"]
 pub const DV_ENDPOINT_STATE_DV_ENDPOINT_STATE_ACTIVE_SLOW: DV_ENDPOINT_STATE = 3;
 #[doc = "< endpoint is operating at reduced frequency"]
-pub const DV_ENDPOINT_STATE_DV_ENDPOINT_STATE_THERMAL_ACTIVE_SLOW: DV_ENDPOINT_STATE = 4;
+pub const DV_ENDPOINT_STATE_DV_ENDPOINT_STATE_ACTIVE_BOOSTED: DV_ENDPOINT_STATE = 4;
 #[doc = "< endpoint is in thermal Inactive state"]
-pub const DV_ENDPOINT_STATE_DV_ENDPOINT_STATE_FAIL_SAFE: DV_ENDPOINT_STATE = 5;
-#[doc = "< endpoint is in unknown thermal state"]
+pub const DV_ENDPOINT_STATE_DV_ENDPOINT_STATE_THERMAL_INACTIVE: DV_ENDPOINT_STATE = 5;
+#[doc = "< endpoint is in unown thermal state"]
 pub const DV_ENDPOINT_STATE_DV_ENDPOINT_STATE_THERMAL_UNKNOWN: DV_ENDPOINT_STATE = 6;
 #[doc = "< endpoint is in Inactive state"]
 pub const DV_ENDPOINT_STATE_DV_ENDPOINT_STATE_INACTIVE: DV_ENDPOINT_STATE = 7;
@@ -269,9 +224,7 @@ pub const DV_ENDPOINT_GROUP_TYPE_DV_ENDPOINT_GROUP_TYPE_PCIE: DV_ENDPOINT_GROUP_
 pub const DV_ENDPOINT_GROUP_TYPE_DV_ENDPOINT_GROUP_TYPE_USB: DV_ENDPOINT_GROUP_TYPE = 3;
 #[doc = "< endpoint group type custom"]
 pub const DV_ENDPOINT_GROUP_TYPE_DV_ENDPOINT_GROUP_TYPE_CUSTOM: DV_ENDPOINT_GROUP_TYPE = 4;
-#[doc = " @brief Represents the group membership type of an endpoint collection."]
 pub type DV_ENDPOINT_GROUP_TYPE = ::std::os::raw::c_uint;
-#[doc = " @brief Represents the group membership type of an endpoint collection."]
 pub use self::DV_ENDPOINT_GROUP_TYPE as dv_endpoint_group_type_t;
 #[doc = "< represents classification type of network"]
 pub const DV_LAYER_OUTPUT_TYPE_DV_LAYER_OUTPUT_TYPE_CLASSIFICATION: DV_LAYER_OUTPUT_TYPE = 0;
@@ -321,43 +274,16 @@ pub const DV_BLOB_TYPE_DV_BLOB_TYPE_FD: DV_BLOB_TYPE = 2;
 pub type DV_BLOB_TYPE = ::std::os::raw::c_uint;
 #[doc = " Blob types"]
 pub use self::DV_BLOB_TYPE as dv_blob_type_t;
-#[doc = "< invalid product type"]
 pub const DV_PRODUCT_TYPE_INVALID_PRODUCT: DV_PRODUCT_TYPE = -1;
-#[doc = "< product is proxy"]
 pub const DV_PRODUCT_TYPE_PROXY: DV_PRODUCT_TYPE = 0;
-#[doc = "< NOT USED CURRENTLY"]
 pub const DV_PRODUCT_TYPE_PCI_DRIVER: DV_PRODUCT_TYPE = 1;
-#[doc = "< product is firmware"]
 pub const DV_PRODUCT_TYPE_FIRMWARE: DV_PRODUCT_TYPE = 2;
-#[doc = "< product is CNN model"]
 pub const DV_PRODUCT_TYPE_CNN_MODEL: DV_PRODUCT_TYPE = 3;
-#[doc = "< product is LLM model"]
 pub const DV_PRODUCT_TYPE_LLM_MODEL: DV_PRODUCT_TYPE = 4;
-#[doc = "< product is client library"]
 pub const DV_PRODUCT_TYPE_CLIENT_LIB: DV_PRODUCT_TYPE = 5;
-#[doc = "< NOT USED CURRENTLY"]
 pub const DV_PRODUCT_TYPE_SYSAPI: DV_PRODUCT_TYPE = 6;
-#[doc = " @brief Represents the type of a versioned software or firmware product component."]
 pub type DV_PRODUCT_TYPE = ::std::os::raw::c_int;
-#[doc = " @brief Represents the type of a versioned software or firmware product component."]
 pub use self::DV_PRODUCT_TYPE as dv_product_type_t;
-#[doc = "< dump critical, error, warning, info, debug and trace logs"]
-pub const DV_CLIENT_LOG_LEVEL_DV_CLIENT_LOG_LEVEL_TRACE: DV_CLIENT_LOG_LEVEL = 0;
-#[doc = "< dump critical, error, warning, info and debug logs"]
-pub const DV_CLIENT_LOG_LEVEL_DV_CLIENT_LOG_LEVEL_DEBUG: DV_CLIENT_LOG_LEVEL = 1;
-#[doc = "< dump critical, error, warning and info logs"]
-pub const DV_CLIENT_LOG_LEVEL_DV_CLIENT_LOG_LEVEL_INFO: DV_CLIENT_LOG_LEVEL = 2;
-#[doc = "< dump critical, error and warning logs"]
-pub const DV_CLIENT_LOG_LEVEL_DV_CLIENT_LOG_LEVEL_WARN: DV_CLIENT_LOG_LEVEL = 3;
-#[doc = "< dump critical and error logs"]
-pub const DV_CLIENT_LOG_LEVEL_DV_CLIENT_LOG_LEVEL_ERROR: DV_CLIENT_LOG_LEVEL = 4;
-#[doc = "< dump critical logs"]
-pub const DV_CLIENT_LOG_LEVEL_DV_CLIENT_LOG_LEVEL_CRITICAL: DV_CLIENT_LOG_LEVEL = 5;
-#[doc = "< turn off client logs"]
-pub const DV_CLIENT_LOG_LEVEL_DV_CLIENT_LOG_LEVEL_OFF: DV_CLIENT_LOG_LEVEL = 6;
-pub type DV_CLIENT_LOG_LEVEL = ::std::os::raw::c_uint;
-pub use self::DV_CLIENT_LOG_LEVEL as dv_client_log_level_t;
-#[doc = " @brief Represents a semantic version number with four components.\n\n @var dv_version_t::major\n   Major version number.\n @var dv_version_t::minor\n   Minor version number.\n @var dv_version_t::patch\n   Patch version number.\n @var dv_version_t::patch_minor\n   Sub-patch (minor patch) version number."]
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct dv_version {
@@ -376,9 +302,7 @@ const _: () = {
     ["Offset of field: dv_version::patch_minor"]
         [::std::mem::offset_of!(dv_version, patch_minor) - 3usize];
 };
-#[doc = " @brief Represents a semantic version number with four components.\n\n @var dv_version_t::major\n   Major version number.\n @var dv_version_t::minor\n   Minor version number.\n @var dv_version_t::patch\n   Patch version number.\n @var dv_version_t::patch_minor\n   Sub-patch (minor patch) version number."]
 pub type dv_version_t = dv_version;
-#[doc = " @brief Represents a product type paired with its version information.\n\n @var dv_product_version_t::product_type\n   The type of the product component as defined by @ref DV_PRODUCT_TYPE.\n @var dv_product_version_t::product_version\n   The version of the product component."]
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct dv_product_version {
@@ -394,9 +318,7 @@ const _: () = {
     ["Offset of field: dv_product_version::product_version"]
         [::std::mem::offset_of!(dv_product_version, product_version) - 4usize];
 };
-#[doc = " @brief Represents a product type paired with its version information.\n\n @var dv_product_version_t::product_type\n   The type of the product component as defined by @ref DV_PRODUCT_TYPE.\n @var dv_product_version_t::product_version\n   The version of the product component."]
 pub type dv_product_version_t = dv_product_version;
-#[doc = " @brief Represents a contiguous memory region used as input or output for inference and model operations.\n\n Use @ref DV_BLOB_TYPE_RAW_POINTER for host-allocated buffers passed directly to the API.\n Use @ref DV_BLOB_TYPE_SHM_DESCRIPTOR when the buffer has been registered via @ref dv_shmfd_register\n to avoid redundant host-to-device copies across inference requests.\n Use @ref DV_BLOB_TYPE_FD for file-descriptor-backed buffers that have not been pre-registered."]
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct dv_blob {
@@ -418,7 +340,6 @@ const _: () = {
     ["Offset of field: dv_blob::size"][::std::mem::offset_of!(dv_blob, size) - 16usize];
     ["Offset of field: dv_blob::blob_type"][::std::mem::offset_of!(dv_blob, blob_type) - 24usize];
 };
-#[doc = " @brief Represents a contiguous memory region used as input or output for inference and model operations.\n\n Use @ref DV_BLOB_TYPE_RAW_POINTER for host-allocated buffers passed directly to the API.\n Use @ref DV_BLOB_TYPE_SHM_DESCRIPTOR when the buffer has been registered via @ref dv_shmfd_register\n to avoid redundant host-to-device copies across inference requests.\n Use @ref DV_BLOB_TYPE_FD for file-descriptor-backed buffers that have not been pre-registered."]
 pub type dv_blob_t = dv_blob;
 #[doc = " Default session wide parameters that are to be passed to dv_session_create_via_*_with_options"]
 #[repr(C)]
@@ -495,7 +416,6 @@ const _: () = {
 };
 #[doc = " Shared memory decriptor generated after registering fd to server"]
 pub type dv_shm_descriptor_t = dv_shm_descriptor;
-#[doc = " @brief Represents the on-chip processor and memory configuration of a DV endpoint."]
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct dv_endpoint_chip_info {
@@ -526,9 +446,7 @@ const _: () = {
     ["Offset of field: dv_endpoint_chip_info::l2_memory_size"]
         [::std::mem::offset_of!(dv_endpoint_chip_info, l2_memory_size) - 24usize];
 };
-#[doc = " @brief Represents the on-chip processor and memory configuration of a DV endpoint."]
 pub type dv_endpoint_chip_info_t = dv_endpoint_chip_info;
-#[doc = " @brief Represents the external DRAM device information for a DV endpoint."]
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct dv_endpoint_dram_info {
@@ -567,7 +485,6 @@ const _: () = {
     ["Offset of field: dv_endpoint_dram_info::io_width"]
         [::std::mem::offset_of!(dv_endpoint_dram_info, io_width) - 23usize];
 };
-#[doc = " @brief Represents the external DRAM device information for a DV endpoint."]
 pub type dv_endpoint_dram_info_t = dv_endpoint_dram_info;
 #[doc = " DV Endpoint interface information"]
 #[repr(C)]
@@ -586,7 +503,7 @@ pub struct dv_endpoint_iface_info {
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub union dv_endpoint_iface_info__bindgen_ty_1 {
-    #[doc = "< path to the pcie sysfs entry for a PCIE\ninterface device"]
+    #[doc = "< \\since r5.3 path to the pcie sysfs entry for a PCIE\ninterface device"]
     pub pcie_dir: *mut ::std::os::raw::c_char,
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
@@ -694,7 +611,6 @@ const _: () = {
 };
 #[doc = " Endpoint/Endpoint Group object"]
 pub type dv_endpoint_t = dv_endpoint;
-#[doc = " @brief Represents a DRAM utilization snapshot for a single endpoint.\n\n Use this to monitor endpoint memory pressure before loading additional models.\n If @c ep_total_free_size is low, unload unused models before attempting new\n loads to avoid out-of-memory errors during inference or model load."]
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct dv_endpoint_dram_statistics {
@@ -742,9 +658,7 @@ const _: () = {
         ep_total_tensor_occupancy_size
     ) - 48usize];
 };
-#[doc = " @brief Represents a DRAM utilization snapshot for a single endpoint.\n\n Use this to monitor endpoint memory pressure before loading additional models.\n If @c ep_total_free_size is low, unload unused models before attempting new\n loads to avoid out-of-memory errors during inference or model load."]
 pub type dv_endpoint_dram_statistics_t = dv_endpoint_dram_statistics;
-#[doc = " @brief Represents inference queue depth and latency statistics for a single endpoint.\n\n Use @c wait_time to estimate whether a new inference request will be picked up\n immediately or queued behind existing requests. If @c occupancy_count approaches\n @c length, the queue is near capacity and submitting additional requests may block."]
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct dv_inference_queue_statistics {
@@ -768,9 +682,7 @@ const _: () = {
     ["Offset of field: dv_inference_queue_statistics::wait_time"]
         [::std::mem::offset_of!(dv_inference_queue_statistics, wait_time) - 8usize];
 };
-#[doc = " @brief Represents inference queue depth and latency statistics for a single endpoint.\n\n Use @c wait_time to estimate whether a new inference request will be picked up\n immediately or queued behind existing requests. If @c occupancy_count approaches\n @c length, the queue is near capacity and submitting additional requests may block."]
 pub type dv_inference_queue_statistics_t = dv_inference_queue_statistics;
-#[doc = " @brief Represents resource utilization statistics for a single model active on an endpoint.\n\n Use @c model_handle to correlate these statistics with a specific @ref dv_model_t\n object returned by a model load API — compare against the @c handle member of\n @ref dv_model_t. Statistics are reported for all models loaded across all clients,\n not just the calling client."]
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct dv_model_statistics {
@@ -788,7 +700,7 @@ pub struct dv_model_statistics {
     pub model_total_input_tensor_occupancy_size: u32,
     #[doc = "< total endpoint dram occupancy in bytes by model output tensors"]
     pub model_total_output_tensor_occupancy_size: u32,
-    #[doc = "< void* handle which can be compared to `handle` member of dv_model_t"]
+    #[doc = "< \\since r5.3 void* handle which can be compared to `handle` member of dv_model_t"]
     pub model_handle: *mut dv_model_handle_t,
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
@@ -816,12 +728,10 @@ const _: () = {
     ["Offset of field: dv_model_statistics::model_handle"]
         [::std::mem::offset_of!(dv_model_statistics, model_handle) - 32usize];
 };
-#[doc = " @brief Represents resource utilization statistics for a single model active on an endpoint.\n\n Use @c model_handle to correlate these statistics with a specific @ref dv_model_t\n object returned by a model load API — compare against the @c handle member of\n @ref dv_model_t. Statistics are reported for all models loaded across all clients,\n not just the calling client."]
 pub type dv_model_statistics_t = dv_model_statistics;
-#[doc = " @brief Represents a runtime statistics snapshot for a single endpoint.\n\n Use this to monitor endpoint health, thermal state, and clock configuration\n during production workloads. Check @c state before submitting inference — if the\n endpoint is in @c DV_ENDPOINT_STATE_FAULT or @c DV_ENDPOINT_STATE_THERMAL_ACTIVE_SLOW,\n throughput may be degraded or inference may fail. Use @c ep_temp and @c ep_core_voltage\n to detect thermal or power anomalies in long-running deployments."]
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
-pub struct dv_endpoint_statistics {
+pub struct dv_endpoint_stats {
     #[doc = "< endpoint handle"]
     pub ep: *mut dv_endpoint_t,
     #[doc = "< endpoint state"]
@@ -848,49 +758,39 @@ pub struct dv_endpoint_statistics {
     pub ep_power_state: dv_endpoint_power_state_t,
     #[doc = "< endpoint soft reset count, non zero for usb devices"]
     pub ep_soft_reset_count: u32,
-    #[doc = "< endpoint sbp clock in MHz"]
-    pub ep_sbp_clk: ::std::os::raw::c_int,
-    #[doc = "< endpoint nnp clock in MHz"]
-    pub ep_nnp_clk: ::std::os::raw::c_int,
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
-    ["Size of dv_endpoint_statistics"][::std::mem::size_of::<dv_endpoint_statistics>() - 128usize];
-    ["Alignment of dv_endpoint_statistics"]
-        [::std::mem::align_of::<dv_endpoint_statistics>() - 8usize];
-    ["Offset of field: dv_endpoint_statistics::ep"]
-        [::std::mem::offset_of!(dv_endpoint_statistics, ep) - 0usize];
-    ["Offset of field: dv_endpoint_statistics::state"]
-        [::std::mem::offset_of!(dv_endpoint_statistics, state) - 8usize];
-    ["Offset of field: dv_endpoint_statistics::ep_sys_clk"]
-        [::std::mem::offset_of!(dv_endpoint_statistics, ep_sys_clk) - 12usize];
-    ["Offset of field: dv_endpoint_statistics::ep_dram_clk"]
-        [::std::mem::offset_of!(dv_endpoint_statistics, ep_dram_clk) - 16usize];
-    ["Offset of field: dv_endpoint_statistics::ep_core_voltage"]
-        [::std::mem::offset_of!(dv_endpoint_statistics, ep_core_voltage) - 20usize];
-    ["Offset of field: dv_endpoint_statistics::ep_temp"]
-        [::std::mem::offset_of!(dv_endpoint_statistics, ep_temp) - 24usize];
-    ["Offset of field: dv_endpoint_statistics::num_inference_queues"]
-        [::std::mem::offset_of!(dv_endpoint_statistics, num_inference_queues) - 28usize];
-    ["Offset of field: dv_endpoint_statistics::ep_infq_stats"]
-        [::std::mem::offset_of!(dv_endpoint_statistics, ep_infq_stats) - 32usize];
-    ["Offset of field: dv_endpoint_statistics::num_active_models"]
-        [::std::mem::offset_of!(dv_endpoint_statistics, num_active_models) - 40usize];
-    ["Offset of field: dv_endpoint_statistics::model_stats"]
-        [::std::mem::offset_of!(dv_endpoint_statistics, model_stats) - 48usize];
-    ["Offset of field: dv_endpoint_statistics::ep_dram_stats"]
-        [::std::mem::offset_of!(dv_endpoint_statistics, ep_dram_stats) - 56usize];
-    ["Offset of field: dv_endpoint_statistics::ep_power_state"]
-        [::std::mem::offset_of!(dv_endpoint_statistics, ep_power_state) - 112usize];
-    ["Offset of field: dv_endpoint_statistics::ep_soft_reset_count"]
-        [::std::mem::offset_of!(dv_endpoint_statistics, ep_soft_reset_count) - 116usize];
-    ["Offset of field: dv_endpoint_statistics::ep_sbp_clk"]
-        [::std::mem::offset_of!(dv_endpoint_statistics, ep_sbp_clk) - 120usize];
-    ["Offset of field: dv_endpoint_statistics::ep_nnp_clk"]
-        [::std::mem::offset_of!(dv_endpoint_statistics, ep_nnp_clk) - 124usize];
+    ["Size of dv_endpoint_stats"][::std::mem::size_of::<dv_endpoint_stats>() - 120usize];
+    ["Alignment of dv_endpoint_stats"][::std::mem::align_of::<dv_endpoint_stats>() - 8usize];
+    ["Offset of field: dv_endpoint_stats::ep"]
+        [::std::mem::offset_of!(dv_endpoint_stats, ep) - 0usize];
+    ["Offset of field: dv_endpoint_stats::state"]
+        [::std::mem::offset_of!(dv_endpoint_stats, state) - 8usize];
+    ["Offset of field: dv_endpoint_stats::ep_sys_clk"]
+        [::std::mem::offset_of!(dv_endpoint_stats, ep_sys_clk) - 12usize];
+    ["Offset of field: dv_endpoint_stats::ep_dram_clk"]
+        [::std::mem::offset_of!(dv_endpoint_stats, ep_dram_clk) - 16usize];
+    ["Offset of field: dv_endpoint_stats::ep_core_voltage"]
+        [::std::mem::offset_of!(dv_endpoint_stats, ep_core_voltage) - 20usize];
+    ["Offset of field: dv_endpoint_stats::ep_temp"]
+        [::std::mem::offset_of!(dv_endpoint_stats, ep_temp) - 24usize];
+    ["Offset of field: dv_endpoint_stats::num_inference_queues"]
+        [::std::mem::offset_of!(dv_endpoint_stats, num_inference_queues) - 28usize];
+    ["Offset of field: dv_endpoint_stats::ep_infq_stats"]
+        [::std::mem::offset_of!(dv_endpoint_stats, ep_infq_stats) - 32usize];
+    ["Offset of field: dv_endpoint_stats::num_active_models"]
+        [::std::mem::offset_of!(dv_endpoint_stats, num_active_models) - 40usize];
+    ["Offset of field: dv_endpoint_stats::model_stats"]
+        [::std::mem::offset_of!(dv_endpoint_stats, model_stats) - 48usize];
+    ["Offset of field: dv_endpoint_stats::ep_dram_stats"]
+        [::std::mem::offset_of!(dv_endpoint_stats, ep_dram_stats) - 56usize];
+    ["Offset of field: dv_endpoint_stats::ep_power_state"]
+        [::std::mem::offset_of!(dv_endpoint_stats, ep_power_state) - 112usize];
+    ["Offset of field: dv_endpoint_stats::ep_soft_reset_count"]
+        [::std::mem::offset_of!(dv_endpoint_stats, ep_soft_reset_count) - 116usize];
 };
-#[doc = " @brief Represents a runtime statistics snapshot for a single endpoint.\n\n Use this to monitor endpoint health, thermal state, and clock configuration\n during production workloads. Check @c state before submitting inference — if the\n endpoint is in @c DV_ENDPOINT_STATE_FAULT or @c DV_ENDPOINT_STATE_THERMAL_ACTIVE_SLOW,\n throughput may be degraded or inference may fail. Use @c ep_temp and @c ep_core_voltage\n to detect thermal or power anomalies in long-running deployments."]
-pub type dv_endpoint_statistics_t = dv_endpoint_statistics;
+pub type dv_endpoint_statistics_t = dv_endpoint_stats;
 #[doc = " Usage:\n for quantization and dequantization of inputs/outputs is different for different qmodes\n for qmode - 0, 1, 2 and 3:\n    quantized_value = round(float_value * qn)\n    dequantized_value = quantized_value / qn\n for qmode - 9:\n    quantized_value = round(float_value / qn) + offset\n    dequantized_value = (float_value - offset )* qn"]
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
@@ -911,7 +811,7 @@ pub struct dv_model_input_preprocess_param {
     pub bgr_to_rgb: bool,
     #[doc = "< interpolation method supported by OpenCV"]
     pub interpolation: ::std::os::raw::c_int,
-    #[doc = "< if true, input data is in signed range [-128, 128]; if false, input data is in unsigned range [0, 255]"]
+    #[doc = "< input range ((-128) - (128)) / (0 - 255)"]
     pub is_signed: bool,
     #[doc = "< bytes per pixel"]
     pub bpp: ::std::os::raw::c_int,
@@ -1118,12 +1018,10 @@ pub struct dv_model_output_param {
     pub max_dynamic_id: ::std::os::raw::c_int,
     #[doc = "< source graph output layer name"]
     pub src_graph_layer_name: *mut ::std::os::raw::c_char,
-    #[doc = "< 1, if any parent layer is NMS"]
-    pub has_nms_parent: ::std::os::raw::c_int,
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
-    ["Size of dv_model_output_param"][::std::mem::size_of::<dv_model_output_param>() - 120usize];
+    ["Size of dv_model_output_param"][::std::mem::size_of::<dv_model_output_param>() - 112usize];
     ["Alignment of dv_model_output_param"]
         [::std::mem::align_of::<dv_model_output_param>() - 8usize];
     ["Offset of field: dv_model_output_param::postprocess_param"]
@@ -1166,12 +1064,9 @@ const _: () = {
         [::std::mem::offset_of!(dv_model_output_param, max_dynamic_id) - 100usize];
     ["Offset of field: dv_model_output_param::src_graph_layer_name"]
         [::std::mem::offset_of!(dv_model_output_param, src_graph_layer_name) - 104usize];
-    ["Offset of field: dv_model_output_param::has_nms_parent"]
-        [::std::mem::offset_of!(dv_model_output_param, has_nms_parent) - 112usize];
 };
 #[doc = " Model output parameters"]
 pub type dv_model_output_param_t = dv_model_output_param;
-#[doc = " @brief Represents power and performance estimates reported by the Network Compiler.\n\n Use these values to compare compiler-predicted throughput against observed runtime\n performance. A large gap between @c ips and measured inference rate may indicate\n thermal throttling, memory pressure, or suboptimal batch configuration."]
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct dv_compiler_statistics {
@@ -1198,24 +1093,16 @@ const _: () = {
     ["Offset of field: dv_compiler_statistics::ddr_bandwidth"]
         [::std::mem::offset_of!(dv_compiler_statistics, ddr_bandwidth) - 16usize];
 };
-#[doc = " @brief Represents power and performance estimates reported by the Network Compiler.\n\n Use these values to compare compiler-predicted throughput against observed runtime\n performance. A large gap between @c ips and measured inference rate may indicate\n thermal throttling, memory pressure, or suboptimal batch configuration."]
 pub type dv_compiler_statistics_t = dv_compiler_statistics;
-#[doc = "< CNN models to run on ARA1 chip"]
 pub const DV_MODEL_TYPE_DV_MODEL_TYPE_ARA1_CNN: DV_MODEL_TYPE = 0;
-#[doc = "< CNN models to run on ARA2 chip"]
 pub const DV_MODEL_TYPE_DV_MODEL_TYPE_ARA2_CNN: DV_MODEL_TYPE = 1;
-#[doc = "< this is for dynamic quant v1 qwen models"]
 pub const DV_MODEL_TYPE_DV_MODEL_TYPE_ARA2_LLM: DV_MODEL_TYPE = 2;
-#[doc = "< latest llm models [except for dynmaic quant v1 models]"]
 pub const DV_MODEL_TYPE_DV_MODEL_TYPE_ARA2_LLM_DYN_V2: DV_MODEL_TYPE = 3;
-#[doc = " @brief Represents the hardware architecture and model category for a loaded model.\n\n Set this correctly in @ref dv_model_load_options_t when using\n @ref dv_model_load_from_file_with_options or @ref dv_model_load_from_blob_with_options.\n An incorrect model type will cause the proxy to use the wrong inference pipeline,\n resulting in silent output corruption or inference failures.\n\n @var DV_MODEL_TYPE::DV_MODEL_TYPE_ARA1_CNN\n   CNN model targeting the ARA1 hardware architecture.\n @var DV_MODEL_TYPE::DV_MODEL_TYPE_ARA2_CNN\n   CNN model targeting the ARA2 hardware architecture.\n @var DV_MODEL_TYPE::DV_MODEL_TYPE_ARA2_LLM\n   LLM model on ARA2 using dynamic quantization v1 (e.g., Qwen models).\n @var DV_MODEL_TYPE::DV_MODEL_TYPE_ARA2_LLM_DYN_V2\n   LLM model on ARA2 using the latest dynamic quantization scheme (excludes dynamic quant v1 models)."]
 pub type DV_MODEL_TYPE = ::std::os::raw::c_uint;
-#[doc = " @brief Represents the hardware architecture and model category for a loaded model.\n\n Set this correctly in @ref dv_model_load_options_t when using\n @ref dv_model_load_from_file_with_options or @ref dv_model_load_from_blob_with_options.\n An incorrect model type will cause the proxy to use the wrong inference pipeline,\n resulting in silent output corruption or inference failures.\n\n @var DV_MODEL_TYPE::DV_MODEL_TYPE_ARA1_CNN\n   CNN model targeting the ARA1 hardware architecture.\n @var DV_MODEL_TYPE::DV_MODEL_TYPE_ARA2_CNN\n   CNN model targeting the ARA2 hardware architecture.\n @var DV_MODEL_TYPE::DV_MODEL_TYPE_ARA2_LLM\n   LLM model on ARA2 using dynamic quantization v1 (e.g., Qwen models).\n @var DV_MODEL_TYPE::DV_MODEL_TYPE_ARA2_LLM_DYN_V2\n   LLM model on ARA2 using the latest dynamic quantization scheme (excludes dynamic quant v1 models)."]
 pub use self::DV_MODEL_TYPE as dv_model_type_t;
-#[doc = " @brief Represents options controlling model load behavior; passed to dv_model_load_*_with_options APIs.\n\n Use this struct instead of the legacy @ref dv_model_load_from_file or @ref dv_model_load_from_blob\n APIs when you need fine-grained control over caching, async loading, or model type selection.\n Always set @c model_type explicitly — the default of @c DV_MODEL_TYPE_ARA2_CNN is incorrect\n for LLM models and will result in inference failures."]
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
-pub struct dv_model_load_options {
+pub struct dv_model_options {
     #[doc = "< model name"]
     pub model_name: *mut ::std::os::raw::c_char,
     #[doc = "< priority of the model [unused]"]
@@ -1226,39 +1113,30 @@ pub struct dv_model_load_options {
     pub async_: bool,
     #[doc = "< specify the model type, if not specified it will be  DV_MODEL_TYPE_ARA2_CNN"]
     pub model_type: dv_model_type_t,
-    #[doc = "< if true, send filepaht from client lib to proxy, imporves host memory consumpion\nuse this only if proxy and client lib have direct access to file(both are on same machine, or share filesystem)>"]
-    pub send_model_filepath_to_proxy: bool,
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
-    ["Size of dv_model_load_options"][::std::mem::size_of::<dv_model_load_options>() - 24usize];
-    ["Alignment of dv_model_load_options"]
-        [::std::mem::align_of::<dv_model_load_options>() - 8usize];
-    ["Offset of field: dv_model_load_options::model_name"]
-        [::std::mem::offset_of!(dv_model_load_options, model_name) - 0usize];
-    ["Offset of field: dv_model_load_options::priority"]
-        [::std::mem::offset_of!(dv_model_load_options, priority) - 8usize];
-    ["Offset of field: dv_model_load_options::cache"]
-        [::std::mem::offset_of!(dv_model_load_options, cache) - 12usize];
-    ["Offset of field: dv_model_load_options::async_"]
-        [::std::mem::offset_of!(dv_model_load_options, async_) - 13usize];
-    ["Offset of field: dv_model_load_options::model_type"]
-        [::std::mem::offset_of!(dv_model_load_options, model_type) - 16usize];
-    ["Offset of field: dv_model_load_options::send_model_filepath_to_proxy"]
-        [::std::mem::offset_of!(dv_model_load_options, send_model_filepath_to_proxy) - 20usize];
+    ["Size of dv_model_options"][::std::mem::size_of::<dv_model_options>() - 24usize];
+    ["Alignment of dv_model_options"][::std::mem::align_of::<dv_model_options>() - 8usize];
+    ["Offset of field: dv_model_options::model_name"]
+        [::std::mem::offset_of!(dv_model_options, model_name) - 0usize];
+    ["Offset of field: dv_model_options::priority"]
+        [::std::mem::offset_of!(dv_model_options, priority) - 8usize];
+    ["Offset of field: dv_model_options::cache"]
+        [::std::mem::offset_of!(dv_model_options, cache) - 12usize];
+    ["Offset of field: dv_model_options::async_"]
+        [::std::mem::offset_of!(dv_model_options, async_) - 13usize];
+    ["Offset of field: dv_model_options::model_type"]
+        [::std::mem::offset_of!(dv_model_options, model_type) - 16usize];
 };
-#[doc = " @brief Represents options controlling model load behavior; passed to dv_model_load_*_with_options APIs.\n\n Use this struct instead of the legacy @ref dv_model_load_from_file or @ref dv_model_load_from_blob\n APIs when you need fine-grained control over caching, async loading, or model type selection.\n Always set @c model_type explicitly — the default of @c DV_MODEL_TYPE_ARA2_CNN is incorrect\n for LLM models and will result in inference failures."]
-pub type dv_model_load_options_t = dv_model_load_options;
+pub type dv_model_load_options_t = dv_model_options;
 pub const DV_INFER_TYPE_DV_INFER_TYPE_ARA1_CNN: DV_INFER_TYPE = 0;
 pub const DV_INFER_TYPE_DV_INFER_TYPE_ARA2_CNN: DV_INFER_TYPE = 1;
 pub const DV_INFER_TYPE_DV_INFER_TYPE_LLM_PROMPT_PROCESSING: DV_INFER_TYPE = 2;
 pub const DV_INFER_TYPE_DV_INFER_TYPE_LLM_FOLLOWUP_PROMPT_PROCESSING: DV_INFER_TYPE = 3;
 pub const DV_INFER_TYPE_DV_INFER_TYPE_LLM_TOKEN_GENERATION: DV_INFER_TYPE = 4;
-#[doc = " @brief Represents the inference execution mode for a submitted inference request.\n\n For CNN inference, use @c DV_INFER_TYPE_ARA2_CNN (default). For LLM workflows,\n select the appropriate phase — prompt processing must precede token generation.\n Using @c DV_INFER_TYPE_LLM_TOKEN_GENERATION without a prior prompt processing\n inference on the same model results in undefined output.\n\n @var DV_INFER_TYPE::DV_INFER_TYPE_ARA1_CNN\n   Standard CNN inference on ARA1 hardware.\n @var DV_INFER_TYPE::DV_INFER_TYPE_ARA2_CNN\n   Standard CNN inference on ARA2 hardware.\n @var DV_INFER_TYPE::DV_INFER_TYPE_LLM_PROMPT_PROCESSING\n   LLM initial prompt processing (prefill) phase.\n @var DV_INFER_TYPE::DV_INFER_TYPE_LLM_FOLLOWUP_PROMPT_PROCESSING\n   LLM follow-up prompt processing for multi-turn or continued inference.\n @var DV_INFER_TYPE::DV_INFER_TYPE_LLM_TOKEN_GENERATION\n   LLM autoregressive token generation (decode) phase."]
 pub type DV_INFER_TYPE = ::std::os::raw::c_uint;
-#[doc = " @brief Represents the inference execution mode for a submitted inference request.\n\n For CNN inference, use @c DV_INFER_TYPE_ARA2_CNN (default). For LLM workflows,\n select the appropriate phase — prompt processing must precede token generation.\n Using @c DV_INFER_TYPE_LLM_TOKEN_GENERATION without a prior prompt processing\n inference on the same model results in undefined output.\n\n @var DV_INFER_TYPE::DV_INFER_TYPE_ARA1_CNN\n   Standard CNN inference on ARA1 hardware.\n @var DV_INFER_TYPE::DV_INFER_TYPE_ARA2_CNN\n   Standard CNN inference on ARA2 hardware.\n @var DV_INFER_TYPE::DV_INFER_TYPE_LLM_PROMPT_PROCESSING\n   LLM initial prompt processing (prefill) phase.\n @var DV_INFER_TYPE::DV_INFER_TYPE_LLM_FOLLOWUP_PROMPT_PROCESSING\n   LLM follow-up prompt processing for multi-turn or continued inference.\n @var DV_INFER_TYPE::DV_INFER_TYPE_LLM_TOKEN_GENERATION\n   LLM autoregressive token generation (decode) phase."]
 pub use self::DV_INFER_TYPE as dv_infer_type_t;
-#[doc = " @brief Represents options controlling the behavior of an inference request submission.\n\n Pass this to @ref dv_infer_sync_with_options or @ref dv_infer_async_with_options\n when you need LLM-specific inference control or statistics collection.\n For standard CNN inference, the default zero-initialized struct is sufficient.\n Do not use @c active_tokens or @c valid_tokens for CNN inference — they are\n only meaningful for LLM token generation and prompt processing phases.\n\n @var dv_infer_options_t::enable_stats\n   If true, inference statistics are collected for this request.\n @var dv_infer_options_t::infer_type\n   Inference execution mode; defaults to DV_INFER_TYPE_ARA2_CNN if not set.\n @var dv_infer_options_t::active_tokens\n   Number of active tokens for LLM inference requests.\n @var dv_infer_options_t::valid_tokens\n   Number of valid tokens in the input for LLM inference requests.\n @var dv_infer_options_t::tokens_to_skip\n   Number of image or video tokens in the prompt to skip."]
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct dv_infer_options {
@@ -1284,27 +1162,7 @@ const _: () = {
     ["Offset of field: dv_infer_options::tokens_to_skip"]
         [::std::mem::offset_of!(dv_infer_options, tokens_to_skip) - 20usize];
 };
-#[doc = " @brief Represents options controlling the behavior of an inference request submission.\n\n Pass this to @ref dv_infer_sync_with_options or @ref dv_infer_async_with_options\n when you need LLM-specific inference control or statistics collection.\n For standard CNN inference, the default zero-initialized struct is sufficient.\n Do not use @c active_tokens or @c valid_tokens for CNN inference — they are\n only meaningful for LLM token generation and prompt processing phases.\n\n @var dv_infer_options_t::enable_stats\n   If true, inference statistics are collected for this request.\n @var dv_infer_options_t::infer_type\n   Inference execution mode; defaults to DV_INFER_TYPE_ARA2_CNN if not set.\n @var dv_infer_options_t::active_tokens\n   Number of active tokens for LLM inference requests.\n @var dv_infer_options_t::valid_tokens\n   Number of valid tokens in the input for LLM inference requests.\n @var dv_infer_options_t::tokens_to_skip\n   Number of image or video tokens in the prompt to skip."]
 pub type dv_infer_options_t = dv_infer_options;
-#[doc = " @brief Represents parameters passed to @ref dv_endpoint_get_statistics_with_options to control\n        the type and filtering of returned endpoint statistics.\n\n Use @c state_type to request a specific category of state information from the server.\n Use @c temp_threshold to filter endpoints by temperature — only endpoints at or above\n this threshold (in degrees Celsius) are included in the response, which is useful when\n monitoring for thermal events and only interested in endpoints running hot.\n\n @var dv_stats_options_t::state_type\n   Identifies the category of state information requested.\n @var dv_stats_options_t::temp_threshold\n   Temperature threshold in degrees Celsius used to filter the statistics response."]
-#[repr(C)]
-#[derive(Debug, Copy, Clone)]
-pub struct dv_stats_options {
-    pub state_type: u32,
-    pub temp_threshold: u32,
-}
-#[allow(clippy::unnecessary_operation, clippy::identity_op)]
-const _: () = {
-    ["Size of dv_stats_options"][::std::mem::size_of::<dv_stats_options>() - 8usize];
-    ["Alignment of dv_stats_options"][::std::mem::align_of::<dv_stats_options>() - 4usize];
-    ["Offset of field: dv_stats_options::state_type"]
-        [::std::mem::offset_of!(dv_stats_options, state_type) - 0usize];
-    ["Offset of field: dv_stats_options::temp_threshold"]
-        [::std::mem::offset_of!(dv_stats_options, temp_threshold) - 4usize];
-};
-#[doc = " @brief Represents parameters passed to @ref dv_endpoint_get_statistics_with_options to control\n        the type and filtering of returned endpoint statistics.\n\n Use @c state_type to request a specific category of state information from the server.\n Use @c temp_threshold to filter endpoints by temperature — only endpoints at or above\n this threshold (in degrees Celsius) are included in the response, which is useful when\n monitoring for thermal events and only interested in endpoints running hot.\n\n @var dv_stats_options_t::state_type\n   Identifies the category of state information requested.\n @var dv_stats_options_t::temp_threshold\n   Temperature threshold in degrees Celsius used to filter the statistics response."]
-pub type dv_stats_options_t = dv_stats_options;
-#[doc = " @brief Represents LLM-specific model parameters describing token configuration and memory layout.\n\n This struct is populated automatically by the client library after a successful LLM model load\n and is accessible via @ref dv_model_t::llm_params. Do not modify these fields manually —\n they reflect the model's compiled configuration and are used internally by the inference pipeline.\n Use @c max_num_tokens to validate that your prompt length does not exceed the model's capacity\n before submitting inference requests.\n\n @var dv_model_llm_params_t::vocab_size\n   Vocabulary size of the model.\n @var dv_model_llm_params_t::embedding_size\n   Hidden (embedding) dimension size.\n @var dv_model_llm_params_t::input_precision\n   Data precision of model inputs; default is 8.\n @var dv_model_llm_params_t::output_precision\n   Data precision of model outputs; default is 32.\n @var dv_model_llm_params_t::max_num_tokens\n   Maximum number of tokens supported by the model.\n @var dv_model_llm_params_t::is_dynamic\n   If non-zero, the model is a dynamic LLM; default is true.\n @var dv_model_llm_params_t::num_inputs\n   Number of inputs for the model; default is 1.\n @var dv_model_llm_params_t::pad_token_id\n   Token ID used for padding.\n @var dv_model_llm_params_t::eos_token_id\n   Token ID marking end of sequence.\n @var dv_model_llm_params_t::bos_token_id\n   Token ID marking beginning of sequence.\n @var dv_model_llm_params_t::embedding_lookup_addr\n   Device address for input embeddings.\n @var dv_model_llm_params_t::embedding_lookup_scale_addr\n   Device address for input embedding scales.\n @var dv_model_llm_params_t::is_speculative\n   If non-zero, the model supports speculative decoding.\n @var dv_model_llm_params_t::max_prompt_input_size\n   Maximum size in bytes of a prompt input.\n @var dv_model_llm_params_t::max_token_input_size\n   Maximum size in bytes of a token input.\n @var dv_model_llm_params_t::max_output_size\n   Maximum size in bytes of the model output.\n @var dv_model_llm_params_t::is_host_specd\n   If non-zero, the model supports host-driven speculative decoding."]
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct dv_model_llm_params {
@@ -1320,15 +1178,10 @@ pub struct dv_model_llm_params {
     pub bos_token_id: u32,
     pub embedding_lookup_addr: u64,
     pub embedding_lookup_scale_addr: u64,
-    pub is_speculative: u32,
-    pub max_prompt_input_size: u64,
-    pub max_token_input_size: u64,
-    pub max_output_size: u64,
-    pub is_host_specd: u8,
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
-    ["Size of dv_model_llm_params"][::std::mem::size_of::<dv_model_llm_params>() - 96usize];
+    ["Size of dv_model_llm_params"][::std::mem::size_of::<dv_model_llm_params>() - 56usize];
     ["Alignment of dv_model_llm_params"][::std::mem::align_of::<dv_model_llm_params>() - 8usize];
     ["Offset of field: dv_model_llm_params::vocab_size"]
         [::std::mem::offset_of!(dv_model_llm_params, vocab_size) - 0usize];
@@ -1354,46 +1207,22 @@ const _: () = {
         [::std::mem::offset_of!(dv_model_llm_params, embedding_lookup_addr) - 40usize];
     ["Offset of field: dv_model_llm_params::embedding_lookup_scale_addr"]
         [::std::mem::offset_of!(dv_model_llm_params, embedding_lookup_scale_addr) - 48usize];
-    ["Offset of field: dv_model_llm_params::is_speculative"]
-        [::std::mem::offset_of!(dv_model_llm_params, is_speculative) - 56usize];
-    ["Offset of field: dv_model_llm_params::max_prompt_input_size"]
-        [::std::mem::offset_of!(dv_model_llm_params, max_prompt_input_size) - 64usize];
-    ["Offset of field: dv_model_llm_params::max_token_input_size"]
-        [::std::mem::offset_of!(dv_model_llm_params, max_token_input_size) - 72usize];
-    ["Offset of field: dv_model_llm_params::max_output_size"]
-        [::std::mem::offset_of!(dv_model_llm_params, max_output_size) - 80usize];
-    ["Offset of field: dv_model_llm_params::is_host_specd"]
-        [::std::mem::offset_of!(dv_model_llm_params, is_host_specd) - 88usize];
 };
-#[doc = " @brief Represents LLM-specific model parameters describing token configuration and memory layout.\n\n This struct is populated automatically by the client library after a successful LLM model load\n and is accessible via @ref dv_model_t::llm_params. Do not modify these fields manually —\n they reflect the model's compiled configuration and are used internally by the inference pipeline.\n Use @c max_num_tokens to validate that your prompt length does not exceed the model's capacity\n before submitting inference requests.\n\n @var dv_model_llm_params_t::vocab_size\n   Vocabulary size of the model.\n @var dv_model_llm_params_t::embedding_size\n   Hidden (embedding) dimension size.\n @var dv_model_llm_params_t::input_precision\n   Data precision of model inputs; default is 8.\n @var dv_model_llm_params_t::output_precision\n   Data precision of model outputs; default is 32.\n @var dv_model_llm_params_t::max_num_tokens\n   Maximum number of tokens supported by the model.\n @var dv_model_llm_params_t::is_dynamic\n   If non-zero, the model is a dynamic LLM; default is true.\n @var dv_model_llm_params_t::num_inputs\n   Number of inputs for the model; default is 1.\n @var dv_model_llm_params_t::pad_token_id\n   Token ID used for padding.\n @var dv_model_llm_params_t::eos_token_id\n   Token ID marking end of sequence.\n @var dv_model_llm_params_t::bos_token_id\n   Token ID marking beginning of sequence.\n @var dv_model_llm_params_t::embedding_lookup_addr\n   Device address for input embeddings.\n @var dv_model_llm_params_t::embedding_lookup_scale_addr\n   Device address for input embedding scales.\n @var dv_model_llm_params_t::is_speculative\n   If non-zero, the model supports speculative decoding.\n @var dv_model_llm_params_t::max_prompt_input_size\n   Maximum size in bytes of a prompt input.\n @var dv_model_llm_params_t::max_token_input_size\n   Maximum size in bytes of a token input.\n @var dv_model_llm_params_t::max_output_size\n   Maximum size in bytes of the model output.\n @var dv_model_llm_params_t::is_host_specd\n   If non-zero, the model supports host-driven speculative decoding."]
 pub type dv_model_llm_params_t = dv_model_llm_params;
-#[doc = " @brief Represents configuration parameters for updating LLM sampling and speculative decoding settings.\n\n Pass this to @ref dv_model_set_llm_cfg_params to tune sampling behavior at runtime\n without reloading the model. MCP counts (@c target_token_post_mcp etc.) control\n speculative decoding batch sizes and should only be set when the model was compiled\n with speculative decoding support.\n\n @var dv_llm_cfg_upd_req_t::top_k\n   Top-K value for sampling.\n @var dv_llm_cfg_upd_req_t::top_p\n   Top-P (nucleus sampling) probability threshold.\n @var dv_llm_cfg_upd_req_t::temperature\n   Sampling temperature controlling output randomness.\n @var dv_llm_cfg_upd_req_t::repetition_penalty\n   Penalty factor applied to discourage repeated tokens.\n @var dv_llm_cfg_upd_req_t::target_token_post_mcp\n   Target token count post-MCP for the target model in token generation phase.\n @var dv_llm_cfg_upd_req_t::target_token_pre_mcp\n   Target token count pre-MCP for the target model in token generation phase.\n @var dv_llm_cfg_upd_req_t::target_prompt_post_mcp\n   Target prompt count post-MCP for the target model in prompt processing phase.\n @var dv_llm_cfg_upd_req_t::target_prompt_pre_mcp\n   Target prompt count pre-MCP for the target model in prompt processing phase.\n @var dv_llm_cfg_upd_req_t::draft_token_post_mcp\n   Draft token count post-MCP for the draft model in speculative decoding.\n @var dv_llm_cfg_upd_req_t::draft_token_pre_mcp\n   Draft token count pre-MCP for the draft model in speculative decoding.\n @var dv_llm_cfg_upd_req_t::draft_prompt_post_mcp\n   Draft prompt count post-MCP for the draft model in speculative decoding.\n @var dv_llm_cfg_upd_req_t::draft_prompt_pre_mcp\n   Draft prompt count pre-MCP for the draft model in speculative decoding."]
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct dv_llm_cfg_upd_req_t {
-    #[doc = "< sampling llm parameter top_k"]
     pub top_k: u32,
-    #[doc = "< nucleus sampling llm parameter top_p"]
     pub top_p: f32,
-    #[doc = "< llm parameter temperature"]
     pub temperature: f32,
-    #[doc = "< llm parameter repetition_penalty"]
     pub repetition_penalty: f32,
-    #[doc = "< token post-processing targeted in mcp or host"]
     pub target_token_post_mcp: u32,
-    #[doc = "< token pre-processing targeted in mcp or host"]
     pub target_token_pre_mcp: u32,
-    #[doc = "< prompt post-processing targeted in mcp or host"]
     pub target_prompt_post_mcp: u32,
-    #[doc = "< prompt pre-processing targeted in mcp or host"]
     pub target_prompt_pre_mcp: u32,
-    #[doc = "< TRUE(1) for specd model"]
     pub draft_token_post_mcp: u32,
-    #[doc = "< TRUE(1) for specd model"]
     pub draft_token_pre_mcp: u32,
-    #[doc = "< TRUE(1) for specd model"]
     pub draft_prompt_post_mcp: u32,
-    #[doc = "< TRUE(1) for specd model"]
     pub draft_prompt_pre_mcp: u32,
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
@@ -1425,33 +1254,32 @@ const _: () = {
     ["Offset of field: dv_llm_cfg_upd_req_t::draft_prompt_pre_mcp"]
         [::std::mem::offset_of!(dv_llm_cfg_upd_req_t, draft_prompt_pre_mcp) - 44usize];
 };
-#[doc = " @brief Represents a loaded model and its associated metadata, session, and endpoint bindings.\n\n This object is returned by all model load APIs and must be kept alive for the duration\n of any inference requests that use it. Do not free or modify this struct directly —\n use @ref dv_model_unload to release it. For LLM models, check @c llm_params for\n token capacity and precision information before submitting inference requests."]
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct dv_model {
-    #[doc = "< model handle, managed by client library"]
+    #[doc = "< private handle, managed by client library"]
     pub handle: *mut dv_model_handle_t,
     #[doc = "< session handle on which model is loaded"]
     pub session: *mut dv_session_t,
     #[doc = "< endpoint handle on which model is loaded"]
     pub endpoint: *mut dv_endpoint_t,
-    #[doc = "< compiled model version"]
+    #[doc = "< model version as generated by compiler"]
     pub version: dv_version_t,
     #[doc = "< model name provided by user"]
     pub name: *mut ::std::os::raw::c_char,
     #[doc = "< model type"]
     pub model_type: dv_model_type_t,
-    #[doc = "< model name embedded during compilation"]
+    #[doc = "< internal model name as generated by compiler"]
     pub internal_name: *mut ::std::os::raw::c_char,
     #[doc = "< number of inputs needed by model"]
     pub num_inputs: ::std::os::raw::c_int,
-    #[doc = "< number of outputs produced by model"]
+    #[doc = "< number of output produced by model"]
     pub num_outputs: ::std::os::raw::c_int,
     #[doc = "< model priority as set by user [unused]"]
     pub priority: dv_model_priority_level_t,
-    #[doc = "< list of model specific input params (usefull for pre-processing)"]
+    #[doc = "< list of input params"]
     pub input_param: *mut dv_model_input_param_t,
-    #[doc = "< list of model specific output params (usefull for post-processing)"]
+    #[doc = "< list of output params"]
     pub output_param: *mut dv_model_output_param_t,
     #[doc = "< list of llm params, valid if model is llm model"]
     pub llm_params: *mut dv_model_llm_params_t,
@@ -1496,19 +1324,17 @@ const _: () = {
         [::std::mem::offset_of!(dv_model, model_load_options) - 112usize];
     ["Offset of field: dv_model::cp_layer"][::std::mem::offset_of!(dv_model, cp_layer) - 120usize];
 };
-#[doc = " @brief Represents a loaded model and its associated metadata, session, and endpoint bindings.\n\n This object is returned by all model load APIs and must be kept alive for the duration\n of any inference requests that use it. Do not free or modify this struct directly —\n use @ref dv_model_unload to release it. For LLM models, check @c llm_params for\n token capacity and precision information before submitting inference requests."]
 pub type dv_model_t = dv_model;
-#[doc = " @brief Represents detailed timing and hardware counter statistics for a completed inference request.\n\n Populate this by passing @c enable_stats = true in the inference request options.\n Use @c inference_execution_time and @c ep_hw_total_inference_cycles to profile\n model performance on hardware. Use @c input_transfer_time and @c output_transfer_time\n to identify data transfer bottlenecks between host and endpoint DRAM.\n Note: @c ep_queue_submission_time is currently unsupported and will always be -1."]
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct dv_infer_statistics {
-    #[doc = "< endpoint hardware system core clock in MHz"]
+    #[doc = "< ep hardware system core clock in MHz"]
     pub ep_hw_sys_clk: ::std::os::raw::c_int,
-    #[doc = "< endpoint hardware external nnp clock in MHz"]
+    #[doc = "< ep hardware external nnp clock in MHz"]
     pub ep_hw_nnp_clk: ::std::os::raw::c_int,
-    #[doc = "< endpoint hardware external sbp clock in MHz"]
+    #[doc = "< ep hardware external sbp clock in MHz"]
     pub ep_hw_sbp_clk: ::std::os::raw::c_int,
-    #[doc = "< endpoint hardware external dram clock in MHz"]
+    #[doc = "< ep hardware external dram clock in MHz"]
     pub ep_hw_dram_clk: ::std::os::raw::c_int,
     #[doc = "< total cycles taken to compute\ninference in hardware, including\nfloating point computation"]
     pub ep_hw_total_inference_cycles: u32,
@@ -1576,9 +1402,7 @@ const _: () = {
     ["Offset of field: dv_infer_statistics::output_ddr_address"]
         [::std::mem::offset_of!(dv_infer_statistics, output_ddr_address) - 104usize];
 };
-#[doc = " @brief Represents detailed timing and hardware counter statistics for a completed inference request.\n\n Populate this by passing @c enable_stats = true in the inference request options.\n Use @c inference_execution_time and @c ep_hw_total_inference_cycles to profile\n model performance on hardware. Use @c input_transfer_time and @c output_transfer_time\n to identify data transfer bottlenecks between host and endpoint DRAM.\n Note: @c ep_queue_submission_time is currently unsupported and will always be -1."]
 pub type dv_infer_statistics_t = dv_infer_statistics;
-#[doc = " @brief Represents LLM-specific information returned as part of a completed inference response.\n\n Valid only for LLM inference requests. Use @c llm_infer_resp_num_valid_tokens to determine\n how many output tokens were actually generated — the output blob may be larger than the\n valid token count if the model pre-allocates maximum output capacity.\n\n @var dv_infer_llm_info_t::llm_infer_resp_num_valid_tokens\n   Number of valid tokens in the LLM inference response."]
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct dv_infer_llm_info {
@@ -1591,9 +1415,7 @@ const _: () = {
     ["Offset of field: dv_infer_llm_info::llm_infer_resp_num_valid_tokens"]
         [::std::mem::offset_of!(dv_infer_llm_info, llm_infer_resp_num_valid_tokens) - 0usize];
 };
-#[doc = " @brief Represents LLM-specific information returned as part of a completed inference response.\n\n Valid only for LLM inference requests. Use @c llm_infer_resp_num_valid_tokens to determine\n how many output tokens were actually generated — the output blob may be larger than the\n valid token count if the model pre-allocates maximum output capacity.\n\n @var dv_infer_llm_info_t::llm_infer_resp_num_valid_tokens\n   Number of valid tokens in the LLM inference response."]
 pub type dv_infer_llm_info_t = dv_infer_llm_info;
-#[doc = " @brief Represents a single inference request and its associated runtime state.\n\n This object is returned by all inference submission APIs and must be kept alive\n until the inference completes. Check @c status to determine the current state.\n After completion, read results from @c op_blob_list and optionally inspect\n @c stats if statistics were enabled. Always free this object with @ref dv_infer_free\n after use — failure to do so will leak memory in the client library.\n For LLM inference, check @c llm_infer_info for valid token count before\n reading the output blob."]
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct dv_infer_request {
@@ -1615,7 +1437,6 @@ pub struct dv_infer_request {
     pub status: dv_inference_status_t,
     #[doc = "< inference stats"]
     pub stats: *mut dv_infer_statistics_t,
-    #[doc = "< LLM-specific inference response info; valid only for LLM inference requests"]
     pub llm_infer_info: *mut dv_infer_llm_info_t,
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
@@ -1643,16 +1464,340 @@ const _: () = {
     ["Offset of field: dv_infer_request::llm_infer_info"]
         [::std::mem::offset_of!(dv_infer_request, llm_infer_info) - 72usize];
 };
-#[doc = " @brief Represents a single inference request and its associated runtime state.\n\n This object is returned by all inference submission APIs and must be kept alive\n until the inference completes. Check @c status to determine the current state.\n After completion, read results from @c op_blob_list and optionally inspect\n @c stats if statistics were enabled. Always free this object with @ref dv_infer_free\n after use — failure to do so will leak memory in the client library.\n For LLM inference, check @c llm_infer_info for valid token count before\n reading the output blob."]
 pub type dv_infer_request_t = dv_infer_request;
+#[doc = "< dump trace logs"]
+pub const dv_client_log_level_DV_CLIENT_LOG_LEVEL_TRACE: dv_client_log_level = 0;
+#[doc = "< dump debug logs"]
+pub const dv_client_log_level_DV_CLIENT_LOG_LEVEL_DEBUG: dv_client_log_level = 1;
+#[doc = "< dump info logs"]
+pub const dv_client_log_level_DV_CLIENT_LOG_LEVEL_INFO: dv_client_log_level = 2;
+#[doc = "< dump warning logs"]
+pub const dv_client_log_level_DV_CLIENT_LOG_LEVEL_WARN: dv_client_log_level = 3;
+#[doc = "< dump error logs"]
+pub const dv_client_log_level_DV_CLIENT_LOG_LEVEL_ERROR: dv_client_log_level = 4;
+#[doc = "< dump critical logs"]
+pub const dv_client_log_level_DV_CLIENT_LOG_LEVEL_CRITICAL: dv_client_log_level = 5;
+#[doc = "< turn off client logs"]
+pub const dv_client_log_level_DV_CLIENT_LOG_LEVEL_OFF: dv_client_log_level = 6;
+pub type dv_client_log_level = ::std::os::raw::c_uint;
+pub use self::dv_client_log_level as dv_client_log_level_t;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct dv_stats_options {
+    pub state_type: u32,
+    pub temp_threshold: u32,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of dv_stats_options"][::std::mem::size_of::<dv_stats_options>() - 8usize];
+    ["Alignment of dv_stats_options"][::std::mem::align_of::<dv_stats_options>() - 4usize];
+    ["Offset of field: dv_stats_options::state_type"]
+        [::std::mem::offset_of!(dv_stats_options, state_type) - 0usize];
+    ["Offset of field: dv_stats_options::temp_threshold"]
+        [::std::mem::offset_of!(dv_stats_options, temp_threshold) - 4usize];
+};
+pub type dv_stats_options_t = dv_stats_options;
+pub const dv_type_code_DV_TYPE_CLIENT_LIB: dv_type_code = 0;
+pub const dv_type_code_DV_TYPE_PROXY: dv_type_code = 1;
+pub const dv_type_code_DV_TYPE_DEVICE: dv_type_code = 2;
+pub const dv_type_code_DV_TYPE_DEVICE_MEMORY: dv_type_code = 3;
+pub type dv_type_code = ::std::os::raw::c_uint;
+pub use self::dv_type_code as dv_component_type_t;
+#[doc = "< fully functional"]
+pub const dv_criticality_code_DV_SEVERITY_OK: dv_criticality_code = 0;
+#[doc = "< temporary issue, retry possible"]
+pub const dv_criticality_code_DV_SEVERITY_RETRYABLE: dv_criticality_code = 1;
+#[doc = "< functional but not as expected"]
+pub const dv_criticality_code_DV_SEVERITY_DEGRADED: dv_criticality_code = 2;
+#[doc = "< non-recoverable, abort/escalate"]
+pub const dv_criticality_code_DV_SEVERITY_FATAL: dv_criticality_code = 3;
+pub type dv_criticality_code = ::std::os::raw::c_uint;
+pub use self::dv_criticality_code as dv_error_severity_t;
+pub type dv_sub_code_t = u32;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct dv_status {
+    #[doc = "< primary error code (backward compatible)"]
+    pub main_code: dv_status_code_t,
+    #[doc = "< secondary error details"]
+    pub sub_code: dv_sub_code_t,
+    #[doc = "< error category"]
+    pub type_: dv_component_type_t,
+    #[doc = "< severity level"]
+    pub criticality: dv_error_severity_t,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of dv_status"][::std::mem::size_of::<dv_status>() - 16usize];
+    ["Alignment of dv_status"][::std::mem::align_of::<dv_status>() - 4usize];
+    ["Offset of field: dv_status::main_code"]
+        [::std::mem::offset_of!(dv_status, main_code) - 0usize];
+    ["Offset of field: dv_status::sub_code"][::std::mem::offset_of!(dv_status, sub_code) - 4usize];
+    ["Offset of field: dv_status::type_"][::std::mem::offset_of!(dv_status, type_) - 8usize];
+    ["Offset of field: dv_status::criticality"]
+        [::std::mem::offset_of!(dv_status, criticality) - 12usize];
+};
+pub type dv_status_t = dv_status;
+#[doc = "< endpoint is in init state"]
+pub const DV_ENDPOINT_STATE_1_3_DV_ENDPOINT_STATE_1_3_INIT: DV_ENDPOINT_STATE_1_3 = 0;
+#[doc = "< endpoint is in idle state"]
+pub const DV_ENDPOINT_STATE_1_3_DV_ENDPOINT_STATE_1_3_IDLE: DV_ENDPOINT_STATE_1_3 = 1;
+#[doc = "< endpoint is in active state"]
+pub const DV_ENDPOINT_STATE_1_3_DV_ENDPOINT_STATE_1_3_ACTIVE: DV_ENDPOINT_STATE_1_3 = 2;
+#[doc = "< endpoint is operating at reduced frequency"]
+pub const DV_ENDPOINT_STATE_1_3_DV_ENDPOINT_STATE_1_3_ACTIVE_SLOW: DV_ENDPOINT_STATE_1_3 = 3;
+#[doc = "< endpoint is operating at reduced frequency"]
+pub const DV_ENDPOINT_STATE_1_3_DV_ENDPOINT_STATE_1_3_THERMAL_ACTIVE_SLOW: DV_ENDPOINT_STATE_1_3 =
+    4;
+#[doc = "< endpoint is in thermal Inactive state"]
+pub const DV_ENDPOINT_STATE_1_3_DV_ENDPOINT_STATE_1_3_FAIL_SAFE: DV_ENDPOINT_STATE_1_3 = 5;
+#[doc = "< endpoint is in unknown thermal state"]
+pub const DV_ENDPOINT_STATE_1_3_DV_ENDPOINT_STATE_1_3_THERMAL_UNKNOWN: DV_ENDPOINT_STATE_1_3 = 6;
+#[doc = "< endpoint is in Inactive state"]
+pub const DV_ENDPOINT_STATE_1_3_DV_ENDPOINT_STATE_1_3_INACTIVE: DV_ENDPOINT_STATE_1_3 = 7;
+#[doc = "< endpoint is in faulty state"]
+pub const DV_ENDPOINT_STATE_1_3_DV_ENDPOINT_STATE_1_3_FAULT: DV_ENDPOINT_STATE_1_3 = 8;
+#[doc = "< [unsupported]"]
+pub const DV_ENDPOINT_STATE_1_3_DV_ENDPOINT_STATE_1_3_BAD_INTERFACE: DV_ENDPOINT_STATE_1_3 = 1001;
+#[doc = "< [unsupported]"]
+pub const DV_ENDPOINT_STATE_1_3_DV_ENDPOINT_STATE_1_3_RECOVERY: DV_ENDPOINT_STATE_1_3 = 1003;
+#[doc = "< [unsupported]"]
+pub const DV_ENDPOINT_STATE_1_3_DV_ENDPOINT_STATE_1_3_DEAD: DV_ENDPOINT_STATE_1_3 = 1004;
+#[doc = "< [unsupported]"]
+pub const DV_ENDPOINT_STATE_1_3_DV_ENDPOINT_STATE_1_3_DRAIN: DV_ENDPOINT_STATE_1_3 = 1005;
+#[doc = "< [unsupported]"]
+pub const DV_ENDPOINT_STATE_1_3_DV_ENDPOINT_STATE_1_3_POWER_GATED: DV_ENDPOINT_STATE_1_3 = 1006;
+#[doc = "< [unsupported]"]
+pub const DV_ENDPOINT_STATE_1_3_DV_ENDPOINT_STATE_1_3_CLOSED: DV_ENDPOINT_STATE_1_3 = 1007;
+pub type DV_ENDPOINT_STATE_1_3 = ::std::os::raw::c_uint;
+pub use self::DV_ENDPOINT_STATE_1_3 as dv_endpoint_state_1_3_t;
+#[doc = "< null pointer passed to library"]
+pub const dv_status_code_1_3_DV_1_3_ERROR_NULLPTR: dv_status_code_1_3 = 310;
+#[doc = "< destination buffer is small"]
+pub const dv_status_code_1_3_DV_1_3_ERROR_DEST_TOO_SMALL: dv_status_code_1_3 = 311;
+#[doc = "< source buffer is small"]
+pub const dv_status_code_1_3_DV_1_3_ERROR_SRC_TOO_SMALL: dv_status_code_1_3 = 312;
+#[doc = "< memcpy_s failed"]
+pub const dv_status_code_1_3_DV_1_3_ERROR_MEMCPY_FAILED: dv_status_code_1_3 = 313;
+#[doc = "< memset_s failed"]
+pub const dv_status_code_1_3_DV_1_3_ERROR_MEMSET_FAILED: dv_status_code_1_3 = 314;
+#[doc = "< strncpy_s failed"]
+pub const dv_status_code_1_3_DV_1_3_ERROR_STRNCPY_FAILED: dv_status_code_1_3 = 315;
+#[doc = "< unable to set dynamic power switch idle time"]
+pub const dv_status_code_1_3_DV_1_3_ENDPOINT_DYN_POWER_SET_FAILURE: dv_status_code_1_3 = 506;
+#[doc = "< failed to free the allocated tensors"]
+pub const dv_status_code_1_3_DV_1_3_TENSOR_FREE_ERROR: dv_status_code_1_3 = 519;
+#[doc = "< inference request failed due to token overflow"]
+pub const dv_status_code_1_3_DV_1_3_INFER_TOKEN_OVERFLOW: dv_status_code_1_3 = 569;
+pub type dv_status_code_1_3 = ::std::os::raw::c_uint;
+pub use self::dv_status_code_1_3 as dv_status_code_1_3_t;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct dv_model_output_param_1_3 {
+    pub postprocess_param: *mut dv_model_output_postprocess_param_t,
+    #[doc = "< layer id"]
+    pub layer_id: ::std::os::raw::c_int,
+    #[doc = "< input blob id within the layer"]
+    pub blob_id: ::std::os::raw::c_int,
+    #[doc = "< layer fused parent id"]
+    pub fused_parent_id: ::std::os::raw::c_int,
+    #[doc = "< layer name"]
+    pub layer_name: *mut ::std::os::raw::c_char,
+    #[doc = "< input blob name within the layer"]
+    pub blob_name: *mut ::std::os::raw::c_char,
+    #[doc = "< layer fused parent name"]
+    pub layer_fused_parent_name: *mut ::std::os::raw::c_char,
+    #[doc = "< layer type"]
+    pub layer_type: *mut ::std::os::raw::c_char,
+    #[doc = "< output layout"]
+    pub layout: *mut ::std::os::raw::c_char,
+    #[doc = "< layer size in bytes"]
+    pub size: ::std::os::raw::c_int,
+    #[doc = "< layer width in pixels"]
+    pub width: ::std::os::raw::c_int,
+    #[doc = "< layer height in pixels"]
+    pub height: ::std::os::raw::c_int,
+    #[doc = "< layer depth in pixels"]
+    pub depth: ::std::os::raw::c_int,
+    #[doc = "< number of channels"]
+    pub nch: ::std::os::raw::c_int,
+    #[doc = "< bytes per pixel"]
+    pub bpp: ::std::os::raw::c_int,
+    #[doc = "< number of classes the model is trained on"]
+    pub num_classes: ::std::os::raw::c_int,
+    #[doc = "< output type of layer"]
+    pub layer_output_type: dv_layer_output_type_t,
+    #[doc = "< num dimension"]
+    pub num: ::std::os::raw::c_int,
+    #[doc = "< max batch id"]
+    pub max_dynamic_id: ::std::os::raw::c_int,
+    #[doc = "< source graph output layer name"]
+    pub src_graph_layer_name: *mut ::std::os::raw::c_char,
+    #[doc = "< 1, if any parent layer is NMS -- added in 1.3"]
+    pub has_nms_parent: ::std::os::raw::c_int,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of dv_model_output_param_1_3"]
+        [::std::mem::size_of::<dv_model_output_param_1_3>() - 120usize];
+    ["Alignment of dv_model_output_param_1_3"]
+        [::std::mem::align_of::<dv_model_output_param_1_3>() - 8usize];
+    ["Offset of field: dv_model_output_param_1_3::postprocess_param"]
+        [::std::mem::offset_of!(dv_model_output_param_1_3, postprocess_param) - 0usize];
+    ["Offset of field: dv_model_output_param_1_3::layer_id"]
+        [::std::mem::offset_of!(dv_model_output_param_1_3, layer_id) - 8usize];
+    ["Offset of field: dv_model_output_param_1_3::blob_id"]
+        [::std::mem::offset_of!(dv_model_output_param_1_3, blob_id) - 12usize];
+    ["Offset of field: dv_model_output_param_1_3::fused_parent_id"]
+        [::std::mem::offset_of!(dv_model_output_param_1_3, fused_parent_id) - 16usize];
+    ["Offset of field: dv_model_output_param_1_3::layer_name"]
+        [::std::mem::offset_of!(dv_model_output_param_1_3, layer_name) - 24usize];
+    ["Offset of field: dv_model_output_param_1_3::blob_name"]
+        [::std::mem::offset_of!(dv_model_output_param_1_3, blob_name) - 32usize];
+    ["Offset of field: dv_model_output_param_1_3::layer_fused_parent_name"]
+        [::std::mem::offset_of!(dv_model_output_param_1_3, layer_fused_parent_name) - 40usize];
+    ["Offset of field: dv_model_output_param_1_3::layer_type"]
+        [::std::mem::offset_of!(dv_model_output_param_1_3, layer_type) - 48usize];
+    ["Offset of field: dv_model_output_param_1_3::layout"]
+        [::std::mem::offset_of!(dv_model_output_param_1_3, layout) - 56usize];
+    ["Offset of field: dv_model_output_param_1_3::size"]
+        [::std::mem::offset_of!(dv_model_output_param_1_3, size) - 64usize];
+    ["Offset of field: dv_model_output_param_1_3::width"]
+        [::std::mem::offset_of!(dv_model_output_param_1_3, width) - 68usize];
+    ["Offset of field: dv_model_output_param_1_3::height"]
+        [::std::mem::offset_of!(dv_model_output_param_1_3, height) - 72usize];
+    ["Offset of field: dv_model_output_param_1_3::depth"]
+        [::std::mem::offset_of!(dv_model_output_param_1_3, depth) - 76usize];
+    ["Offset of field: dv_model_output_param_1_3::nch"]
+        [::std::mem::offset_of!(dv_model_output_param_1_3, nch) - 80usize];
+    ["Offset of field: dv_model_output_param_1_3::bpp"]
+        [::std::mem::offset_of!(dv_model_output_param_1_3, bpp) - 84usize];
+    ["Offset of field: dv_model_output_param_1_3::num_classes"]
+        [::std::mem::offset_of!(dv_model_output_param_1_3, num_classes) - 88usize];
+    ["Offset of field: dv_model_output_param_1_3::layer_output_type"]
+        [::std::mem::offset_of!(dv_model_output_param_1_3, layer_output_type) - 92usize];
+    ["Offset of field: dv_model_output_param_1_3::num"]
+        [::std::mem::offset_of!(dv_model_output_param_1_3, num) - 96usize];
+    ["Offset of field: dv_model_output_param_1_3::max_dynamic_id"]
+        [::std::mem::offset_of!(dv_model_output_param_1_3, max_dynamic_id) - 100usize];
+    ["Offset of field: dv_model_output_param_1_3::src_graph_layer_name"]
+        [::std::mem::offset_of!(dv_model_output_param_1_3, src_graph_layer_name) - 104usize];
+    ["Offset of field: dv_model_output_param_1_3::has_nms_parent"]
+        [::std::mem::offset_of!(dv_model_output_param_1_3, has_nms_parent) - 112usize];
+};
+pub type dv_model_output_param_1_3_t = dv_model_output_param_1_3;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct dv_endpoint_statistics_1_3 {
+    #[doc = "< endpoint handle"]
+    pub ep: *mut dv_endpoint_t,
+    #[doc = "< endpoint state"]
+    pub state: dv_endpoint_state_t,
+    #[doc = "< endpoint system core clock in MHz"]
+    pub ep_sys_clk: ::std::os::raw::c_int,
+    #[doc = "< endpoint dram clock in MHz"]
+    pub ep_dram_clk: ::std::os::raw::c_int,
+    #[doc = "< average endpoint core voltage in volts"]
+    pub ep_core_voltage: f32,
+    #[doc = "< average endpoint temperature in degrees celsius"]
+    pub ep_temp: f32,
+    #[doc = "< [unsupported]"]
+    pub num_inference_queues: ::std::os::raw::c_int,
+    #[doc = "< [unsupported]"]
+    pub ep_infq_stats: *mut dv_inference_queue_statistics_t,
+    #[doc = "< [unsupported]"]
+    pub num_active_models: ::std::os::raw::c_int,
+    #[doc = "< [unsupported]"]
+    pub model_stats: *mut dv_model_statistics_t,
+    #[doc = "< endpoint dram statistics"]
+    pub ep_dram_stats: dv_endpoint_dram_statistics_t,
+    #[doc = "< [unsupported]"]
+    pub ep_power_state: dv_endpoint_power_state_t,
+    #[doc = "< non zero for usb devices"]
+    pub ep_soft_reset_count: u32,
+    #[doc = "< endpoint sbp clock in MHz -- added in 1.3"]
+    pub ep_sbp_clk: ::std::os::raw::c_int,
+    #[doc = "< endpoint nnp clock in MHz -- added in 1.3"]
+    pub ep_nnp_clk: ::std::os::raw::c_int,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of dv_endpoint_statistics_1_3"]
+        [::std::mem::size_of::<dv_endpoint_statistics_1_3>() - 128usize];
+    ["Alignment of dv_endpoint_statistics_1_3"]
+        [::std::mem::align_of::<dv_endpoint_statistics_1_3>() - 8usize];
+    ["Offset of field: dv_endpoint_statistics_1_3::ep"]
+        [::std::mem::offset_of!(dv_endpoint_statistics_1_3, ep) - 0usize];
+    ["Offset of field: dv_endpoint_statistics_1_3::state"]
+        [::std::mem::offset_of!(dv_endpoint_statistics_1_3, state) - 8usize];
+    ["Offset of field: dv_endpoint_statistics_1_3::ep_sys_clk"]
+        [::std::mem::offset_of!(dv_endpoint_statistics_1_3, ep_sys_clk) - 12usize];
+    ["Offset of field: dv_endpoint_statistics_1_3::ep_dram_clk"]
+        [::std::mem::offset_of!(dv_endpoint_statistics_1_3, ep_dram_clk) - 16usize];
+    ["Offset of field: dv_endpoint_statistics_1_3::ep_core_voltage"]
+        [::std::mem::offset_of!(dv_endpoint_statistics_1_3, ep_core_voltage) - 20usize];
+    ["Offset of field: dv_endpoint_statistics_1_3::ep_temp"]
+        [::std::mem::offset_of!(dv_endpoint_statistics_1_3, ep_temp) - 24usize];
+    ["Offset of field: dv_endpoint_statistics_1_3::num_inference_queues"]
+        [::std::mem::offset_of!(dv_endpoint_statistics_1_3, num_inference_queues) - 28usize];
+    ["Offset of field: dv_endpoint_statistics_1_3::ep_infq_stats"]
+        [::std::mem::offset_of!(dv_endpoint_statistics_1_3, ep_infq_stats) - 32usize];
+    ["Offset of field: dv_endpoint_statistics_1_3::num_active_models"]
+        [::std::mem::offset_of!(dv_endpoint_statistics_1_3, num_active_models) - 40usize];
+    ["Offset of field: dv_endpoint_statistics_1_3::model_stats"]
+        [::std::mem::offset_of!(dv_endpoint_statistics_1_3, model_stats) - 48usize];
+    ["Offset of field: dv_endpoint_statistics_1_3::ep_dram_stats"]
+        [::std::mem::offset_of!(dv_endpoint_statistics_1_3, ep_dram_stats) - 56usize];
+    ["Offset of field: dv_endpoint_statistics_1_3::ep_power_state"]
+        [::std::mem::offset_of!(dv_endpoint_statistics_1_3, ep_power_state) - 112usize];
+    ["Offset of field: dv_endpoint_statistics_1_3::ep_soft_reset_count"]
+        [::std::mem::offset_of!(dv_endpoint_statistics_1_3, ep_soft_reset_count) - 116usize];
+    ["Offset of field: dv_endpoint_statistics_1_3::ep_sbp_clk"]
+        [::std::mem::offset_of!(dv_endpoint_statistics_1_3, ep_sbp_clk) - 120usize];
+    ["Offset of field: dv_endpoint_statistics_1_3::ep_nnp_clk"]
+        [::std::mem::offset_of!(dv_endpoint_statistics_1_3, ep_nnp_clk) - 124usize];
+};
+pub type dv_endpoint_statistics_1_3_t = dv_endpoint_statistics_1_3;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct dv_model_load_options_1_3 {
+    #[doc = "< model name"]
+    pub model_name: *mut ::std::os::raw::c_char,
+    #[doc = "< priority of the model [unused]"]
+    pub priority: dv_model_priority_level_t,
+    #[doc = "< if true, the model is cached on disk"]
+    pub cache: bool,
+    #[doc = "< if true, the load API returns immediately"]
+    pub async_: bool,
+    #[doc = "< model type, defaults to DV_MODEL_TYPE_ARA2_CNN"]
+    pub model_type: dv_model_type_t,
+    #[doc = "< send the path instead of the blob -- added in 1.3"]
+    pub send_model_filepath_to_proxy: bool,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of dv_model_load_options_1_3"]
+        [::std::mem::size_of::<dv_model_load_options_1_3>() - 24usize];
+    ["Alignment of dv_model_load_options_1_3"]
+        [::std::mem::align_of::<dv_model_load_options_1_3>() - 8usize];
+    ["Offset of field: dv_model_load_options_1_3::model_name"]
+        [::std::mem::offset_of!(dv_model_load_options_1_3, model_name) - 0usize];
+    ["Offset of field: dv_model_load_options_1_3::priority"]
+        [::std::mem::offset_of!(dv_model_load_options_1_3, priority) - 8usize];
+    ["Offset of field: dv_model_load_options_1_3::cache"]
+        [::std::mem::offset_of!(dv_model_load_options_1_3, cache) - 12usize];
+    ["Offset of field: dv_model_load_options_1_3::async_"]
+        [::std::mem::offset_of!(dv_model_load_options_1_3, async_) - 13usize];
+    ["Offset of field: dv_model_load_options_1_3::model_type"]
+        [::std::mem::offset_of!(dv_model_load_options_1_3, model_type) - 16usize];
+    ["Offset of field: dv_model_load_options_1_3::send_model_filepath_to_proxy"]
+        [::std::mem::offset_of!(dv_model_load_options_1_3, send_model_filepath_to_proxy) - 20usize];
+};
+pub type dv_model_load_options_1_3_t = dv_model_load_options_1_3;
 pub struct araclient {
     __library: ::libloading::Library,
     pub dv_stringify_status_code: Result<
         unsafe extern "C" fn(status_code: dv_status_code_t) -> *const ::std::os::raw::c_char,
-        ::libloading::Error,
-    >,
-    pub dv_client_set_log_level: Result<
-        unsafe extern "C" fn(log_level: dv_client_log_level_t) -> dv_status_code_t,
         ::libloading::Error,
     >,
     pub dv_session_create_via_unix_socket: Result<
@@ -1749,16 +1894,6 @@ pub struct araclient {
         ) -> dv_status_code_t,
         ::libloading::Error,
     >,
-    pub dv_endpoint_get_statistics_with_options: Result<
-        unsafe extern "C" fn(
-            session: *mut dv_session_t,
-            ep: *mut dv_endpoint_t,
-            ep_stats: *mut *mut dv_endpoint_statistics_t,
-            ep_count: *mut ::std::os::raw::c_int,
-            stats_options: *mut dv_stats_options_t,
-        ) -> dv_status_code_t,
-        ::libloading::Error,
-    >,
     pub dv_endpoint_get_statistics: Result<
         unsafe extern "C" fn(
             session: *mut dv_session_t,
@@ -1784,17 +1919,6 @@ pub struct araclient {
             priority: dv_model_priority_level_t,
             model_handle: *mut *mut dv_model_t,
         ) -> dv_status_code_t,
-        ::libloading::Error,
-    >,
-    pub dv_model_load_from_file_s: Result<
-        unsafe extern "C" fn(
-            session: *mut dv_session_t,
-            endpt: *mut dv_endpoint_t,
-            model_file_path: *const ::std::os::raw::c_char,
-            model_name: *const ::std::os::raw::c_char,
-            priority: dv_model_priority_level_t,
-            model_handle: *mut *mut dv_model_t,
-        ) -> dv_status_t,
         ::libloading::Error,
     >,
     pub dv_model_load_from_blob: Result<
@@ -1864,18 +1988,6 @@ pub struct araclient {
         ) -> dv_status_code_t,
         ::libloading::Error,
     >,
-    pub dv_infer_async_s: Result<
-        unsafe extern "C" fn(
-            session: *mut dv_session_t,
-            endpt: *mut dv_endpoint_t,
-            model: *mut dv_model_t,
-            ip_array: *mut dv_blob_t,
-            op_array: *mut dv_blob_t,
-            enable_stats: bool,
-            inf_obj: *mut *mut dv_infer_request_t,
-        ) -> dv_status_t,
-        ::libloading::Error,
-    >,
     pub dv_infer_wait_for_all_completion: Result<
         unsafe extern "C" fn(
             session: *mut dv_session_t,
@@ -1895,16 +2007,6 @@ pub struct araclient {
             timeout: ::std::os::raw::c_int,
             inf_obj: *mut *mut dv_infer_request_t,
         ) -> dv_status_code_t,
-        ::libloading::Error,
-    >,
-    pub dv_infer_wait_for_completion_s: Result<
-        unsafe extern "C" fn(
-            session: *mut dv_session_t,
-            inf_obj_list: *mut *mut dv_infer_request_t,
-            inf_obj_count: ::std::os::raw::c_int,
-            timeout: ::std::os::raw::c_int,
-            inf_obj: *mut *mut dv_infer_request_t,
-        ) -> dv_status_t,
         ::libloading::Error,
     >,
     pub dv_infer_get_req_id: Result<
@@ -1958,18 +2060,6 @@ pub struct araclient {
         ) -> dv_status_code_t,
         ::libloading::Error,
     >,
-    pub dv_infer_async_with_options_s: Result<
-        unsafe extern "C" fn(
-            session: *mut dv_session_t,
-            endpt: *mut dv_endpoint_t,
-            model: *mut dv_model_t,
-            ip_array: *mut dv_blob_t,
-            op_array: *mut dv_blob_t,
-            inf_obj: *mut *mut dv_infer_request_t,
-            infer_options: *mut dv_infer_options_t,
-        ) -> dv_status_t,
-        ::libloading::Error,
-    >,
     pub dv_fetch_outputs_by_layer_name: Result<
         unsafe extern "C" fn(
             inf_obj: *mut dv_infer_request_t,
@@ -1989,16 +2079,6 @@ pub struct araclient {
         ) -> dv_status_code_t,
         ::libloading::Error,
     >,
-    pub dv_model_load_from_file_with_options_s: Result<
-        unsafe extern "C" fn(
-            session: *mut dv_session_t,
-            endpt: *mut dv_endpoint_t,
-            model_file_path: *const ::std::os::raw::c_char,
-            model_handle: *mut *mut dv_model_t,
-            options: *mut dv_model_load_options_t,
-        ) -> dv_status_t,
-        ::libloading::Error,
-    >,
     pub dv_model_load_from_blob_with_options: Result<
         unsafe extern "C" fn(
             session: *mut dv_session_t,
@@ -2007,16 +2087,6 @@ pub struct araclient {
             model_handle: *mut *mut dv_model_t,
             options: *mut dv_model_load_options_t,
         ) -> dv_status_code_t,
-        ::libloading::Error,
-    >,
-    pub dv_model_load_from_blob_with_options_s: Result<
-        unsafe extern "C" fn(
-            session: *mut dv_session_t,
-            endpt: *mut dv_endpoint_t,
-            blob: *mut dv_blob_t,
-            model_handle: *mut *mut dv_model_t,
-            options: *mut dv_model_load_options_t,
-        ) -> dv_status_t,
         ::libloading::Error,
     >,
     pub dv_exchange_current_version_details: Result<
@@ -2043,6 +2113,85 @@ pub struct araclient {
         unsafe extern "C" fn(product_version: *mut dv_product_version_t) -> dv_status_code_t,
         ::libloading::Error,
     >,
+    pub dv_client_set_log_level: Result<
+        unsafe extern "C" fn(log_level: dv_client_log_level_t) -> dv_status_code_t,
+        ::libloading::Error,
+    >,
+    pub dv_endpoint_get_statistics_with_options: Result<
+        unsafe extern "C" fn(
+            session: *mut dv_session_t,
+            ep: *mut dv_endpoint_t,
+            ep_stats: *mut *mut dv_endpoint_statistics_1_3_t,
+            ep_count: *mut ::std::os::raw::c_int,
+            stats_options: *mut dv_stats_options_t,
+        ) -> dv_status_code_t,
+        ::libloading::Error,
+    >,
+    pub dv_model_load_from_file_s: Result<
+        unsafe extern "C" fn(
+            session: *mut dv_session_t,
+            endpt: *mut dv_endpoint_t,
+            model_file_path: *const ::std::os::raw::c_char,
+            model_name: *const ::std::os::raw::c_char,
+            priority: dv_model_priority_level_t,
+            model_handle: *mut *mut dv_model_t,
+        ) -> dv_status_t,
+        ::libloading::Error,
+    >,
+    pub dv_model_load_from_file_with_options_s: Result<
+        unsafe extern "C" fn(
+            session: *mut dv_session_t,
+            endpt: *mut dv_endpoint_t,
+            model_file_path: *const ::std::os::raw::c_char,
+            model_handle: *mut *mut dv_model_t,
+            options: *mut dv_model_load_options_1_3_t,
+        ) -> dv_status_t,
+        ::libloading::Error,
+    >,
+    pub dv_model_load_from_blob_with_options_s: Result<
+        unsafe extern "C" fn(
+            session: *mut dv_session_t,
+            endpt: *mut dv_endpoint_t,
+            blob: *mut dv_blob_t,
+            model_handle: *mut *mut dv_model_t,
+            options: *mut dv_model_load_options_1_3_t,
+        ) -> dv_status_t,
+        ::libloading::Error,
+    >,
+    pub dv_infer_async_s: Result<
+        unsafe extern "C" fn(
+            session: *mut dv_session_t,
+            endpt: *mut dv_endpoint_t,
+            model: *mut dv_model_t,
+            ip_array: *mut dv_blob_t,
+            op_array: *mut dv_blob_t,
+            enable_stats: bool,
+            inf_obj: *mut *mut dv_infer_request_t,
+        ) -> dv_status_t,
+        ::libloading::Error,
+    >,
+    pub dv_infer_async_with_options_s: Result<
+        unsafe extern "C" fn(
+            session: *mut dv_session_t,
+            endpt: *mut dv_endpoint_t,
+            model: *mut dv_model_t,
+            ip_array: *mut dv_blob_t,
+            op_array: *mut dv_blob_t,
+            inf_obj: *mut *mut dv_infer_request_t,
+            infer_options: *mut dv_infer_options_t,
+        ) -> dv_status_t,
+        ::libloading::Error,
+    >,
+    pub dv_infer_wait_for_completion_s: Result<
+        unsafe extern "C" fn(
+            session: *mut dv_session_t,
+            inf_obj_list: *mut *mut dv_infer_request_t,
+            inf_obj_count: ::std::os::raw::c_int,
+            timeout: ::std::os::raw::c_int,
+            inf_obj: *mut *mut dv_infer_request_t,
+        ) -> dv_status_t,
+        ::libloading::Error,
+    >,
 }
 impl araclient {
     pub unsafe fn new<P>(path: P) -> Result<Self, ::libloading::Error>
@@ -2059,7 +2208,6 @@ impl araclient {
     {
         let __library = library.into();
         let dv_stringify_status_code = __library.get(b"dv_stringify_status_code\0").map(|sym| *sym);
-        let dv_client_set_log_level = __library.get(b"dv_client_set_log_level\0").map(|sym| *sym);
         let dv_session_create_via_unix_socket = __library
             .get(b"dv_session_create_via_unix_socket\0")
             .map(|sym| *sym);
@@ -2085,9 +2233,6 @@ impl araclient {
         let dv_endpoint_free_dram_statistics = __library
             .get(b"dv_endpoint_free_dram_statistics\0")
             .map(|sym| *sym);
-        let dv_endpoint_get_statistics_with_options = __library
-            .get(b"dv_endpoint_get_statistics_with_options\0")
-            .map(|sym| *sym);
         let dv_endpoint_get_statistics = __library
             .get(b"dv_endpoint_get_statistics\0")
             .map(|sym| *sym);
@@ -2095,9 +2240,6 @@ impl araclient {
             .get(b"dv_endpoint_free_statistics\0")
             .map(|sym| *sym);
         let dv_model_load_from_file = __library.get(b"dv_model_load_from_file\0").map(|sym| *sym);
-        let dv_model_load_from_file_s = __library
-            .get(b"dv_model_load_from_file_s\0")
-            .map(|sym| *sym);
         let dv_model_load_from_blob = __library.get(b"dv_model_load_from_blob\0").map(|sym| *sym);
         let dv_model_unload = __library.get(b"dv_model_unload\0").map(|sym| *sym);
         let dv_model_get_parameters_from_file = __library
@@ -2112,15 +2254,11 @@ impl araclient {
             .map(|sym| *sym);
         let dv_infer_sync = __library.get(b"dv_infer_sync\0").map(|sym| *sym);
         let dv_infer_async = __library.get(b"dv_infer_async\0").map(|sym| *sym);
-        let dv_infer_async_s = __library.get(b"dv_infer_async_s\0").map(|sym| *sym);
         let dv_infer_wait_for_all_completion = __library
             .get(b"dv_infer_wait_for_all_completion\0")
             .map(|sym| *sym);
         let dv_infer_wait_for_completion = __library
             .get(b"dv_infer_wait_for_completion\0")
-            .map(|sym| *sym);
-        let dv_infer_wait_for_completion_s = __library
-            .get(b"dv_infer_wait_for_completion_s\0")
             .map(|sym| *sym);
         let dv_infer_get_req_id = __library.get(b"dv_infer_get_req_id\0").map(|sym| *sym);
         let dv_infer_free = __library.get(b"dv_infer_free\0").map(|sym| *sym);
@@ -2134,23 +2272,14 @@ impl araclient {
         let dv_infer_async_with_options = __library
             .get(b"dv_infer_async_with_options\0")
             .map(|sym| *sym);
-        let dv_infer_async_with_options_s = __library
-            .get(b"dv_infer_async_with_options_s\0")
-            .map(|sym| *sym);
         let dv_fetch_outputs_by_layer_name = __library
             .get(b"dv_fetch_outputs_by_layer_name\0")
             .map(|sym| *sym);
         let dv_model_load_from_file_with_options = __library
             .get(b"dv_model_load_from_file_with_options\0")
             .map(|sym| *sym);
-        let dv_model_load_from_file_with_options_s = __library
-            .get(b"dv_model_load_from_file_with_options_s\0")
-            .map(|sym| *sym);
         let dv_model_load_from_blob_with_options = __library
             .get(b"dv_model_load_from_blob_with_options\0")
-            .map(|sym| *sym);
-        let dv_model_load_from_blob_with_options_s = __library
-            .get(b"dv_model_load_from_blob_with_options_s\0")
             .map(|sym| *sym);
         let dv_exchange_current_version_details = __library
             .get(b"dv_exchange_current_version_details\0")
@@ -2162,10 +2291,29 @@ impl araclient {
             .get(b"dv_get_client_lib_version\0")
             .map(|sym| *sym);
         let dv_free_version_details = __library.get(b"dv_free_version_details\0").map(|sym| *sym);
+        let dv_client_set_log_level = __library.get(b"dv_client_set_log_level\0").map(|sym| *sym);
+        let dv_endpoint_get_statistics_with_options = __library
+            .get(b"dv_endpoint_get_statistics_with_options\0")
+            .map(|sym| *sym);
+        let dv_model_load_from_file_s = __library
+            .get(b"dv_model_load_from_file_s\0")
+            .map(|sym| *sym);
+        let dv_model_load_from_file_with_options_s = __library
+            .get(b"dv_model_load_from_file_with_options_s\0")
+            .map(|sym| *sym);
+        let dv_model_load_from_blob_with_options_s = __library
+            .get(b"dv_model_load_from_blob_with_options_s\0")
+            .map(|sym| *sym);
+        let dv_infer_async_s = __library.get(b"dv_infer_async_s\0").map(|sym| *sym);
+        let dv_infer_async_with_options_s = __library
+            .get(b"dv_infer_async_with_options_s\0")
+            .map(|sym| *sym);
+        let dv_infer_wait_for_completion_s = __library
+            .get(b"dv_infer_wait_for_completion_s\0")
+            .map(|sym| *sym);
         Ok(araclient {
             __library,
             dv_stringify_status_code,
-            dv_client_set_log_level,
             dv_session_create_via_unix_socket,
             dv_session_create_via_named_pipe,
             dv_session_create_via_tcp_ipv4_socket,
@@ -2179,11 +2327,9 @@ impl araclient {
             dv_endpoint_check_status,
             dv_endpoint_get_dram_statistics,
             dv_endpoint_free_dram_statistics,
-            dv_endpoint_get_statistics_with_options,
             dv_endpoint_get_statistics,
             dv_endpoint_free_statistics,
             dv_model_load_from_file,
-            dv_model_load_from_file_s,
             dv_model_load_from_blob,
             dv_model_unload,
             dv_model_get_parameters_from_file,
@@ -2192,29 +2338,32 @@ impl araclient {
             dv_model_set_llm_cfg_params,
             dv_infer_sync,
             dv_infer_async,
-            dv_infer_async_s,
             dv_infer_wait_for_all_completion,
             dv_infer_wait_for_completion,
-            dv_infer_wait_for_completion_s,
             dv_infer_get_req_id,
             dv_infer_free,
             dv_infer_get_inflight_count,
             dv_get_endpoint_busyness,
             dv_infer_sync_with_options,
             dv_infer_async_with_options,
-            dv_infer_async_with_options_s,
             dv_fetch_outputs_by_layer_name,
             dv_model_load_from_file_with_options,
-            dv_model_load_from_file_with_options_s,
             dv_model_load_from_blob_with_options,
-            dv_model_load_from_blob_with_options_s,
             dv_exchange_current_version_details,
             dv_retrieve_version_details,
             dv_get_client_lib_version,
             dv_free_version_details,
+            dv_client_set_log_level,
+            dv_endpoint_get_statistics_with_options,
+            dv_model_load_from_file_s,
+            dv_model_load_from_file_with_options_s,
+            dv_model_load_from_blob_with_options_s,
+            dv_infer_async_s,
+            dv_infer_async_with_options_s,
+            dv_infer_wait_for_completion_s,
         })
     }
-    #[doc = " @brief Converts a status code to its human-readable string representation.\n\n Use this when logging errors or displaying status information in diagnostic output.\n The returned string is statically allocated and must not be freed or modified by\n the caller. If an unrecognized or out-of-range status code is passed, the function\n returns the string @c \"DV_STATUS_CODE_UNKNOWN_L\" rather than crashing or returning NULL.\n\n @param[in]  status_code  Status code to stringify.\n @return                  Null-terminated string name of the status code,\n                          or @c \"DV_STATUS_CODE_UNKNOWN_L\" if unrecognized."]
+    #[doc = " Stringify status code\n \\param[in]   status_code : status code\n \\param[out]  status      : status code as string"]
     pub unsafe fn dv_stringify_status_code(
         &self,
         status_code: dv_status_code_t,
@@ -2224,17 +2373,7 @@ impl araclient {
             .as_ref()
             .expect("Expected function, got error."))(status_code)
     }
-    #[doc = " @brief Sets the log verbosity level for the DV client library.\n\n Use this at application startup to control how much diagnostic output the\n client library emits. In production, prefer @c DV_CLIENT_LOG_LEVEL_WARN or\n @c DV_CLIENT_LOG_LEVEL_ERROR to reduce log noise. Use @c DV_CLIENT_LOG_LEVEL_DEBUG\n or @c DV_CLIENT_LOG_LEVEL_TRACE during development or when diagnosing failures.\n Set to @c DV_CLIENT_LOG_LEVEL_OFF to silence all client library logs.\n Only messages at or above the specified level are output.\n\n @param[in]  log_level  Desired log level as defined by @ref DV_CLIENT_LOG_LEVEL.\n @return                DV_SUCCESS on success, else error."]
-    pub unsafe fn dv_client_set_log_level(
-        &self,
-        log_level: dv_client_log_level_t,
-    ) -> dv_status_code_t {
-        (self
-            .dv_client_set_log_level
-            .as_ref()
-            .expect("Expected function, got error."))(log_level)
-    }
-    #[doc = " @brief Creates a session to the inference proxy server over a Unix domain socket.\n\n Use this when the proxy and client are running on the same machine — Unix domain\n sockets have lower latency and overhead than TCP for local communication.\n Prefer this over @ref dv_session_create_via_tcp_ipv4_socket for same-host deployments.\n Note that SHM registration via @ref dv_shmfd_register is only supported over Unix\n domain sockets, not TCP.\n\n @param[in]  socket_file_path  Path to the Unix domain socket file.\n @param[out] session           Session handle returned on success.\n @return                       DV_SUCCESS on success, else error."]
+    #[doc = " Create a session to the server using unix file socket\n Returns DV_SUCCESS on success, else error\n \\param[in]   socket_file_path : server unix socket path\n \\param[out]  session          : session handle returned by api"]
     pub unsafe fn dv_session_create_via_unix_socket(
         &self,
         socket_file_path: *const ::std::os::raw::c_char,
@@ -2245,7 +2384,7 @@ impl araclient {
             .as_ref()
             .expect("Expected function, got error."))(socket_file_path, session)
     }
-    #[doc = " @brief Creates a session to the inference proxy server using a Windows named pipe.\n\n Use this only on Windows hosts where Unix domain sockets are unavailable.\n On Linux, use @ref dv_session_create_via_unix_socket instead.\n\n @param[in]  named_pipe  Name of the Windows named pipe.\n @param[out] session     Session handle returned on success.\n @return                 DV_SUCCESS on success, else error."]
+    #[doc = " Create a session to the server using windows named pipe\n Returns DV_SUCCESS on success, else error\n \\param[in]   named_pipe       : server pipe\n \\param[out]  session          : session handle returned by api"]
     pub unsafe fn dv_session_create_via_named_pipe(
         &self,
         named_pipe: *const ::std::os::raw::c_char,
@@ -2256,7 +2395,7 @@ impl araclient {
             .as_ref()
             .expect("Expected function, got error."))(named_pipe, session)
     }
-    #[doc = " @brief Creates a session to the inference proxy server over a TCP/IPv4 socket.\n\n Use this when the proxy is running on a different machine from the client,\n or in containerized deployments where Unix domain socket sharing is not available.\n For same-host deployments, prefer @ref dv_session_create_via_unix_socket for\n lower latency. Note that SHM registration via @ref dv_shmfd_register is not\n supported over TCP — use raw pointer blobs instead for TCP sessions.\n\n @param[in]  tcp_ip_addr  IPv4 address of the inference proxy server.\n @param[in]  port         TCP port number on which the server is listening.\n @param[out] session      Session handle returned on success.\n @return                  DV_SUCCESS on success, else error."]
+    #[doc = " Create a session to the server using TCP/IPv4 sockets\n Returns DV_SUCCESS on success, else error\n \\param[in]  tcp_ip_addr      : server ipv4 address\n \\param[in]  port             : server port\n \\param[out] session          : session handle returned by api"]
     pub unsafe fn dv_session_create_via_tcp_ipv4_socket(
         &self,
         tcp_ip_addr: *const ::std::os::raw::c_char,
@@ -2268,14 +2407,14 @@ impl araclient {
             .as_ref()
             .expect("Expected function, got error."))(tcp_ip_addr, port, session)
     }
-    #[doc = " @brief Closes an open session to the inference proxy server.\n\n Call this when the application is done using the proxy — for example, at shutdown.\n Ensure all in-flight inference requests have completed before closing the session;\n closing a session with pending inferences will cause those requests to fail.\n The session handle must not be used after this call.\n\n @param[in]  session  Session handle to close.\n @return              DV_SUCCESS on success, else error."]
+    #[doc = " Close the session to the server\n Returns DV_SUCCESS on success, else error\n \\param[in]  session  : session handle"]
     pub unsafe fn dv_session_close(&self, session: *mut dv_session_t) -> dv_status_code_t {
         (self
             .dv_session_close
             .as_ref()
             .expect("Expected function, got error."))(session)
     }
-    #[doc = " @brief Registers a file descriptor with the inference proxy server for shared memory access.\n\n Use this to avoid redundant host-to-device data copies across multiple inference\n requests that use the same input buffer. Once registered, use the returned descriptor\n as a @ref DV_BLOB_TYPE_SHM_DESCRIPTOR blob in inference calls.\n Do not use this over TCP sessions — SHM registration is only supported over Unix\n domain sockets.\n\n The server maps the fd into a server-managed shared buffer identified by an opaque\n buf_id stored in @c shm_desc->handle. This buf_id is server-global: if client A\n registers a descriptor and client B submits an inference using the same handle value,\n both clients will access the same underlying server-side buffer with no isolation\n between them. The registering client is responsible for coordinating concurrent\n access across clients to avoid data corruption.\n\n The descriptor must be unregistered via @ref dv_shmfd_unregister when no longer needed.\n\n @param[in]  session   Session handle.\n @param[in]  fd        File descriptor to register.\n @param[in]  size      Size in bytes to map.\n @param[in]  offset    Offset within the file to begin mapping.\n @param[in]  fd_type   Type hint for the file descriptor provided to the server (reserved).\n @param[out] shm_desc  Shared memory descriptor returned on success.\n @return               DV_SUCCESS on success, else error."]
+    #[doc = " DV SharedFD API\n ***************************************/\n/** Register a file descriptor with the server\n Returns DV_SUCCESS on success, else error\n \\param[in]  session      : session object\n \\param[in]  fd           : file fd to share\n \\param[in]  size         : size to mmap\n \\param[in]  offset       : file offset\n \\param[in]  fd_type      : fd type to provide hint to server (reserved)\n \\param[out] shm_desc     : shared memory descriptor"]
     pub unsafe fn dv_shmfd_register(
         &self,
         session: *mut dv_session_t,
@@ -2292,7 +2431,7 @@ impl araclient {
             session, fd, size, offset, fd_type, shm_desc
         )
     }
-    #[doc = " @brief Unregisters a previously registered shared memory file descriptor from the server.\n\n Call this when the shared buffer is no longer needed for inference. Do not unregister\n a descriptor while another client may still be using its buf_id in an active inference\n request, as the server-side mapping will be released immediately.\n The descriptor must not be used after this call.\n\n @param[in]  shm_desc  Shared memory descriptor to unregister.\n @return               DV_SUCCESS on success, else error."]
+    #[doc = " Un-register shared file with the server\n Returns DV_SUCCESS on success, else error\n \\param[in]  shm_desc     : shared buffer descriptor"]
     pub unsafe fn dv_shmfd_unregister(
         &self,
         shm_desc: *mut dv_shm_descriptor_t,
@@ -2302,7 +2441,7 @@ impl araclient {
             .as_ref()
             .expect("Expected function, got error."))(shm_desc)
     }
-    #[doc = " @brief Retrieves the list of all endpoints currently connected to the inference proxy server.\n\n Use this to discover available hardware before selecting an endpoint for model loading\n or inference. Call this once after session creation and cache the result — the list\n does not change unless endpoints are added or removed from the proxy.\n\n Memory for the endpoint list is allocated statically by the client library and must\n NOT be freed by the caller.\n\n @param[in]  session   Session handle.\n @param[out] ep_list   Array of endpoint handles returned by the proxy.\n @param[out] ep_count  Number of endpoints in the returned list.\n @return               DV_SUCCESS on success, else error."]
+    #[doc = " Get the list of endpoints connected to the server\n Endpoint list memory is allocated by the api. It also returns the endpoint\n count connected to server Returns DV_SUCCESS on success, else error\n \\param[in]   session         : session handle\n \\param[out]  ep_list         : connected endpoint list returned by server\n \\param[out]  ep_count        : number of endpoint connected to server"]
     pub unsafe fn dv_endpoint_get_list(
         &self,
         session: *mut dv_session_t,
@@ -2314,7 +2453,7 @@ impl araclient {
             .as_ref()
             .expect("Expected function, got error."))(session, ep_list, ep_count)
     }
-    #[doc = " @brief Retrieves a predefined default endpoint group from the inference proxy server.\n\n Use this when you want to submit inference to all endpoints of a given interface type\n without manually constructing a group. Prefer this over @ref dv_endpoint_create_group\n when you do not need fine-grained endpoint selection. Use @c DV_ENDPOINT_DEFAULT_GROUP_ALL\n for maximum throughput across all connected devices, or @c DV_ENDPOINT_DEFAULT_GROUP_PCIE\n / @c DV_ENDPOINT_DEFAULT_GROUP_USB to restrict to a specific interface type.\n Memory for the group configuration is managed by client library, and should NOT be deallocated.\n\n @param[in]  session  Session handle.\n @param[in]  grp      Default group type as defined by @ref DV_ENDPOINT_DEFAULT_GROUP.\n @param[out] ep_grp   Endpoint group handle returned on success.\n @return              DV_SUCCESS on success, else error."]
+    #[doc = " Get the default endpoint group supported by server.\n Type of default group supported is defined in enum DV_ENDPOINT_DEFAULT_GROUP.\n API allocates the memory for the endpoint configuration of the group.\n Application needs to free the memory using dv_endpoint_free_group() Returns\n DV_SUCCESS on success, else error \\param[in]   session      : session handle\n \\param[in]   grp          : enum as defined in enum DV_ENDPOINT_DEFAULT_GROUP\n \\param[out]  ep_grp       : endpoint group handle"]
     pub unsafe fn dv_endpoint_get_default_group(
         &self,
         session: *mut dv_session_t,
@@ -2326,7 +2465,7 @@ impl araclient {
             .as_ref()
             .expect("Expected function, got error."))(session, grp, ep_grp)
     }
-    #[doc = " @brief Creates a custom endpoint group from a caller-supplied list of endpoints.\n\n Use this when you need to load a model or submit inference on a specific subset of\n endpoints — for example, isolating certain devices for a particular workload.\n Do not use this if a predefined group via @ref dv_endpoint_get_default_group satisfies\n your requirements. Memory for the group configuration is allocated by the API and\n must be freed using @ref dv_endpoint_free_group.\n\n @param[in]  session   Session handle.\n @param[in]  ep_list   Array of endpoint handles to include in the group.\n @param[in]  ep_count  Number of endpoints in @p ep_list.\n @param[out] ep_grp    Endpoint group handle returned on success.\n @return               DV_SUCCESS on success, else error."]
+    #[doc = " Create custom endpoint group from the endpoints connected to the server\n API allocates the memory for the endpoint configuration of the group.\n Application needs to free the memory using dv_endpoint_free_group() Returns\n DV_SUCCESS on success, else error \\param[in]   session      : session handle\n \\param[in]   ep_list      : endpoint list for which custom group needs to be\n created \\param[in]   ep_count     : number of endpoint in the list\n \\param[out]  ep_grp       : endpoint group handle"]
     pub unsafe fn dv_endpoint_create_group(
         &self,
         session: *mut dv_session_t,
@@ -2339,14 +2478,14 @@ impl araclient {
             .as_ref()
             .expect("Expected function, got error."))(session, ep_list, ep_count, ep_grp)
     }
-    #[doc = " @brief Frees a custom endpoint group previously obtained from the proxy.\n\n Call this when the endpoint group is no longer needed. Do not free a group while a\n model is still loaded on it or while inference is in flight on that group.\n The handle must not be used after this call.\n\n @param[in]  ep_grp  Endpoint group handle to free.\n @return             DV_SUCCESS on success, else error."]
+    #[doc = " Free the default/custom endpoint group\n Returns DV_SUCCESS on success, else error\n \\param[in]   session      : session handle\n \\param[out]  ep_list      : connected endpoint list returned by server\n \\param[out]  ep_count     : number of endpoint connected to server"]
     pub unsafe fn dv_endpoint_free_group(&self, ep_grp: *mut dv_endpoint_t) -> dv_status_code_t {
         (self
             .dv_endpoint_free_group
             .as_ref()
             .expect("Expected function, got error."))(ep_grp)
     }
-    #[doc = " @brief Queries the current operational state of an endpoint.\n\n Use this before loading a model or submitting inference to confirm the endpoint\n is in a healthy state. If the endpoint is in @c DV_ENDPOINT_STATE_FAULT, model\n loading will fail and inference will not be accepted. If the endpoint is in\n @c DV_ENDPOINT_STATE_THERMAL_ACTIVE_SLOW or @c DV_ENDPOINT_STATE_ACTIVE_SLOW,\n inference will still run but at reduced throughput.\n\n @param[in]  session  Session handle.\n @param[in]  ep       Endpoint handle to query.\n @param[out] state    Current state of the endpoint as defined by @ref DV_ENDPOINT_STATE.\n @return              DV_SUCCESS on success, else error."]
+    #[doc = " Detects endpoint state\n \\param[in]   session     : session handle\n \\param[in]   ep          : endpoint handle\n \\param[out]  state       : endpoint state"]
     pub unsafe fn dv_endpoint_check_status(
         &self,
         session: *mut dv_session_t,
@@ -2358,7 +2497,7 @@ impl araclient {
             .as_ref()
             .expect("Expected function, got error."))(session, ep, state)
     }
-    #[doc = " @brief Retrieves a snapshot of DRAM usage statistics for the specified endpoint or endpoint group.\n\n Use this to check memory usage information for an endpoint.\n Passing NULL for @p ep returns DRAM statistics for all endpoints connected to the server.\n Memory for the returned statistics is allocated by the API, and must be freed\n using @ref dv_endpoint_free_dram_statistics.\n\n @param[in]  session         Session handle.\n @param[in]  ep              Endpoint or endpoint group handle, or NULL for all endpoints.\n @param[out] ep_dram_stats   Array of DRAM statistics structures returned by the server.\n @param[out] ep_count        Number of endpoints for which statistics are returned.\n @return                     DV_SUCCESS on success, else error."]
+    #[doc = " Get the dram usage statistics for the endpoint/endpoint group\n Server provides the snapshot of the endpoint dram usage at the time of\n request. Passing NULL to endpoint handle will provide dram statistics for all\n the endpoint connected to the server Memory for the statistics is allocated\n by API and dv_endpoint_free_dram_statistics() is needed to free up the memory\n Returns DV_SUCCESS on success, else error\n \\param[in]   session         : session handle\n \\param[in]   ep              : endpoint/endpoint group handle for particular\n endpoint or endpoint group or NULL for all endpoints \\param[out]\n ep_dram_stats   : list of endpoint dram statistics \\param[out]  ep_count :\n number of endpoint for which dram statistics is provided"]
     pub unsafe fn dv_endpoint_get_dram_statistics(
         &self,
         session: *mut dv_session_t,
@@ -2371,7 +2510,7 @@ impl araclient {
             .as_ref()
             .expect("Expected function, got error."))(session, ep, ep_dram_stats, ep_count)
     }
-    #[doc = " @brief Frees memory allocated by @ref dv_endpoint_get_dram_statistics.\n\n Always call this after processing the DRAM statistics to avoid memory leaks.\n Do not access @p ep_dram_stats after this call.\n\n @param[in]  ep_dram_stats  Pointer to the DRAM statistics array to free.\n @param[in]  count          Number of elements in the array.\n @return                    DV_SUCCESS on success, else error."]
+    #[doc = " Free the endpoint dram stats memory allocated in\n dv_endpoint_get_dram_statistics() Returns DV_SUCCESS on success, else error\n \\param[in] ep_dram_stats : endpoint dram statistics to free\n \\param[in] count         : number of items to free"]
     pub unsafe fn dv_endpoint_free_dram_statistics(
         &self,
         ep_dram_stats: *mut dv_endpoint_dram_statistics_t,
@@ -2382,27 +2521,7 @@ impl araclient {
             .as_ref()
             .expect("Expected function, got error."))(ep_dram_stats, count)
     }
-    #[doc = " @brief Retrieves a statistics snapshot for the specified endpoint or endpoint group,\n        with additional inference options to control the statistics retrieval behavior.\n\n Use this variant over @ref dv_endpoint_get_statistics when you need to pass\n inference options — for example, to filter statistics by inference type for LLM workloads.\n For standard CNN workloads without special filtering, use @ref dv_endpoint_get_statistics.\n Passing NULL for @p ep returns statistics for all endpoints connected to the server.\n Memory for the statistics is allocated by the API and must be freed using\n @ref dv_endpoint_free_statistics.\n\n The @ref dv_model_statistics_t member of @ref dv_endpoint_statistics_t exposes two\n model identity fields: @c uint32_t model (server-generated ID, always valid) and\n @c void* model_handle. The @c model_handle value can be compared against the @c handle\n member of @ref dv_model_t to correlate statistics with a specific loaded model object.\n Statistics are returned for all models loaded across all clients.\n\n @param[in]  session        Session handle.\n @param[in]  ep             Endpoint or endpoint group handle, or NULL for all endpoints.\n @param[out] ep_stats       Array of endpoint statistics structures returned by the server.\n @param[out] ep_count       Number of endpoints for which statistics are returned.\n @param[in]  stats_options  Option to select category of state and get info with temperature threshold to filter the statistics response.\n @return                    DV_SUCCESS on success, else error."]
-    pub unsafe fn dv_endpoint_get_statistics_with_options(
-        &self,
-        session: *mut dv_session_t,
-        ep: *mut dv_endpoint_t,
-        ep_stats: *mut *mut dv_endpoint_statistics_t,
-        ep_count: *mut ::std::os::raw::c_int,
-        stats_options: *mut dv_stats_options_t,
-    ) -> dv_status_code_t {
-        (self
-            .dv_endpoint_get_statistics_with_options
-            .as_ref()
-            .expect("Expected function, got error."))(
-            session,
-            ep,
-            ep_stats,
-            ep_count,
-            stats_options,
-        )
-    }
-    #[doc = " @brief Retrieves a statistics snapshot for the specified endpoint or endpoint group.\n\n Use this for general-purpose endpoint health monitoring — checking thermal state,\n clock frequencies, DRAM usage, and active model count. Call this periodically in\n production to detect thermal throttling (@c DV_ENDPOINT_STATE_THERMAL_ACTIVE_SLOW)\n or fault conditions (@c DV_ENDPOINT_STATE_FAULT) before they impact inference.\n If you need to pass inference options to filter the statistics, use\n @ref dv_endpoint_get_statistics_with_options instead.\n Passing NULL for @p ep returns statistics for all endpoints connected to the server.\n Memory for the statistics is allocated by the API and must be freed using\n @ref dv_endpoint_free_statistics.\n\n The @ref dv_model_statistics_t member of @ref dv_endpoint_statistics_t exposes two\n model identity fields: @c uint32_t model (server-generated ID, always valid) and\n @c void* model_handle. The @c model_handle value can be compared against the @c handle\n member of @ref dv_model_t to correlate statistics with a specific loaded model object.\n Statistics are returned for all models loaded across all clients.\n\n @param[in]  session   Session handle.\n @param[in]  ep        Endpoint or endpoint group handle, or NULL for all endpoints.\n @param[out] ep_stats  Array of endpoint statistics structures returned by the server.\n @param[out] ep_count  Number of endpoints for which statistics are returned.\n @return               DV_SUCCESS on success, else error."]
+    #[doc = " Get all the statistics for the endpoint/endpoint group\n Server provides the snapshot of the endpoint statistics at the time of\n request. Passing NULL to endpoint handle will provide statistics for all the\n endpoint connected to the server Memory for the statistics is allocated by\n API and dv_endpoint_free_statistics() is needed to free up the memory Returns\n DV_SUCCESS on success, else error\n\n Notes on usage\n -------------\n `dv_model_statistics_t` member of `dv_endpoint_statistics_t` contains 2\n fields - uint32_t model and void* model_handle. This API will return stats of\n all models loaded across all clients - the `uint32_t model` will always hold\n a value and is an server generated id. The value of the `void* model_handle`\n member can be compared to the `handle` member of `dv_model_t` to map\n `dv_model_t` objects to their corresponding `dv_model_statistics_t` objects.\n\n \\param[in]   session     : session handle\n \\param[in]   ep          : endpoint/endpoint group handle for particular\n endpoint or endpoint group or NULL for all endpoints \\param[out]  ep_stats :\n list of endpoint statistics \\param[out]  ep_count    : number of endpoint for\n which statistics is provided"]
     pub unsafe fn dv_endpoint_get_statistics(
         &self,
         session: *mut dv_session_t,
@@ -2415,7 +2534,7 @@ impl araclient {
             .as_ref()
             .expect("Expected function, got error."))(session, ep, ep_stats, ep_count)
     }
-    #[doc = " @brief Frees memory allocated by @ref dv_endpoint_get_statistics or\n        @ref dv_endpoint_get_statistics_with_options.\n\n Always call this after processing endpoint statistics to avoid memory leaks.\n Do not access @p ep_stats after this call.\n\n @param[in]  ep_stats  Pointer to the endpoint statistics array to free.\n @param[in]  count     Number of elements in the array.\n @return               DV_SUCCESS on success, else error."]
+    #[doc = " Free the endpoint stats memory allocated in dv_endpoint_get_statistics()\n Returns DV_SUCCESS on success, else error\n \\param[in] ep_stats  : endpoint statistics list to free\n \\param[in] count     : number of items to free"]
     pub unsafe fn dv_endpoint_free_statistics(
         &self,
         ep_stats: *mut dv_endpoint_statistics_t,
@@ -2426,7 +2545,7 @@ impl araclient {
             .as_ref()
             .expect("Expected function, got error."))(ep_stats, count)
     }
-    #[doc = " @brief Loads a model from a file and transfers it to the specified endpoint.\n\n Use this for the simplest model load workflow when the compiled model file is\n accessible on the local filesystem. For more control over load behavior (async\n loading, caching, model type), use @ref dv_model_load_from_file_with_options instead.\n If the model file is already in memory, use @ref dv_model_load_from_blob to avoid\n an additional file read. If model loading fails on all devices represented by\n @p endpt, the API returns an error.\n\n @param[in]  session          Session handle.\n @param[in]  endpt            Endpoint or endpoint group handle to load the model onto.\n @param[in]  model_file_path  Filesystem path to the compiled model file.\n @param[in]  model_name       Model name .\n @param[in]  priority         Model scheduling priority [unused].\n @param[out] model_handle     Model object returned on success.\n @return                      DV_SUCCESS if loaded successfully on all devices, DV_PARTIAL_SUCCESS if loaded on only some devices, DV_MODEL_LOAD_FAILURE if loading failed on all devices.\n @note    Prefer @ref dv_model_load_from_file_s which returns a detailed @ref dv_status_t\n          instead of a plain status code."]
+    #[doc = " Creates a model object and load model contents from file and transfer it to\n endpoint Model object contains the model handle and model parameters.\n `dv_model_get_loaded_endpoint_list` returns the list of endpoints (individual\n device dv_endpoint_t handles) on which the model was successfully loaded.\n\n If model load fails on all individual devices representing `endpt`, the API\n call will error out.\n\n Returns DV_SUCCESS on success, else error\n \\param[in]   session          : session handle\n \\param[in]   endpt            : endpoint handle\n \\param[in]   model_file_path  : model file path\n \\param[in]   priority         : model priority [unused]\n \\param[in]   model_name       : model name [unused]\n \\param[out]  model_handle     : model handle returned by server"]
     pub unsafe fn dv_model_load_from_file(
         &self,
         session: *mut dv_session_t,
@@ -2448,29 +2567,7 @@ impl araclient {
             model_handle,
         )
     }
-    #[doc = " @brief Wrapper of dv_model_load_from_file with detailed status.\n\n Use this instead of @ref dv_model_load_from_file when you need a detailed status\n object rather than a simple status code.\n\n @param[in]  session          Session handle.\n @param[in]  endpt            Endpoint or endpoint group handle to load the model onto.\n @param[in]  model_file_path  Filesystem path to the compiled model file.\n @param[in]  model_name       Model name.\n @param[in]  priority         Model scheduling priority [unused].\n @param[out] model_handle     Model object returned on success.\n @return                      DV_SUCCESS if loaded successfully on all devices, DV_PARTIAL_SUCCESS if loaded on only some devices, DV_MODEL_LOAD_FAILURE if loading failed on all devices."]
-    pub unsafe fn dv_model_load_from_file_s(
-        &self,
-        session: *mut dv_session_t,
-        endpt: *mut dv_endpoint_t,
-        model_file_path: *const ::std::os::raw::c_char,
-        model_name: *const ::std::os::raw::c_char,
-        priority: dv_model_priority_level_t,
-        model_handle: *mut *mut dv_model_t,
-    ) -> dv_status_t {
-        (self
-            .dv_model_load_from_file_s
-            .as_ref()
-            .expect("Expected function, got error."))(
-            session,
-            endpt,
-            model_file_path,
-            model_name,
-            priority,
-            model_handle,
-        )
-    }
-    #[doc = " @brief Loads a model from a blob and transfers it to the specified endpoint.\n\n Use this when the model is already resident in host memory — for example, when\n the model was downloaded over the network or embedded in the application binary.\n This avoids a filesystem read compared to @ref dv_model_load_from_file.\n For more control over load behavior, use @ref dv_model_load_from_blob_with_options.\n\n @param[in]  session       Session handle.\n @param[in]  endpt         Endpoint or endpoint group handle to load the model onto.\n @param[in]  model_blob    Blob descriptor pointing to the model data in memory.\n @param[in]  model_name    Model name .\n @param[in]  priority      Model scheduling priority [unused].\n @param[out] model_handle  Model object returned on success.\n @return                   DV_SUCCESS if loaded successfully on all devices,\n                           DV_PARTIAL_SUCCESS if loaded on only some devices,\n                           Error Status if loading failed on all devices."]
+    #[doc = " Creates a model object and load model contents from blob and transfer it to\n endpoint Model object contains the model handle and model parameters.\n `dv_model_get_loaded_endpoint_list` returns the list of endpoints (individual\n device dv_endpoint_t handles) on which the model was successfully loaded.\n\n If model load fails on all individual devices representing `endpt`, the API\n call will error out.\n\n Returns DV_SUCCESS on success, else error\n \\param[in]   session          : session handle\n \\param[in]   endpt            : endpoint handle\n \\param[in]   model_blob       : model blob\n \\param[in]   priority         : model priority [unused]\n \\param[in]   model_name       : model name [unused]\n \\param[out]  model_handle     : model handle returned by server"]
     pub unsafe fn dv_model_load_from_blob(
         &self,
         session: *mut dv_session_t,
@@ -2492,14 +2589,14 @@ impl araclient {
             model_handle,
         )
     }
-    #[doc = " @brief Unloads a model from its endpoint and releases associated server-side resources.\n\n Call this when the model is no longer needed for inference. Ensure all in-flight\n inference requests using this model have completed before unloading; unloading a\n model with active inference requests results in those requests failing.\n The model handle must not be used after this call.\n\n @param[in]  model  Model handle to unload.\n @return            DV_SUCCESS if unloaded successfully on all devices,\n                    DV_PARTIAL_SUCCESS if unloaded on only some devices,\n                    DV_MODEL_INVALID_HANDLE if the handel sent is invalid,\n                    DV_SESSION_INVALID_HANDLE if there is no valid client (user) found,\n                    DV_MODEL_UNLOAD_FAILURE if unloading failed on all devices."]
+    #[doc = " Unloads a model from the endpoint\n Returns DV_SUCCESS on success, else error\n \\param[in]  model    : model handle"]
     pub unsafe fn dv_model_unload(&self, model: *mut dv_model_t) -> dv_status_code_t {
         (self
             .dv_model_unload
             .as_ref()
             .expect("Expected function, got error."))(model)
     }
-    #[doc = " @brief Retrieves model parameters from a file without loading the model onto an endpoint.\n\n Use this to inspect model metadata — input/output shapes, layer names, quantization\n parameters — before committing to a full model load. Do not use the returned model\n object for inference — it has no endpoint binding and will fail if passed to inference\n APIs. Memory for the returned model object is allocated by the API and must be freed\n using @ref dv_model_free_parameters.\n\n @param[in]  model_file_path  Filesystem path to the compiled model file.\n @param[out] model            Model object populated with parameter information.\n @return                      DV_SUCCESS on success, else error."]
+    #[doc = " Get the model parameters from model file without loading the model to\n endpoint(s) API allocates memory for the parameters. Application can free it\n by calling dv_model_free_paramaters This is a utility function, useful to get\n model parameters without loading the model to endpoint(s). The model object\n returned by the api cannot be used Returns DV_SUCCESS on success, else error\n \\param[in]  model_file_path  : model file path\n \\param[in]  model            : model parameters"]
     pub unsafe fn dv_model_get_parameters_from_file(
         &self,
         model_file_path: *const ::std::os::raw::c_char,
@@ -2510,7 +2607,7 @@ impl araclient {
             .as_ref()
             .expect("Expected function, got error."))(model_file_path, model)
     }
-    #[doc = " @brief Retrieves model parameters from a blob without loading the model onto an endpoint.\n\n Use this to inspect model metadata when the model is already in memory, without\n transferring it to an endpoint. Do not use the returned model object for inference —\n it has no endpoint binding and will fail if passed to inference APIs. Memory for the\n returned model object is allocated by the API and must be freed using\n @ref dv_model_free_parameters.\n\n @param[in]  model_blob  Blob descriptor pointing to the model data in memory.\n @param[out] model       Model object populated with parameter information.\n @return                 DV_SUCCESS on success, else error."]
+    #[doc = " Get the model parameters from model blob without loading the model onto\n endpoint(s) API allocates memory for the parameters. Application can free it\n by calling dv_model_free_paramaters This is a utility function, useful to get\n model parameters without loading the model to endpoint(s) Returns DV_SUCCESS\n on success, else error \\param[in]  model_blob  : model blob \\param[in]  model\n : model parameters"]
     pub unsafe fn dv_model_get_parameters_from_blob(
         &self,
         model_blob: *mut dv_blob_t,
@@ -2521,14 +2618,14 @@ impl araclient {
             .as_ref()
             .expect("Expected function, got error."))(model_blob, model)
     }
-    #[doc = " @brief Frees memory allocated by @ref dv_model_get_parameters_from_file or\n        @ref dv_model_get_parameters_from_blob.\n\n Always call this after inspecting model parameters to avoid memory leaks.\n Do not call this on a model handle returned by a model load API — use\n @ref dv_model_unload for loaded models instead.\n\n @param[in]  model  Model handle whose parameter memory is to be freed.\n @return            DV_SUCCESS on success, else error."]
+    #[doc = " Free the memory allocations for model parameter made by\n dv_model_get_parameters_* call Returns DV_SUCCESS on success, else error\n \\param[in]  model    : model handle"]
     pub unsafe fn dv_model_free_parameters(&self, model: *mut dv_model_t) -> dv_status_code_t {
         (self
             .dv_model_free_parameters
             .as_ref()
             .expect("Expected function, got error."))(model)
     }
-    #[doc = " @brief Sends LLM pre/post processing configuration parameters to the proxy or MCP.\n\n Use this to update sampling and speculative decoding settings at runtime without\n reloading the model. Call this after model load and before inference submission.\n Do not call this during an active inference request on the same model.\n The @p model parameter is currently unused by the proxy but should be passed\n for forward compatibility.\n\n @param[in]  session         Session handle.\n @param[in]  ep              Endpoint handle.\n @param[in]  model           Model handle (currently unused by proxy).\n @param[in]  llm_cfg_update  Structure containing LLM configuration parameters to apply.\n @return                     DV_SUCCESS on success, else error."]
+    #[doc = " Pass pre/post processing flags and params to proxy/mcp\n \\param[in]  session      : session handle\n \\param[in]  endpt        : endpoint handle\n \\param[in] model             : model handle // currently unused by proxy\n \\param[in] llm_cfg_update    : dv_llm_cfg_upd_req_t type representing pre/post processing flags and params"]
     pub unsafe fn dv_model_set_llm_cfg_params(
         &self,
         session: *mut dv_session_t,
@@ -2541,7 +2638,7 @@ impl araclient {
             .as_ref()
             .expect("Expected function, got error."))(session, ep, model, llm_cfg_update)
     }
-    #[doc = " @brief Submits a synchronous inference request and blocks until completion or timeout.\n\n Use this for simple, sequential inference workflows where the calling thread can\n block until the result is ready. Do not use this in latency-sensitive or\n high-throughput pipelines — use @ref dv_infer_async instead to overlap inference\n with host-side processing. Input and output blobs must conform to the model's\n declared input and output parameters. Memory for the inference object is allocated\n by the API and must be freed using @ref dv_infer_free after reading the results.\n\n @param[in]  session       Session handle.\n @param[in]  endpt         Endpoint or endpoint group handle to submit inference to. Although the\n                           model already carries the endpoint group it was loaded on, this parameter\n                           allows the caller to narrow or override the target to a specific endpoint\n                           or sub-group within that group for this inference request.\n @param[in]  model         Model handle for which inference is requested.\n @param[in]  ip_array      Array of input blob descriptors, one per model input.\n @param[in]  op_array      Array of output blob descriptors, one per model output.\n @param[in]  timeout       Maximum time in milliseconds to wait; pass -1 for default (60s).\n @param[in]  enable_stats  Enable inference statistics collection (deprecated).\n @param[out] inf_obj       Inference request object returned on completion.\n @return                   DV_SUCCESS on success, else error."]
+    #[doc = " Submit an synchronous inference for a model to an endpoint(group)\n This is a blocking call, it returns when inference is completed\n (success/error) or a timeout has occurred Input and output blobs should be\n provided as per input and output parameter provided by model Inference object\n memory will be allocated by API and can be freed upon calling dv_infer_free()\n Returns DV_SUCCESS on success, else error\n \\param[in]  session      : session handle\n \\param[in]  endpt        : endpoint handle\n \\param[in]  model        : model handle\n \\param[in]  ip_array     : an array of input blob descriptor\n \\param[in]  op_array     : an array of output blob descriptor\n \\param[in]  timeout      : maximum time in mili seconds to wait for request\n to complete \\param[in]  enable_stats : enable stats for the inference request\n (deprecated) \\param[out] inf_obj      : inference object"]
     pub unsafe fn dv_infer_sync(
         &self,
         session: *mut dv_session_t,
@@ -2567,7 +2664,7 @@ impl araclient {
             inf_obj,
         )
     }
-    #[doc = " @brief Submits an asynchronous inference request and returns immediately.\n\n Use this when you want to overlap inference execution with host-side processing.\n This is preferred over @ref dv_infer_sync for high-throughput pipelines.\n After submission, use @ref dv_infer_wait_for_completion or\n @ref dv_infer_wait_for_all_completion to collect results. Do not read output\n blobs until the inference has reached @c DV_INFERENCE_STATUS_COMPLETED.\n Memory for the inference object is allocated by the API and must be freed using\n @ref dv_infer_free after reading the results.\n\n @param[in]  session       Session handle.\n @param[in]  endpt         Endpoint or endpoint group handle to submit inference to. Although the\n                           model already carries the endpoint group it was loaded on, this parameter\n                           allows the caller to narrow or override the target to a specific endpoint\n                           or sub-group within that group for this inference request.\n @param[in]  model         Model handle for which inference is requested.\n @param[in]  ip_array      Array of input blob descriptors, one per model input.\n @param[in]  op_array      Array of output blob descriptors, one per model output.\n @param[in]  enable_stats  Enable inference statistics collection (deprecated).\n @param[out] inf_obj       Inference request object returned immediately after submission.\n @return                   DV_SUCCESS on success, else error.\n @note    Prefer @ref dv_infer_async_s which returns a detailed @ref dv_status_t\n          instead of a plain status code."]
+    #[doc = " Submit an asynchronous inference for a model to an endpoint(group)\n Server returns a inference request id which can be used to get the completion\n status or wait upon for compleetion after the call. Input and output blobs\n should be provided as per input and output parameter provided by model\n Inference object memory will be allocated by API and can be freed upon\n calling dv_infer_free() Returns DV_SUCCESS on success, else error \\param[in]\n session      : session handle \\param[in]  endpt        : endpoint handle\n \\param[in]  model        : model handle\n \\param[in]  ip_array     : an array of input blob descriptor\n \\param[in]  op_array     : an array of output blob descriptor\n \\param[in]  enable_stats : enable stats for the inference request\n (deprecated) \\param[out] inf_obj      : inference object"]
     pub unsafe fn dv_infer_async(
         &self,
         session: *mut dv_session_t,
@@ -2591,31 +2688,7 @@ impl araclient {
             inf_obj,
         )
     }
-    #[doc = " @brief Wrapper of dv_infer_async with detailed status.\n\n Use this instead of @ref dv_infer_async when you need a detailed status object\n rather than a simple status code.\n\n @param[in]  session       Session handle.\n @param[in]  endpt         Endpoint or endpoint group handle to submit inference to. Although the\n                           model already carries the endpoint group it was loaded on, this parameter\n                           allows the caller to narrow or override the target to a specific endpoint\n                           or sub-group within that group for this inference request.\n @param[in]  model         Model handle for which inference is requested.\n @param[in]  ip_array      Array of input blob descriptors, one per model input.\n @param[in]  op_array      Array of output blob descriptors, one per model output.\n @param[in]  enable_stats  Enable inference statistics collection (deprecated).\n @param[out] inf_obj       Inference request object returned immediately after submission.\n @return                   Detailed status."]
-    pub unsafe fn dv_infer_async_s(
-        &self,
-        session: *mut dv_session_t,
-        endpt: *mut dv_endpoint_t,
-        model: *mut dv_model_t,
-        ip_array: *mut dv_blob_t,
-        op_array: *mut dv_blob_t,
-        enable_stats: bool,
-        inf_obj: *mut *mut dv_infer_request_t,
-    ) -> dv_status_t {
-        (self
-            .dv_infer_async_s
-            .as_ref()
-            .expect("Expected function, got error."))(
-            session,
-            endpt,
-            model,
-            ip_array,
-            op_array,
-            enable_stats,
-            inf_obj,
-        )
-    }
-    #[doc = " @brief Waits until all inference requests in the provided list have changed status.\n\n Use this when you have submitted multiple async inference requests and need to wait\n for all of them to complete before proceeding. If @p inf_obj_list is empty, blocks\n until at least one inference request submitted on the session changes run status.\n The API tracks status transitions per request and reports each status change only once.\n For non-empty request lists, the caller is responsible for removing completed inference\n objects from the list; completion status may be reported multiple times for requests\n that remain in the list.\n\n @param[in]  session              Session handle.\n @param[in]  inf_obj_list         Array of inference request handles to monitor.\n @param[in]  inf_obj_count        Number of inference requests in @p inf_obj_list.\n @param[in]  timeout              Maximum time in milliseconds to wait; pass -1 for default (60s).\n @param[out] completed_inf_list   Array of inference handles that have completed.\n @param[out] completed_inf_count  Number of completed inference handles returned.\n @return                          DV_SUCCESS on success, else error."]
+    #[doc = " Monitor multiple inference request object and wait until, all of the\n request updates/changes run status If the list is empty it waits until,\n atleast one inference request submitted in the session changes run status and\n API keeps track of status change for a inference request and run status is\n reported only once.\n\n For non-empty request list, application needs to remove the completed\n inference object from the list. Request completion status can be reported\n multiple times.\n\n Returns DV_SUCCESS on success, else error\n \\param[in]  session      : session handle\n \\param[in]  inf_id_list  : inference request object list\n \\param[in]  inf_id_count : number of inference request to monitor\n \\param[in]  timeout      : maximum time in mili seconds to wait for inference\n request to change status; defaults to 60 seconds in case timeout is passed as\n -1"]
     pub unsafe fn dv_infer_wait_for_all_completion(
         &self,
         session: *mut dv_session_t,
@@ -2637,7 +2710,7 @@ impl araclient {
             completed_inf_count,
         )
     }
-    #[doc = " @brief Waits until at least one inference request in the provided list has changed status.\n\n Use this in streaming or pipelined workloads where you want to process each completed\n inference as soon as it finishes, without waiting for all requests to complete.\n If you need all requests to finish before proceeding, use\n @ref dv_infer_wait_for_all_completion instead. If @p inf_obj_list is empty, blocks\n until at least one inference request submitted on the session changes run status.\n The API tracks status transitions per request and reports each status change only once.\n For non-empty request lists, the caller is responsible for removing completed inference\n objects from the list; completion status may be reported multiple times for requests\n that remain in the list.\n\n @param[in]  session        Session handle.\n @param[in]  inf_obj_list   Array of inference request handles to monitor.\n @param[in]  inf_obj_count  Number of inference requests in @p inf_obj_list.\n @param[in]  timeout        Maximum time in milliseconds to wait; pass -1 for default (150s).\n @param[out] inf_obj        Inference request handle for which the status has changed.\n @return                    DV_SUCCESS on success, else error.\n @note    Prefer @ref dv_infer_wait_for_completion_s which returns a detailed @ref dv_status_t\n          instead of a plain status code."]
+    #[doc = " Monitor multiple inference request object and wait until, atleast one of the\n request updates/changes run status If the list is empty it waits until,\n atleast one inference request submitted in the session changes run status and\n API keeps track of status change for a inference request and run status is\n reported only once.\n\n For non-empty request list, application needs to remove the completed\n inference object from the list. Request completion status can be reported\n multiple times.\n\n Returns DV_SUCCESS on success, else error\n \\param[in]  session      : session handle\n \\param[in]  inf_id_list  : inference request object list\n \\param[in]  inf_id_count : number of inference request to monitor\n \\param[in]  timeout      : maximum time in mili seconds to wait for inference\n request to change status; defaults to 60 seconds in case timeout is passed as\n -1 \\param[out] inf_obj      : inference id for which the state is changed"]
     pub unsafe fn dv_infer_wait_for_completion(
         &self,
         session: *mut dv_session_t,
@@ -2657,27 +2730,7 @@ impl araclient {
             inf_obj,
         )
     }
-    #[doc = " @brief Wrapper of dv_infer_wait_for_completion with detailed status.\n\n Use this instead of @ref dv_infer_wait_for_completion when you need a detailed\n status object rather than a simple status code.\n\n @param[in]  session        Session handle.\n @param[in]  inf_obj_list   Array of inference request handles to monitor.\n @param[in]  inf_obj_count  Number of inference requests in @p inf_obj_list.\n @param[in]  timeout        Maximum time in milliseconds to wait; pass -1 for default (150s).\n @param[out] inf_obj        Inference request handle for which the status has changed.\n @return                    Detailed status."]
-    pub unsafe fn dv_infer_wait_for_completion_s(
-        &self,
-        session: *mut dv_session_t,
-        inf_obj_list: *mut *mut dv_infer_request_t,
-        inf_obj_count: ::std::os::raw::c_int,
-        timeout: ::std::os::raw::c_int,
-        inf_obj: *mut *mut dv_infer_request_t,
-    ) -> dv_status_t {
-        (self
-            .dv_infer_wait_for_completion_s
-            .as_ref()
-            .expect("Expected function, got error."))(
-            session,
-            inf_obj_list,
-            inf_obj_count,
-            timeout,
-            inf_obj,
-        )
-    }
-    #[doc = " @brief Returns the server-assigned request ID for a submitted inference request.\n\n Use this when debugging inference issues — the returned request ID matches the ID\n printed in proxy logs when the proxy is started with the @c -t flag, allowing you\n to correlate client-side requests with server-side log output. Call this after\n submission but before freeing the inference handle.\n\n This API is not thread-safe. Calling this on a handle that has already been freed\n via @ref dv_infer_free results in undefined behavior. If @p inf_obj is NULL or\n @c inf_obj->handle is NULL, the function returns @c DV_INVALID_HOST_PTR and\n @p req_id is not modified.\n\n @param[in]  inf_obj  Inference request handle.\n @param[out] req_id   Server-assigned request ID for the inference.\n @return              DV_SUCCESS on success; DV_INVALID_HOST_PTR if @p inf_obj or its handle is NULL."]
+    #[doc = " Returns the request id of an inference that is sent by the client.\n The request id returned will be the same printed in logs if the proxy is\n passed the `-t` flag.\n\n If the inf_obj is null or if inf_obj->handle is null, DV_INVALID_HOST_PTR is\n returned. The req_id argument is not set to any value in this case.\n\n If return value is DV_SUCCESS req_id will contain the request id of the\n inference request sent to kinara inference proxy.\n\n This api is not thread safe. Calling this API on an inference handle that has\n already been `dv_infer_free`'d is incorrect and will result in undefined\n behaviour.\n\n \\param[in]  inf_obj   : inference request handle\n \\param[out] req_id    : request id of the inference request\n \\since r6.1.1"]
     pub unsafe fn dv_infer_get_req_id(
         &self,
         inf_obj: *mut dv_infer_request_t,
@@ -2688,14 +2741,14 @@ impl araclient {
             .as_ref()
             .expect("Expected function, got error."))(inf_obj, req_id)
     }
-    #[doc = " @brief Frees all resources associated with a completed inference request.\n\n Call this after reading all results from the inference object — output blobs,\n statistics, and LLM info. Do not free an inference request that is still in flight;\n wait for completion via @ref dv_infer_wait_for_completion first. After this call,\n the handle is invalid and must not be accessed or passed to any API.\n Failing to call this will leak memory in the client library.\n\n @param[in]  inf_obj  Inference request object to free.\n @return              DV_SUCCESS on success, else error."]
+    #[doc = " Finish the life cycle for the inference request.\n API will free up the associated memory for the inference request and will no\n longer be accessible. After completion, any operation on the inference\n request will be invalid. Returns DV_SUCCESS on success, else error \\param[in]\n inf_obj      : inference object"]
     pub unsafe fn dv_infer_free(&self, inf_obj: *mut dv_infer_request_t) -> dv_status_code_t {
         (self
             .dv_infer_free
             .as_ref()
             .expect("Expected function, got error."))(inf_obj)
     }
-    #[doc = " @brief Returns the number of in-flight inference requests for the session.\n\n Use this to implement backpressure in high-throughput pipelines — if the in-flight\n count is high, delay submitting new requests to avoid overwhelming the proxy queue.\n An in-flight request is one that has been submitted by the client library but for\n which a response has not yet been received from the proxy server. This count includes\n requests submitted by all threads sharing the same session.\n\n @param[in]  session  Session handle.\n @param[out] count    Number of in-flight inference requests.\n @return              DV_SUCCESS on success, else error."]
+    #[doc = " Returns the number of inflight inference requests for the session object for\n which the client library has not recieved a response from the proxy server.\n \\param[in]  session      : session handle\n \\param[out] count        : number of inference requests in flight\n \\since r5.3"]
     pub unsafe fn dv_infer_get_inflight_count(
         &self,
         session: *mut dv_session_t,
@@ -2706,7 +2759,7 @@ impl araclient {
             .as_ref()
             .expect("Expected function, got error."))(session, count)
     }
-    #[doc = " @brief Queries the busy state of a specific endpoint.\n\n Use this for lightweight load-balancing decisions — if the endpoint is busy,\n consider routing the next inference request to a different endpoint. This is a\n point-in-time snapshot and may not reflect the endpoint state by the time a new\n inference is submitted. Do not use this in a tight polling loop; prefer\n @ref dv_infer_wait_for_completion for waiting on specific inference results.\n The caller must provide the memory for @p is_busy.\n\n @param[in]  session   Session handle.\n @param[in]  ep        Endpoint handle to query.\n @param[out] is_busy   Set to true if the endpoint is currently busy, false otherwise.\n @return               DV_SUCCESS on success, else error."]
+    #[doc = " Get the busyness for the endpoint\n Server provides busyness of any one endpoint at the time of request\n Memory for is_busy bool variable should be provided by client app\n Returns DV_SUCCESS on success, else error\n Notes on usage\n -------------\n\n \\param[in]   session     : session handle\n \\param[in]   ep          : endpoint handle for particular endpoint\n \\param[out]  is_busy    : will return true if endpoint is busy else false"]
     pub unsafe fn dv_get_endpoint_busyness(
         &self,
         session: *mut dv_session_t,
@@ -2718,7 +2771,6 @@ impl araclient {
             .as_ref()
             .expect("Expected function, got error."))(session, ep, is_busy)
     }
-    #[doc = " @brief Submits a synchronous inference request with extended options and blocks until completion.\n\n Use this instead of @ref dv_infer_sync when you need LLM-specific inference control\n (token counts, inference type) or fine-grained statistics collection via\n @ref dv_infer_options_t. For standard CNN inference without special options, use\n @ref dv_infer_sync instead. Memory for the inference object is allocated by the API\n and must be freed using @ref dv_infer_free.\n\n @param[in]  session        Session handle.\n @param[in]  endpt          Endpoint or endpoint group handle to submit inference to. Although the\n                            model already carries the endpoint group it was loaded on, this parameter\n                            allows the caller to narrow or override the target to a specific endpoint\n                            or sub-group within that group for this inference request.\n @param[in]  model          Model handle for which inference is requested.\n @param[in]  ip_array       Array of input blob descriptors, one per model input.\n @param[in]  op_array       Array of output blob descriptors, one per model output.\n @param[in]  timeout        Maximum time in milliseconds to wait; pass -1 for default (60s).\n @param[out] inf_obj        Inference request object returned on completion.\n @param[in]  infer_options  Extended inference options controlling request behavior.\n @return                    DV_SUCCESS on success, else error."]
     pub unsafe fn dv_infer_sync_with_options(
         &self,
         session: *mut dv_session_t,
@@ -2744,7 +2796,6 @@ impl araclient {
             infer_options,
         )
     }
-    #[doc = " @brief Submits an asynchronous inference request with extended options and returns immediately.\n\n Use this instead of @ref dv_infer_async when you need LLM-specific inference control\n (token counts, inference type) or fine-grained statistics collection via\n @ref dv_infer_options_t. For standard CNN inference without special options, use\n @ref dv_infer_async instead. Memory for the inference object is allocated by the API\n and must be freed using @ref dv_infer_free.\n\n @param[in]  session        Session handle.\n @param[in]  endpt          Endpoint or endpoint group handle to submit inference to. Although the\n                            model already carries the endpoint group it was loaded on, this parameter\n                            allows the caller to narrow or override the target to a specific endpoint\n                            or sub-group within that group for this inference request.\n @param[in]  model          Model handle for which inference is requested.\n @param[in]  ip_array       Array of input blob descriptors, one per model input.\n @param[in]  op_array       Array of output blob descriptors, one per model output.\n @param[out] inf_obj        Inference request object returned immediately after submission.\n @param[in]  infer_options  Extended inference options controlling request behavior.\n @return                    DV_SUCCESS on success, else error.\n @note    Prefer @ref dv_infer_async_with_options_s which returns a detailed @ref dv_status_t\n          instead of a plain status code."]
     pub unsafe fn dv_infer_async_with_options(
         &self,
         session: *mut dv_session_t,
@@ -2768,7 +2819,214 @@ impl araclient {
             infer_options,
         )
     }
-    #[doc = " @brief Wrapper of dv_infer_async_with_options with detailed status.\n\n Use this instead of @ref dv_infer_async_with_options when you need a detailed\n status object rather than a simple status code.\n\n @param[in]  session        Session handle.\n @param[in]  endpt          Endpoint or endpoint group handle to submit inference to. Although the\n                            model already carries the endpoint group it was loaded on, this parameter\n                            allows the caller to narrow or override the target to a specific endpoint\n                            or sub-group within that group for this inference request.\n @param[in]  model          Model handle for which inference is requested.\n @param[in]  ip_array       Array of input blob descriptors, one per model input.\n @param[in]  op_array       Array of output blob descriptors, one per model output.\n @param[out] inf_obj        Inference request object returned immediately after submission.\n @param[in]  infer_options  Extended inference options controlling request behavior.\n @return                    Detailed status."]
+    #[doc = " Get output blob for given output layer names\n\n API is available from r1.2 release onwards\n Returns an array of output blobs for a given layer name\n Api should be called by passing infer handle for a successfully run inference\n Freeing infer handle will free memory pointed by output_blobs\n \\param[in] inf_obj infer request handle received after running inference successfully\n \\param[in] src_op_layer_name source graph output layer name, as specified in model output layer params struct\n \\param[out] op_blobs array of output blobs for given src_op_layer_name\n \\param[out] num_op_blobs number of output blobs in op_blobs"]
+    pub unsafe fn dv_fetch_outputs_by_layer_name(
+        &self,
+        inf_obj: *mut dv_infer_request_t,
+        src_op_layer_name: *mut ::std::os::raw::c_char,
+        op_blobs: *mut *mut dv_blob_t,
+        num_op_blobs: *mut ::std::os::raw::c_int,
+    ) -> dv_status_code_t {
+        (self
+            .dv_fetch_outputs_by_layer_name
+            .as_ref()
+            .expect("Expected function, got error."))(
+            inf_obj,
+            src_op_layer_name,
+            op_blobs,
+            num_op_blobs,
+        )
+    }
+    #[doc = " Creates a model object and load model contents from blob and transfer it to\n endpoint Model object contains the model handle and model parameters.\n `dv_model_get_loaded_endpoint_list` returns the list of endpoints (individual\n device dv_endpoint_t handles) on which the model was successfully loaded.\n\n If model load fails on all individual devices representing `endpt`, the API\n call will error out.\n\n Returns DV_SUCCESS on success, else error\n \\param[in]   session          : session handle\n \\param[in]   endpt            : endpoint handle\n \\param[in]   model_file_path  : path to model file\n \\param[out]  model_handle     : model handle returned by server\n \\param[in]   options          : model load options\n \\since       r6.0"]
+    pub unsafe fn dv_model_load_from_file_with_options(
+        &self,
+        session: *mut dv_session_t,
+        endpt: *mut dv_endpoint_t,
+        model_file_path: *const ::std::os::raw::c_char,
+        model_handle: *mut *mut dv_model_t,
+        options: *mut dv_model_load_options_t,
+    ) -> dv_status_code_t {
+        (self
+            .dv_model_load_from_file_with_options
+            .as_ref()
+            .expect("Expected function, got error."))(
+            session,
+            endpt,
+            model_file_path,
+            model_handle,
+            options,
+        )
+    }
+    #[doc = " Creates a model object and load model contents from blob and transfer it to\n endpoint Model object contains the model handle and model parameters.\n `dv_model_get_loaded_endpoint_list` returns the list of endpoints (individual\n device dv_endpoint_t handles) on which the model was successfully loaded.\n\n If model load fails on all individual devices representing `endpt`, the API\n call will error out.\n\n Returns DV_SUCCESS on success, else error\n \\param[in]   session          : session handle\n \\param[in]   endpt            : endpoint handle\n \\param[in]   model_blob       : dv_blob_t of the model\n \\param[in]   options          : model load options\n \\param[out]  model_handle     : model handle returned by server\n \\since       r6.0"]
+    pub unsafe fn dv_model_load_from_blob_with_options(
+        &self,
+        session: *mut dv_session_t,
+        endpt: *mut dv_endpoint_t,
+        blob: *mut dv_blob_t,
+        model_handle: *mut *mut dv_model_t,
+        options: *mut dv_model_load_options_t,
+    ) -> dv_status_code_t {
+        (self
+            .dv_model_load_from_blob_with_options
+            .as_ref()
+            .expect("Expected function, got error."))(
+            session, endpt, blob, model_handle, options
+        )
+    }
+    #[doc = " api gives current version details of\nmodel, driver, proxy, firmware version to client\n\n Returns DV_SUCCESS on success, else error\n \\param[in]    session             : session handle\n \\param[out]   product_version     : product versions\n \\param[out]   product_count       : number of product version sent"]
+    pub unsafe fn dv_exchange_current_version_details(
+        &self,
+        session: *mut dv_session_t,
+        product_version: *mut *mut dv_product_version_t,
+        product_count: *mut u8,
+    ) -> dv_status_code_t {
+        (self
+            .dv_exchange_current_version_details
+            .as_ref()
+            .expect("Expected function, got error."))(
+            session, product_version, product_count
+        )
+    }
+    #[doc = " api gives all supported version details of\nmodel, driver, proxy, firmware version to client\n\n Returns DV_SUCCESS on success, else error\n \\param[in]   product_version        : list of versions"]
+    pub unsafe fn dv_retrieve_version_details(
+        &self,
+        session: *mut dv_session_t,
+        product_version: *mut *mut dv_product_version_t,
+        product_count: *mut u8,
+    ) -> dv_status_code_t {
+        (self
+            .dv_retrieve_version_details
+            .as_ref()
+            .expect("Expected function, got error."))(
+            session, product_version, product_count
+        )
+    }
+    #[doc = " api gives current running version of client library\n\n Returns DV_SUCCESS on success, else error\n \\param[in]   client_lib_version        : fill struct with client library version"]
+    pub unsafe fn dv_get_client_lib_version(
+        &self,
+        client_lib_version: *mut dv_version_t,
+    ) -> dv_status_code_t {
+        (self
+            .dv_get_client_lib_version
+            .as_ref()
+            .expect("Expected function, got error."))(client_lib_version)
+    }
+    #[doc = " api deletes memory created by dv_exchange_current_version_details or dv_retrieve_version_details apis\n\n Returns DV_SUCCESS on success, else error\n \\param[in]   product_version        : list of versions"]
+    pub unsafe fn dv_free_version_details(
+        &self,
+        product_version: *mut dv_product_version_t,
+    ) -> dv_status_code_t {
+        (self
+            .dv_free_version_details
+            .as_ref()
+            .expect("Expected function, got error."))(product_version)
+    }
+    pub unsafe fn dv_client_set_log_level(
+        &self,
+        log_level: dv_client_log_level_t,
+    ) -> dv_status_code_t {
+        (self
+            .dv_client_set_log_level
+            .as_ref()
+            .expect("Expected function, got error."))(log_level)
+    }
+    pub unsafe fn dv_endpoint_get_statistics_with_options(
+        &self,
+        session: *mut dv_session_t,
+        ep: *mut dv_endpoint_t,
+        ep_stats: *mut *mut dv_endpoint_statistics_1_3_t,
+        ep_count: *mut ::std::os::raw::c_int,
+        stats_options: *mut dv_stats_options_t,
+    ) -> dv_status_code_t {
+        (self
+            .dv_endpoint_get_statistics_with_options
+            .as_ref()
+            .expect("Expected function, got error."))(
+            session,
+            ep,
+            ep_stats,
+            ep_count,
+            stats_options,
+        )
+    }
+    pub unsafe fn dv_model_load_from_file_s(
+        &self,
+        session: *mut dv_session_t,
+        endpt: *mut dv_endpoint_t,
+        model_file_path: *const ::std::os::raw::c_char,
+        model_name: *const ::std::os::raw::c_char,
+        priority: dv_model_priority_level_t,
+        model_handle: *mut *mut dv_model_t,
+    ) -> dv_status_t {
+        (self
+            .dv_model_load_from_file_s
+            .as_ref()
+            .expect("Expected function, got error."))(
+            session,
+            endpt,
+            model_file_path,
+            model_name,
+            priority,
+            model_handle,
+        )
+    }
+    pub unsafe fn dv_model_load_from_file_with_options_s(
+        &self,
+        session: *mut dv_session_t,
+        endpt: *mut dv_endpoint_t,
+        model_file_path: *const ::std::os::raw::c_char,
+        model_handle: *mut *mut dv_model_t,
+        options: *mut dv_model_load_options_1_3_t,
+    ) -> dv_status_t {
+        (self
+            .dv_model_load_from_file_with_options_s
+            .as_ref()
+            .expect("Expected function, got error."))(
+            session,
+            endpt,
+            model_file_path,
+            model_handle,
+            options,
+        )
+    }
+    pub unsafe fn dv_model_load_from_blob_with_options_s(
+        &self,
+        session: *mut dv_session_t,
+        endpt: *mut dv_endpoint_t,
+        blob: *mut dv_blob_t,
+        model_handle: *mut *mut dv_model_t,
+        options: *mut dv_model_load_options_1_3_t,
+    ) -> dv_status_t {
+        (self
+            .dv_model_load_from_blob_with_options_s
+            .as_ref()
+            .expect("Expected function, got error."))(
+            session, endpt, blob, model_handle, options
+        )
+    }
+    pub unsafe fn dv_infer_async_s(
+        &self,
+        session: *mut dv_session_t,
+        endpt: *mut dv_endpoint_t,
+        model: *mut dv_model_t,
+        ip_array: *mut dv_blob_t,
+        op_array: *mut dv_blob_t,
+        enable_stats: bool,
+        inf_obj: *mut *mut dv_infer_request_t,
+    ) -> dv_status_t {
+        (self
+            .dv_infer_async_s
+            .as_ref()
+            .expect("Expected function, got error."))(
+            session,
+            endpt,
+            model,
+            ip_array,
+            op_array,
+            enable_stats,
+            inf_obj,
+        )
+    }
     pub unsafe fn dv_infer_async_with_options_s(
         &self,
         session: *mut dv_session_t,
@@ -2792,142 +3050,23 @@ impl araclient {
             infer_options,
         )
     }
-    #[doc = " @brief Retrieves the output blobs for a specific output layer by name from a completed inference.\n\n Use this when a model has multiple output layers and you only need the output of a\n specific layer by name. Must be called after the inference has completed successfully.\n Do not call this on an in-flight or failed inference request. The returned blob array\n is owned by the inference handle and must not be freed separately — freeing the\n inference handle via @ref dv_infer_free will also free the memory pointed to by\n @p op_blobs.\n\n @param[in]  inf_obj             Inference request handle from a successfully completed inference.\n @param[in]  src_op_layer_name   Source graph output layer name as specified in the model's\n                                 output layer parameters (@ref dv_model_output_param_t::src_graph_layer_name).\n @param[out] op_blobs            Array of output blobs for the specified layer name.\n @param[out] num_op_blobs        Number of blobs in the @p op_blobs array.\n @return                         DV_SUCCESS on success, else error."]
-    pub unsafe fn dv_fetch_outputs_by_layer_name(
+    pub unsafe fn dv_infer_wait_for_completion_s(
         &self,
-        inf_obj: *mut dv_infer_request_t,
-        src_op_layer_name: *mut ::std::os::raw::c_char,
-        op_blobs: *mut *mut dv_blob_t,
-        num_op_blobs: *mut ::std::os::raw::c_int,
-    ) -> dv_status_code_t {
+        session: *mut dv_session_t,
+        inf_obj_list: *mut *mut dv_infer_request_t,
+        inf_obj_count: ::std::os::raw::c_int,
+        timeout: ::std::os::raw::c_int,
+        inf_obj: *mut *mut dv_infer_request_t,
+    ) -> dv_status_t {
         (self
-            .dv_fetch_outputs_by_layer_name
+            .dv_infer_wait_for_completion_s
             .as_ref()
             .expect("Expected function, got error."))(
+            session,
+            inf_obj_list,
+            inf_obj_count,
+            timeout,
             inf_obj,
-            src_op_layer_name,
-            op_blobs,
-            num_op_blobs,
         )
-    }
-    #[doc = " @brief Loads a model from a file with extended options and transfers it to the specified endpoint.\n\n Use this as the preferred model load API when you need control over async loading,\n disk caching, or explicit model type selection. Set @c options->async = true to\n return immediately and poll for completion, which is useful when loading large LLM\n models that take significant time to transfer. Set @c options->cache = true to cache\n the model on disk for faster subsequent loads. Always set @c options->model_type\n explicitly for LLM models — the default @c DV_MODEL_TYPE_ARA2_CNN is incorrect\n for LLM workloads. If model loading fails on all devices represented by @p endpt,\n the API returns an error.\n\n @param[in]  session          Session handle.\n @param[in]  endpt            Endpoint or endpoint group handle to load the model onto.\n @param[in]  model_file_path  Filesystem path to the compiled model file.\n @param[out] model_handle     Model object returned on success.\n @param[in]  options          Model load options controlling load behavior.\n @return                      DV_SUCCESS if loaded successfully on all devices, DV_PARTIAL_SUCCESS if loaded on only some devices, DV_MODEL_LOAD_FAILURE if loading failed on all devices.\n @note    Prefer @ref dv_model_load_from_file_with_options_s which returns a detailed @ref dv_status_t\n          instead of a plain status code."]
-    pub unsafe fn dv_model_load_from_file_with_options(
-        &self,
-        session: *mut dv_session_t,
-        endpt: *mut dv_endpoint_t,
-        model_file_path: *const ::std::os::raw::c_char,
-        model_handle: *mut *mut dv_model_t,
-        options: *mut dv_model_load_options_t,
-    ) -> dv_status_code_t {
-        (self
-            .dv_model_load_from_file_with_options
-            .as_ref()
-            .expect("Expected function, got error."))(
-            session,
-            endpt,
-            model_file_path,
-            model_handle,
-            options,
-        )
-    }
-    #[doc = " @brief Wrapper of dv_model_load_from_file_with_options with detailed status.\n\n Use this instead of @ref dv_model_load_from_file_with_options when you need a\n detailed status object rather than a simple status code.\n\n @param[in]  session          Session handle.\n @param[in]  endpt            Endpoint or endpoint group handle to load the model onto.\n @param[in]  model_file_path  Filesystem path to the compiled model file.\n @param[out] model_handle     Model object returned on success.\n @param[in]  options          Model load options controlling load behavior.\n @return                      DV_SUCCESS if loaded successfully on all devices, DV_PARTIAL_SUCCESS if loaded on only some devices, DV_MODEL_LOAD_FAILURE if loading failed on all devices."]
-    pub unsafe fn dv_model_load_from_file_with_options_s(
-        &self,
-        session: *mut dv_session_t,
-        endpt: *mut dv_endpoint_t,
-        model_file_path: *const ::std::os::raw::c_char,
-        model_handle: *mut *mut dv_model_t,
-        options: *mut dv_model_load_options_t,
-    ) -> dv_status_t {
-        (self
-            .dv_model_load_from_file_with_options_s
-            .as_ref()
-            .expect("Expected function, got error."))(
-            session,
-            endpt,
-            model_file_path,
-            model_handle,
-            options,
-        )
-    }
-    #[doc = " @brief Loads a model from a blob with extended options and transfers it to the specified endpoint.\n\n Use this when the model is already in host memory and you need extended load control\n such as async loading or explicit model type selection. Prefer this over\n @ref dv_model_load_from_blob when loading LLM models or when async loading is needed.\n If model loading fails on all devices represented by @p endpt, the API returns an error.\n\n @param[in]  session       Session handle.\n @param[in]  endpt         Endpoint or endpoint group handle to load the model onto.\n @param[in]  blob          Blob descriptor pointing to the model data in memory.\n @param[in]  options       Model load options controlling load behavior.\n @param[out] model_handle  Model object returned on success.\n @return                   DV_SUCCESS if loaded successfully on all devices,\n                           DV_PARTIAL_SUCCESS if loaded on only some devices,\n                           Error Status if loading failed on all devices.\n @note    Prefer @ref dv_model_load_from_blob_with_options_s which returns a detailed @ref dv_status_t\n          instead of a plain status code."]
-    pub unsafe fn dv_model_load_from_blob_with_options(
-        &self,
-        session: *mut dv_session_t,
-        endpt: *mut dv_endpoint_t,
-        blob: *mut dv_blob_t,
-        model_handle: *mut *mut dv_model_t,
-        options: *mut dv_model_load_options_t,
-    ) -> dv_status_code_t {
-        (self
-            .dv_model_load_from_blob_with_options
-            .as_ref()
-            .expect("Expected function, got error."))(
-            session, endpt, blob, model_handle, options
-        )
-    }
-    #[doc = " @brief Wrapper of dv_model_load_from_blob_with_options with detailed status.\n\n Use this instead of @ref dv_model_load_from_blob_with_options when you need a\n detailed status object rather than a simple status code.\n\n @param[in]  session       Session handle.\n @param[in]  endpt         Endpoint or endpoint group handle to load the model onto.\n @param[in]  blob          Blob descriptor pointing to the model data in memory.\n @param[in]  options       Model load options controlling load behavior.\n @param[out] model_handle  Model object returned on success.\n @return                   Detailed status structure."]
-    pub unsafe fn dv_model_load_from_blob_with_options_s(
-        &self,
-        session: *mut dv_session_t,
-        endpt: *mut dv_endpoint_t,
-        blob: *mut dv_blob_t,
-        model_handle: *mut *mut dv_model_t,
-        options: *mut dv_model_load_options_t,
-    ) -> dv_status_t {
-        (self
-            .dv_model_load_from_blob_with_options_s
-            .as_ref()
-            .expect("Expected function, got error."))(
-            session, endpt, blob, model_handle, options
-        )
-    }
-    #[doc = " @brief Retrieves the current active version of each product component from the server.\n\n Use this at startup to verify that the client library version is compatible with\n the running proxy and firmware. For the full set of versions supported by the proxy\n (not just the currently active ones), use @ref dv_retrieve_version_details instead.\n Memory for @p product_version is allocated by the API and must be freed using\n @ref dv_free_version_details.\n\n @param[in]  session          Session handle.\n @param[out] product_version  Array of product version structures returned by the server.\n @param[out] product_count    Number of product version entries in the returned array.\n @return                      DV_SUCCESS on success, else error."]
-    pub unsafe fn dv_exchange_current_version_details(
-        &self,
-        session: *mut dv_session_t,
-        product_version: *mut *mut dv_product_version_t,
-        product_count: *mut u8,
-    ) -> dv_status_code_t {
-        (self
-            .dv_exchange_current_version_details
-            .as_ref()
-            .expect("Expected function, got error."))(
-            session, product_version, product_count
-        )
-    }
-    #[doc = " @brief Retrieves all supported versions for each product component from the server.\n\n Use this to determine the full compatibility matrix of the running proxy — useful\n when managing deployments with multiple client library versions. To get only the\n currently active versions, use @ref dv_exchange_current_version_details instead.\n Memory for @p product_version is allocated by the API and must be freed using\n @ref dv_free_version_details.\n\n @param[in]  session          Session handle.\n @param[out] product_version  Array of product version structures returned by the server.\n @param[out] product_count    Number of product version entries in the returned array.\n @return                      DV_SUCCESS on success, else error."]
-    pub unsafe fn dv_retrieve_version_details(
-        &self,
-        session: *mut dv_session_t,
-        product_version: *mut *mut dv_product_version_t,
-        product_count: *mut u8,
-    ) -> dv_status_code_t {
-        (self
-            .dv_retrieve_version_details
-            .as_ref()
-            .expect("Expected function, got error."))(
-            session, product_version, product_count
-        )
-    }
-    #[doc = " @brief Retrieves the version of the currently running client library.\n\n Use this to log or validate the client library version at application startup,\n or to include version information in bug reports. This does not require a session\n and can be called before @ref dv_session_create_via_unix_socket. Populates the\n provided version structure with the major, minor, patch, and patch_minor version\n fields of the client library in use.\n\n @param[out] client_lib_version  Version structure to populate with client library version.\n @return                         DV_SUCCESS on success, else error."]
-    pub unsafe fn dv_get_client_lib_version(
-        &self,
-        client_lib_version: *mut dv_version_t,
-    ) -> dv_status_code_t {
-        (self
-            .dv_get_client_lib_version
-            .as_ref()
-            .expect("Expected function, got error."))(client_lib_version)
-    }
-    #[doc = " @brief Frees memory allocated by @ref dv_exchange_current_version_details or\n        @ref dv_retrieve_version_details.\n\n Always call this after processing version details to avoid memory leaks.\n Do not access @p product_version after this call.\n\n @param[in]  product_version  Pointer to the product version array to free.\n @return                      DV_SUCCESS on success, else error."]
-    pub unsafe fn dv_free_version_details(
-        &self,
-        product_version: *mut dv_product_version_t,
-    ) -> dv_status_code_t {
-        (self
-            .dv_free_version_details
-            .as_ref()
-            .expect("Expected function, got error."))(product_version)
     }
 }

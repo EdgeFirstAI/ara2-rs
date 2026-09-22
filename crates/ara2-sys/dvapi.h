@@ -1,28 +1,6 @@
 /*
  * Copyright (c) 2018-25, Kinara, Inc. All rights reserved.
- * Copyright 2025-2026 NXP
- *
- * NXP Proprietary. This software is owned or controlled by NXP and may only be
- * used strictly in accordance with the applicable license terms. By expressly
- * accepting such terms or by downloading, installing, activating and/or
- * otherwise using the software, you are agreeing that you have read, and that
- * you agree to comply with and are bound by, such license terms. If you do not
- * agree to be bound by the applicable license terms, then you may not retain,
- * install, activate or otherwise use the software.
- *
- */
-
-/**
- * @file dvapi.h
- * @brief Public API for the Client library.
- *
- * Provides data structures and APIs for:
- * - Session management
- * - Endpoint discovery and statistics
- * - Model loading and management
- * - Inference execution (sync/async)
- * - Shared memory handling
- * - LLM configuration and control
+ * Kinara  Proprietary. This software is owned or controlled by Kinara and may only be used strictly in accordance with the applicable license terms.
  */
 
 #ifndef __DV_API_H__
@@ -46,24 +24,12 @@
 extern "C" {
 #endif
 
-/**
- * @brief Opaque handle for an inference request.
- *
- * Forward-declared structure used as a type-safe handle to an in-flight
- * or completed inference request. Managed exclusively by the client library.
- */
 struct dv_infer_request_handle;
 typedef struct dv_infer_request_handle dv_infer_request_handle_t;
 
-/**
- * @brief Opaque handle for a loaded model.
- *
- * Forward-declared structure used as a type-safe handle to a model loaded
- * onto an endpoint. Managed exclusively by the client library.
- */
 struct dv_model_handle;
 typedef struct dv_model_handle dv_model_handle_t;
- 
+
 /// DV session socket type
 typedef enum DV_SESSION_SOCKET_TYPE {
   DV_SESSION_SOCKET_TYPE_UNIX = 0,    /**< unix domain socket */
@@ -76,9 +42,6 @@ typedef enum DV_ENDPOINT_HOST_INTERFACE {
   DV_ENDPOINT_HOST_INTERFACE_USB = 2   /**< host and dv connected via usb interface */
 } dv_endpoint_host_interface_t;
 
-/**
- * @brief Represents predefined endpoint groupings available from the proxy server.
- */
 // Endpoint default groups
 typedef enum DV_ENDPOINT_DEFAULT_GROUP {
   DV_ENDPOINT_DEFAULT_GROUP_ALL = 0,  /**< default group for all the endpoint(s)
@@ -91,21 +54,21 @@ typedef enum DV_ENDPOINT_DEFAULT_GROUP {
 
 /// Endpoint state
 typedef enum DV_ENDPOINT_STATE {
-  DV_ENDPOINT_STATE_INIT = 0,                /**< endpoint is in init state */
-  DV_ENDPOINT_STATE_IDLE = 1,                /**< endpoint is in idle state */
-  DV_ENDPOINT_STATE_ACTIVE = 2,              /**< endpoint is in active state */
-  DV_ENDPOINT_STATE_ACTIVE_SLOW = 3,         /**< endpoint is operating at reduced frequency*/
-  DV_ENDPOINT_STATE_THERMAL_ACTIVE_SLOW = 4, /**< endpoint is operating at reduced frequency*/
-  DV_ENDPOINT_STATE_FAIL_SAFE = 5,           /**< endpoint is in thermal Inactive state */
-  DV_ENDPOINT_STATE_THERMAL_UNKNOWN = 6,     /**< endpoint is in unknown thermal state*/
-  DV_ENDPOINT_STATE_INACTIVE = 7,            /**< endpoint is in Inactive state */
-  DV_ENDPOINT_STATE_FAULT = 8,               /**< endpoint is in faulty state */
-  DV_ENDPOINT_STATE_BAD_INTERFACE = 1001,    /**< [unsupported] */
-  DV_ENDPOINT_STATE_RECOVERY = 1003,         /**< [unsupported] */
-  DV_ENDPOINT_STATE_DEAD = 1004,             /**< [unsupported] */
-  DV_ENDPOINT_STATE_DRAIN = 1005,            /**< [unsupported] */
-  DV_ENDPOINT_STATE_POWER_GATED = 1006,      /**< [unsupported] */
-  DV_ENDPOINT_STATE_CLOSED = 1007,           /**< [unsupported] */
+  DV_ENDPOINT_STATE_INIT = 0,             /**< endpoint is in init state */
+  DV_ENDPOINT_STATE_IDLE = 1,             /**< endpoint is in idle state */
+  DV_ENDPOINT_STATE_ACTIVE = 2,           /**< endpoint is in active state */
+  DV_ENDPOINT_STATE_ACTIVE_SLOW = 3,      /**< endpoint is operating at reduced frequency*/
+  DV_ENDPOINT_STATE_ACTIVE_BOOSTED = 4,   /**< endpoint is operating at reduced frequency*/
+  DV_ENDPOINT_STATE_THERMAL_INACTIVE = 5, /**< endpoint is in thermal Inactive state */
+  DV_ENDPOINT_STATE_THERMAL_UNKNOWN = 6,  /**< endpoint is in unown thermal state*/
+  DV_ENDPOINT_STATE_INACTIVE = 7,         /**< endpoint is in Inactive state */
+  DV_ENDPOINT_STATE_FAULT = 8,            /**< endpoint is in faulty state */
+  DV_ENDPOINT_STATE_BAD_INTERFACE = 1001, /**< [unsupported] */
+  DV_ENDPOINT_STATE_RECOVERY = 1003,      /**< [unsupported] */
+  DV_ENDPOINT_STATE_DEAD = 1004,          /**< [unsupported] */
+  DV_ENDPOINT_STATE_DRAIN = 1005,         /**< [unsupported] */
+  DV_ENDPOINT_STATE_POWER_GATED = 1006,   /**< [unsupported] */
+  DV_ENDPOINT_STATE_CLOSED = 1007,        /**< [unsupported] */
 } dv_endpoint_state_t;
 
 /// Endpoint Power State [currently unsupported]
@@ -116,9 +79,6 @@ typedef enum DV_ENDPOINT_POWER_STATE {
   DV_POWER_STATE_L2 = 3,  /**< endpoint is in L2 state */
 } dv_endpoint_power_state_t;
 
-/**
- * @brief Represents the group membership type of an endpoint collection.
- */
 // Endpoint group type
 typedef enum DV_ENDPOINT_GROUP_TYPE {
   DV_ENDPOINT_GROUP_TYPE_NONE = 0,   /**< endpoint group type none */
@@ -164,43 +124,17 @@ typedef enum DV_BLOB_TYPE {
 
 // changes for versioning
 
-/**
- * @brief Represents the type of a versioned software or firmware product component.
- */
 typedef enum DV_PRODUCT_TYPE {
-  INVALID_PRODUCT = -1, /**< invalid product type */
-  PROXY = 0,            /**< product is proxy */       
-  PCI_DRIVER = 1,       /**< NOT USED CURRENTLY */
-  FIRMWARE = 2,         /**< product is firmware */
-  CNN_MODEL = 3,        /**< product is CNN model */
-  LLM_MODEL = 4,        /**< product is LLM model */
-  CLIENT_LIB = 5,       /**< product is client library */
-  SYSAPI = 6,           /**< NOT USED CURRENTLY */
+  INVALID_PRODUCT = -1,
+  PROXY,
+  PCI_DRIVER,
+  FIRMWARE,
+  CNN_MODEL,
+  LLM_MODEL,
+  CLIENT_LIB,
+  SYSAPI,
 } dv_product_type_t;
 
-// DV client log level to dump logs
-typedef enum DV_CLIENT_LOG_LEVEL {
-  DV_CLIENT_LOG_LEVEL_TRACE = 0,    /**< dump critical, error, warning, info, debug and trace logs */
-  DV_CLIENT_LOG_LEVEL_DEBUG = 1,    /**< dump critical, error, warning, info and debug logs */
-  DV_CLIENT_LOG_LEVEL_INFO = 2,     /**< dump critical, error, warning and info logs */
-  DV_CLIENT_LOG_LEVEL_WARN = 3,     /**< dump critical, error and warning logs */
-  DV_CLIENT_LOG_LEVEL_ERROR = 4,    /**< dump critical and error logs */
-  DV_CLIENT_LOG_LEVEL_CRITICAL = 5, /**< dump critical logs */
-  DV_CLIENT_LOG_LEVEL_OFF = 6,      /**< turn off client logs */
-} dv_client_log_level_t;
-
-/**
- * @brief Represents a semantic version number with four components.
- *
- * @var dv_version_t::major
- *   Major version number.
- * @var dv_version_t::minor
- *   Minor version number.
- * @var dv_version_t::patch
- *   Patch version number.
- * @var dv_version_t::patch_minor
- *   Sub-patch (minor patch) version number.
- */
 typedef struct dv_version {
   uint8_t major;
   uint8_t minor;
@@ -208,27 +142,11 @@ typedef struct dv_version {
   uint8_t patch_minor;
 } dv_version_t;
 
-/**
- * @brief Represents a product type paired with its version information.
- *
- * @var dv_product_version_t::product_type
- *   The type of the product component as defined by @ref DV_PRODUCT_TYPE.
- * @var dv_product_version_t::product_version
- *   The version of the product component.
- */
 typedef struct dv_product_version {
   dv_product_type_t product_type;
   dv_version_t product_version;
 } dv_product_version_t;
 
-/**
- * @brief Represents a contiguous memory region used as input or output for inference and model operations.
- *
- * Use @ref DV_BLOB_TYPE_RAW_POINTER for host-allocated buffers passed directly to the API.
- * Use @ref DV_BLOB_TYPE_SHM_DESCRIPTOR when the buffer has been registered via @ref dv_shmfd_register
- * to avoid redundant host-to-device copies across inference requests.
- * Use @ref DV_BLOB_TYPE_FD for file-descriptor-backed buffers that have not been pre-registered.
- */
 // DV blob
 typedef struct dv_blob {
   void *handle;             /**< blob handle (raw pointer or shared file descriptor returned
@@ -260,9 +178,6 @@ typedef struct dv_shm_descriptor {
   int fd_type;           /**< type of fd shared (reserved) */
 } dv_shm_descriptor_t;
 
-/**
- * @brief Represents the on-chip processor and memory configuration of a DV endpoint.
- */
 // DV Endpoint chip information
 typedef struct dv_endpoint_chip_info {
   char *id;                    /**< dv chip id */
@@ -272,9 +187,6 @@ typedef struct dv_endpoint_chip_info {
   uint32_t l2_memory_size;     /**< dv chip internal L2 memory size in bytes */
 } dv_endpoint_chip_info_t;
 
-/**
- * @brief Represents the external DRAM device information for a DV endpoint.
- */
 // DV Endpoint external dram information
 typedef struct dv_endpoint_dram_info {
   uint32_t vendor_id; /**< dv dram vendor id */
@@ -293,7 +205,7 @@ typedef struct dv_endpoint_iface_info {
   int device_num;                    /**< host interface device number on which dv device is
                                         connected */
   union {
-    char *pcie_dir; /**< path to the pcie sysfs entry for a PCIE
+    char *pcie_dir; /**< \since r5.3 path to the pcie sysfs entry for a PCIE
                        interface device */
   } sysfs_path;
 
@@ -323,13 +235,6 @@ typedef struct dv_endpoint {
                                         endpoint(s) in the group */
 } dv_endpoint_t;
 
-/**
- * @brief Represents a DRAM utilization snapshot for a single endpoint.
- *
- * Use this to monitor endpoint memory pressure before loading additional models.
- * If @c ep_total_free_size is low, unload unused models before attempting new
- * loads to avoid out-of-memory errors during inference or model load.
- */
 // Endpoint dram statistics
 typedef struct dv_endpoint_dram_statistics {
   dv_endpoint_t *ep;                         /**< endpoint handle */
@@ -341,27 +246,13 @@ typedef struct dv_endpoint_dram_statistics {
   uint64_t ep_total_tensor_occupancy_size;   /**< endpoint dram memory occupied by all the active model tensors in bytes */
 } dv_endpoint_dram_statistics_t;
 
-/**
- * @brief Represents inference queue depth and latency statistics for a single endpoint.
- *
- * Use @c wait_time to estimate whether a new inference request will be picked up
- * immediately or queued behind existing requests. If @c occupancy_count approaches
- * @c length, the queue is near capacity and submitting additional requests may block.
- */
+// Inference queue statistics per endpoint
 typedef struct dv_inference_queue_statistics {
   int occupancy_count; /**< Number of inference queue slots occupied with inference request for the endpoint */
   int length;          /**< length of the inference queue for the endpoint */
   float wait_time;     /**< waiting time in mili secs for the new inference request to get picked up by endpoint */
 } dv_inference_queue_statistics_t;
 
-/**
- * @brief Represents resource utilization statistics for a single model active on an endpoint.
- *
- * Use @c model_handle to correlate these statistics with a specific @ref dv_model_t
- * object returned by a model load API — compare against the @c handle member of
- * @ref dv_model_t. Statistics are reported for all models loaded across all clients,
- * not just the calling client.
- */
 // Model statistics per endpoint
 typedef struct dv_model_statistics {
   uint32_t model;                                    /**< model handle */
@@ -371,20 +262,11 @@ typedef struct dv_model_statistics {
   uint32_t model_total_dram_occupancy_size;          /**< total endpoint dram occupancy in bytes by model artefacts */
   uint32_t model_total_input_tensor_occupancy_size;  /**< total endpoint dram occupancy in bytes by model input tensors */
   uint32_t model_total_output_tensor_occupancy_size; /**< total endpoint dram occupancy in bytes by model output tensors */
-  dv_model_handle_t *model_handle;                   /**< void* handle which can be compared to `handle` member of dv_model_t */
+  dv_model_handle_t *model_handle;                   /**< \since r5.3 void* handle which can be compared to `handle` member of dv_model_t */
 } dv_model_statistics_t;
 
-/**
- * @brief Represents a runtime statistics snapshot for a single endpoint.
- *
- * Use this to monitor endpoint health, thermal state, and clock configuration
- * during production workloads. Check @c state before submitting inference — if the
- * endpoint is in @c DV_ENDPOINT_STATE_FAULT or @c DV_ENDPOINT_STATE_THERMAL_ACTIVE_SLOW,
- * throughput may be degraded or inference may fail. Use @c ep_temp and @c ep_core_voltage
- * to detect thermal or power anomalies in long-running deployments.
- */
 // Endpoint statistics
-typedef struct dv_endpoint_statistics {
+typedef struct dv_endpoint_stats {
   dv_endpoint_t *ep;                              /**< endpoint handle */
   dv_endpoint_state_t state;                      /**< endpoint state */
   int ep_sys_clk;                                 /**< endpoint system core clock in MHz */
@@ -398,8 +280,6 @@ typedef struct dv_endpoint_statistics {
   dv_endpoint_dram_statistics_t ep_dram_stats;    /**< endpoint dram statistics */
   dv_endpoint_power_state_t ep_power_state;       /**< endpoint power state [unsupported] */
   uint32_t ep_soft_reset_count;                   /**< endpoint soft reset count, non zero for usb devices */
-  int ep_sbp_clk;                                 /**< endpoint sbp clock in MHz */
-  int ep_nnp_clk;                                 /**< endpoint nnp clock in MHz */
 } dv_endpoint_statistics_t;
 
 // DV model input pre-processing parameters
@@ -422,7 +302,7 @@ typedef struct dv_model_input_preprocess_param {
   bool center_crop;          /**< center crop */
   bool bgr_to_rgb;           /**< convert BGR to RGB */
   int interpolation;         /**< interpolation method supported by OpenCV */
-  bool is_signed;            /**< if true, input data is in signed range [-128, 128]; if false, input data is in unsigned range [0, 255] */
+  bool is_signed;            /**< input range ((-128) - (128)) / (0 - 255) */
   int bpp;                   /**< bytes per pixel */
   float output_scale;        /**< output scale */
   float aspect_resize_scale; /**< aspect resize scaling factor */
@@ -482,16 +362,8 @@ typedef struct dv_model_output_param {
   int num;                                                /**< num dimension >*/
   int max_dynamic_id;                                     /**< max batch id */
   char *src_graph_layer_name;                             /**< source graph output layer name */
-  int has_nms_parent;                                     /**< 1, if any parent layer is NMS*/
 } dv_model_output_param_t;
 
-/**
- * @brief Represents power and performance estimates reported by the Network Compiler.
- *
- * Use these values to compare compiler-predicted throughput against observed runtime
- * performance. A large gap between @c ips and measured inference rate may indicate
- * thermal throttling, memory pressure, or suboptimal batch configuration.
- */
 // Power and performance reported by DVNC(Kinara Network Compiler)
 typedef struct dv_compiler_statistics {
   char *config_name;   /**< DV1 config name, governed on ep system core clock */
@@ -500,69 +372,25 @@ typedef struct dv_compiler_statistics {
   float ddr_bandwidth; /**< ep dram estimated by compiler */
 } dv_compiler_statistics_t;
 
-/**
- * @brief Represents the hardware architecture and model category for a loaded model.
- *
- * Set this correctly in @ref dv_model_load_options_t when using
- * @ref dv_model_load_from_file_with_options or @ref dv_model_load_from_blob_with_options.
- * An incorrect model type will cause the proxy to use the wrong inference pipeline,
- * resulting in silent output corruption or inference failures.
- *
- * @var DV_MODEL_TYPE::DV_MODEL_TYPE_ARA1_CNN
- *   CNN model targeting the ARA1 hardware architecture.
- * @var DV_MODEL_TYPE::DV_MODEL_TYPE_ARA2_CNN
- *   CNN model targeting the ARA2 hardware architecture.
- * @var DV_MODEL_TYPE::DV_MODEL_TYPE_ARA2_LLM
- *   LLM model on ARA2 using dynamic quantization v1 (e.g., Qwen models).
- * @var DV_MODEL_TYPE::DV_MODEL_TYPE_ARA2_LLM_DYN_V2
- *   LLM model on ARA2 using the latest dynamic quantization scheme (excludes dynamic quant v1 models).
- */
 typedef enum DV_MODEL_TYPE {
-  DV_MODEL_TYPE_ARA1_CNN = 0,        /**< CNN models to run on ARA1 chip */
-  DV_MODEL_TYPE_ARA2_CNN = 1,        /**< CNN models to run on ARA2 chip */
-  DV_MODEL_TYPE_ARA2_LLM = 2,        /**< this is for dynamic quant v1 qwen models */
-  DV_MODEL_TYPE_ARA2_LLM_DYN_V2 = 3, /**< latest llm models [except for dynmaic quant v1 models] */
+  DV_MODEL_TYPE_ARA1_CNN = 0,
+  DV_MODEL_TYPE_ARA2_CNN = 1,
+  DV_MODEL_TYPE_ARA2_LLM = 2,         // this is for dynamic quant v1 qwen models
+  DV_MODEL_TYPE_ARA2_LLM_DYN_V2 = 3,  // latest llm models [except for dynmaic quant v1 models]
+  // DV_MODEL_TYPE_ARA2_LLM_DYN_V1_LLAMA = 5, // redundant, can be removed
+  // DV_MODEL_TYPE_ARA2_LLM_STATIC_QWEN = 6 // redundant, can be removed
 } dv_model_type_t;
 
-/**
- * @brief Represents options controlling model load behavior; passed to dv_model_load_*_with_options APIs.
- *
- * Use this struct instead of the legacy @ref dv_model_load_from_file or @ref dv_model_load_from_blob
- * APIs when you need fine-grained control over caching, async loading, or model type selection.
- * Always set @c model_type explicitly — the default of @c DV_MODEL_TYPE_ARA2_CNN is incorrect
- * for LLM models and will result in inference failures.
- */
-// arguments to be passed to dv_model_load_*_with_options APIs
-typedef struct dv_model_load_options {
+// arguments to be passed to dv_model_load_*_with_options APIs \since r6.0
+typedef struct dv_model_options {
   char *model_name;                   /**< model name */
   dv_model_priority_level_t priority; /**< priority of the model [unused] */
   bool cache;                         /**< if true, the model is cached on disk */
   bool async;                         /**< if true, the model load API immediately return \see
                                          dv_model_load_wait_for_completion */
   dv_model_type_t model_type;         /**< specify the model type, if not specified it will be  DV_MODEL_TYPE_ARA2_CNN*/
-  bool send_model_filepath_to_proxy;  /**< if true, send filepaht from client lib to proxy, imporves host memory consumpion
-                                         use this only if proxy and client lib have direct access to file(both are on same machine, or share filesystem)> */
 } dv_model_load_options_t;
 
-/**
- * @brief Represents the inference execution mode for a submitted inference request.
- *
- * For CNN inference, use @c DV_INFER_TYPE_ARA2_CNN (default). For LLM workflows,
- * select the appropriate phase — prompt processing must precede token generation.
- * Using @c DV_INFER_TYPE_LLM_TOKEN_GENERATION without a prior prompt processing
- * inference on the same model results in undefined output.
- *
- * @var DV_INFER_TYPE::DV_INFER_TYPE_ARA1_CNN
- *   Standard CNN inference on ARA1 hardware.
- * @var DV_INFER_TYPE::DV_INFER_TYPE_ARA2_CNN
- *   Standard CNN inference on ARA2 hardware.
- * @var DV_INFER_TYPE::DV_INFER_TYPE_LLM_PROMPT_PROCESSING
- *   LLM initial prompt processing (prefill) phase.
- * @var DV_INFER_TYPE::DV_INFER_TYPE_LLM_FOLLOWUP_PROMPT_PROCESSING
- *   LLM follow-up prompt processing for multi-turn or continued inference.
- * @var DV_INFER_TYPE::DV_INFER_TYPE_LLM_TOKEN_GENERATION
- *   LLM autoregressive token generation (decode) phase.
- */
 typedef enum DV_INFER_TYPE {
   DV_INFER_TYPE_ARA1_CNN = 0,
   DV_INFER_TYPE_ARA2_CNN = 1,
@@ -572,26 +400,6 @@ typedef enum DV_INFER_TYPE {
 
 } dv_infer_type_t;
 
-/**
- * @brief Represents options controlling the behavior of an inference request submission.
- *
- * Pass this to @ref dv_infer_sync_with_options or @ref dv_infer_async_with_options
- * when you need LLM-specific inference control or statistics collection.
- * For standard CNN inference, the default zero-initialized struct is sufficient.
- * Do not use @c active_tokens or @c valid_tokens for CNN inference — they are
- * only meaningful for LLM token generation and prompt processing phases.
- *
- * @var dv_infer_options_t::enable_stats
- *   If true, inference statistics are collected for this request.
- * @var dv_infer_options_t::infer_type
- *   Inference execution mode; defaults to DV_INFER_TYPE_ARA2_CNN if not set.
- * @var dv_infer_options_t::active_tokens
- *   Number of active tokens for LLM inference requests.
- * @var dv_infer_options_t::valid_tokens
- *   Number of valid tokens in the input for LLM inference requests.
- * @var dv_infer_options_t::tokens_to_skip
- *   Number of image or video tokens in the prompt to skip.
- */
 typedef struct dv_infer_options {
   // bool async;
   bool enable_stats;
@@ -602,187 +410,71 @@ typedef struct dv_infer_options {
   uint32_t tokens_to_skip;  // number of image, video tokens in the prompt.
 } dv_infer_options_t;
 
-/**
- * @brief Represents parameters passed to @ref dv_endpoint_get_statistics_with_options to control
- *        the type and filtering of returned endpoint statistics.
- *
- * Use @c state_type to request a specific category of state information from the server.
- * Use @c temp_threshold to filter endpoints by temperature — only endpoints at or above
- * this threshold (in degrees Celsius) are included in the response, which is useful when
- * monitoring for thermal events and only interested in endpoints running hot.
- *
- * @var dv_stats_options_t::state_type
- *   Identifies the category of state information requested.
- * @var dv_stats_options_t::temp_threshold
- *   Temperature threshold in degrees Celsius used to filter the statistics response.
- */
-// sending parameters for stats api
-typedef struct dv_stats_options {
-  uint32_t state_type;
-  uint32_t temp_threshold;
-} dv_stats_options_t;
-
-/**
- * @brief Represents LLM-specific model parameters describing token configuration and memory layout.
- *
- * This struct is populated automatically by the client library after a successful LLM model load
- * and is accessible via @ref dv_model_t::llm_params. Do not modify these fields manually —
- * they reflect the model's compiled configuration and are used internally by the inference pipeline.
- * Use @c max_num_tokens to validate that your prompt length does not exceed the model's capacity
- * before submitting inference requests.
- *
- * @var dv_model_llm_params_t::vocab_size
- *   Vocabulary size of the model.
- * @var dv_model_llm_params_t::embedding_size
- *   Hidden (embedding) dimension size.
- * @var dv_model_llm_params_t::input_precision
- *   Data precision of model inputs; default is 8.
- * @var dv_model_llm_params_t::output_precision
- *   Data precision of model outputs; default is 32.
- * @var dv_model_llm_params_t::max_num_tokens
- *   Maximum number of tokens supported by the model.
- * @var dv_model_llm_params_t::is_dynamic
- *   If non-zero, the model is a dynamic LLM; default is true.
- * @var dv_model_llm_params_t::num_inputs
- *   Number of inputs for the model; default is 1.
- * @var dv_model_llm_params_t::pad_token_id
- *   Token ID used for padding.
- * @var dv_model_llm_params_t::eos_token_id
- *   Token ID marking end of sequence.
- * @var dv_model_llm_params_t::bos_token_id
- *   Token ID marking beginning of sequence.
- * @var dv_model_llm_params_t::embedding_lookup_addr
- *   Device address for input embeddings.
- * @var dv_model_llm_params_t::embedding_lookup_scale_addr
- *   Device address for input embedding scales.
- * @var dv_model_llm_params_t::is_speculative
- *   If non-zero, the model supports speculative decoding.
- * @var dv_model_llm_params_t::max_prompt_input_size
- *   Maximum size in bytes of a prompt input.
- * @var dv_model_llm_params_t::max_token_input_size
- *   Maximum size in bytes of a token input.
- * @var dv_model_llm_params_t::max_output_size
- *   Maximum size in bytes of the model output.
- * @var dv_model_llm_params_t::is_host_specd
- *   If non-zero, the model supports host-driven speculative decoding.
- */
+// fixme amit :: can be changed to uint64_t, we should add a field for model type [dynamic/specD etc.]
+// fixme amit :: add a field num_outputs
 typedef struct dv_model_llm_params {
-  uint32_t vocab_size;                   // Vocab size of the model
-  uint32_t embedding_size;               // Hidden size
-  uint32_t input_precision;              // Data precision of inputs default 8
-  uint32_t output_precision;             // Data precision of outputs default 32
-  uint32_t max_num_tokens;               // Max supported tokens count.
-  uint32_t is_dynamic;                   // Specifies if model is dynamic llm default true
-  uint32_t num_inputs;                   // Number of inputs for the model, default is 1.
-  uint32_t pad_token_id;                 // Model padding token id
-  uint32_t eos_token_id;                 // Model end of sequence token id
-  uint32_t bos_token_id;                 // Model begin of sequence token id
-  uint64_t embedding_lookup_addr;        // address for input embeddings
-  uint64_t embedding_lookup_scale_addr;  // address for input embedding scales.
-  uint32_t is_speculative;               // Specifies if model  is specd.
-  uint64_t max_prompt_input_size;        // max size of prompt input.
-  uint64_t max_token_input_size;         // Max size of input.
-  uint64_t max_output_size;              // Max size of output.
-  uint8_t is_host_specd;                 // Specifies if model supports speculations from host.
+  uint32_t vocab_size;
+  uint32_t embedding_size;
+  uint32_t input_precision;
+  uint32_t output_precision;
+  uint32_t max_num_tokens;
+  uint32_t is_dynamic;
+  uint32_t num_inputs;
+  uint32_t pad_token_id;
+  uint32_t eos_token_id;
+  uint32_t bos_token_id;
+  uint64_t embedding_lookup_addr;
+  uint64_t embedding_lookup_scale_addr;
 } dv_model_llm_params_t;
 
-/**
- * @brief Represents configuration parameters for updating LLM sampling and speculative decoding settings.
- *
- * Pass this to @ref dv_model_set_llm_cfg_params to tune sampling behavior at runtime
- * without reloading the model. MCP counts (@c target_token_post_mcp etc.) control
- * speculative decoding batch sizes and should only be set when the model was compiled
- * with speculative decoding support.
- *
- * @var dv_llm_cfg_upd_req_t::top_k
- *   Top-K value for sampling.
- * @var dv_llm_cfg_upd_req_t::top_p
- *   Top-P (nucleus sampling) probability threshold.
- * @var dv_llm_cfg_upd_req_t::temperature
- *   Sampling temperature controlling output randomness.
- * @var dv_llm_cfg_upd_req_t::repetition_penalty
- *   Penalty factor applied to discourage repeated tokens.
- * @var dv_llm_cfg_upd_req_t::target_token_post_mcp
- *   Target token count post-MCP for the target model in token generation phase.
- * @var dv_llm_cfg_upd_req_t::target_token_pre_mcp
- *   Target token count pre-MCP for the target model in token generation phase.
- * @var dv_llm_cfg_upd_req_t::target_prompt_post_mcp
- *   Target prompt count post-MCP for the target model in prompt processing phase.
- * @var dv_llm_cfg_upd_req_t::target_prompt_pre_mcp
- *   Target prompt count pre-MCP for the target model in prompt processing phase.
- * @var dv_llm_cfg_upd_req_t::draft_token_post_mcp
- *   Draft token count post-MCP for the draft model in speculative decoding.
- * @var dv_llm_cfg_upd_req_t::draft_token_pre_mcp
- *   Draft token count pre-MCP for the draft model in speculative decoding.
- * @var dv_llm_cfg_upd_req_t::draft_prompt_post_mcp
- *   Draft prompt count post-MCP for the draft model in speculative decoding.
- * @var dv_llm_cfg_upd_req_t::draft_prompt_pre_mcp
- *   Draft prompt count pre-MCP for the draft model in speculative decoding.
- */
 typedef struct {
-  uint32_t top_k;                  /**< sampling llm parameter top_k */
-  float top_p;                     /**< nucleus sampling llm parameter top_p */
-  float temperature;               /**< llm parameter temperature */
-  float repetition_penalty;        /**< llm parameter repetition_penalty */
-  uint32_t target_token_post_mcp;  /**< token post-processing targeted in mcp or host */
-  uint32_t target_token_pre_mcp;   /**< token pre-processing targeted in mcp or host */
-  uint32_t target_prompt_post_mcp; /**< prompt post-processing targeted in mcp or host */
-  uint32_t target_prompt_pre_mcp;  /**< prompt pre-processing targeted in mcp or host */
-  uint32_t draft_token_post_mcp;   /**< TRUE(1) for specd model */
-  uint32_t draft_token_pre_mcp;    /**< TRUE(1) for specd model */
-  uint32_t draft_prompt_post_mcp;  /**< TRUE(1) for specd model */
-  uint32_t draft_prompt_pre_mcp;   /**< TRUE(1) for specd model */
+  uint32_t top_k;
+  float top_p;
+  float temperature;
+  float repetition_penalty;
+  uint32_t target_token_post_mcp;
+  uint32_t target_token_pre_mcp;
+  uint32_t target_prompt_post_mcp;
+  uint32_t target_prompt_pre_mcp;
+  uint32_t draft_token_post_mcp;
+  uint32_t draft_token_pre_mcp;
+  uint32_t draft_prompt_post_mcp;
+  uint32_t draft_prompt_pre_mcp;
 } dv_llm_cfg_upd_req_t;
 
-/**
- * @brief Represents a loaded model and its associated metadata, session, and endpoint bindings.
- *
- * This object is returned by all model load APIs and must be kept alive for the duration
- * of any inference requests that use it. Do not free or modify this struct directly —
- * use @ref dv_model_unload to release it. For LLM models, check @c llm_params for
- * token capacity and precision information before submitting inference requests.
- */
 // Model object
 typedef struct dv_model {
-  dv_model_handle_t *handle;                   /**< model handle, managed by client library */
+  dv_model_handle_t *handle;                   /**< private handle, managed by client library */
   dv_session_t *session;                       /**< session handle on which model is loaded */
   dv_endpoint_t *endpoint;                     /**< endpoint handle on which model is loaded */
-  dv_version_t version;                        /**< compiled model version */
+  dv_version_t version;                        /**< model version as generated by compiler */
   char *name;                                  /**< model name provided by user */
   dv_model_type_t model_type;                  /**< model type */
-  char *internal_name;                         /**< model name embedded during compilation */
+  char *internal_name;                         /**< internal model name as generated by compiler */
   int num_inputs;                              /**< number of inputs needed by model */
-  int num_outputs;                             /**< number of outputs produced by model */
+  int num_outputs;                             /**< number of output produced by model */
   dv_model_priority_level_t priority;          /**< model priority as set by user [unused]*/
-  dv_model_input_param_t *input_param;         /**< list of model specific input params (usefull for pre-processing) */
-  dv_model_output_param_t *output_param;       /**< list of model specific output params (usefull for post-processing) */
+  dv_model_input_param_t *input_param;         /**< list of input params */
+  dv_model_output_param_t *output_param;       /**< list of output params */
   dv_model_llm_params_t *llm_params;           /**< list of llm params, valid if model is llm model*/
   int num_compiler_config;                     /**< [unsupported] */
   dv_compiler_statistics_t *compiler_stats;    /**< [unsupported] */
-  dv_model_load_options_t *model_load_options; /**< [unsupported] */
+  dv_model_load_options_t *model_load_options; /**< [unsupported]*/
   bool cp_layer;                               /**< [unsupported] */
 } dv_model_t;
 
-/**
- * @brief Represents detailed timing and hardware counter statistics for a completed inference request.
- *
- * Populate this by passing @c enable_stats = true in the inference request options.
- * Use @c inference_execution_time and @c ep_hw_total_inference_cycles to profile
- * model performance on hardware. Use @c input_transfer_time and @c output_transfer_time
- * to identify data transfer bottlenecks between host and endpoint DRAM.
- * Note: @c ep_queue_submission_time is currently unsupported and will always be -1.
- */
 // Inference statistics
 typedef struct dv_infer_statistics {
-  int ep_hw_sys_clk;                                /**< endpoint hardware system core clock in MHz */
-  int ep_hw_nnp_clk;                                /**< endpoint hardware external nnp clock in MHz */
-  int ep_hw_sbp_clk;                                /**< endpoint hardware external sbp clock in MHz */
-  int ep_hw_dram_clk;                               /**< endpoint hardware external dram clock in MHz */
-  uint32_t ep_hw_total_inference_cycles;            /**< total cycles taken to compute
-                                                       inference in hardware, including
-                                                       floating point computation */
-  uint32_t ep_hw_fp_cycles;                         /**< cycles taken to compute floating point
-                                                       operation in hardware */
+  int ep_hw_sys_clk;                     /**< ep hardware system core clock in MHz */
+  int ep_hw_nnp_clk;                     /**< ep hardware external nnp clock in MHz */
+  int ep_hw_sbp_clk;                     /**< ep hardware external sbp clock in MHz */
+  int ep_hw_dram_clk;                    /**< ep hardware external dram clock in MHz */
+  uint32_t ep_hw_total_inference_cycles; /**< total cycles taken to compute
+                                            inference in hardware, including
+                                            floating point computation */
+  uint32_t ep_hw_fp_cycles;              /**< cycles taken to compute floating point
+                                            operation in hardware */
+
   float input_transfer_time;                        /**< time taken in microseconds to transfer
                                                        input(s) from host dram to ep hardware dram */
   float output_transfer_time;                       /**< time taken in microseconds to transfer
@@ -804,31 +496,10 @@ typedef struct dv_infer_statistics {
   uint32_t output_ddr_address;                      /**< output ddr address **/
 } dv_infer_statistics_t;
 
-/**
- * @brief Represents LLM-specific information returned as part of a completed inference response.
- *
- * Valid only for LLM inference requests. Use @c llm_infer_resp_num_valid_tokens to determine
- * how many output tokens were actually generated — the output blob may be larger than the
- * valid token count if the model pre-allocates maximum output capacity.
- *
- * @var dv_infer_llm_info_t::llm_infer_resp_num_valid_tokens
- *   Number of valid tokens in the LLM inference response.
- */
 typedef struct dv_infer_llm_info {
   uint32_t llm_infer_resp_num_valid_tokens;
 } dv_infer_llm_info_t;
 
-/**
- * @brief Represents a single inference request and its associated runtime state.
- *
- * This object is returned by all inference submission APIs and must be kept alive
- * until the inference completes. Check @c status to determine the current state.
- * After completion, read results from @c op_blob_list and optionally inspect
- * @c stats if statistics were enabled. Always free this object with @ref dv_infer_free
- * after use — failure to do so will leak memory in the client library.
- * For LLM inference, check @c llm_infer_info for valid token count before
- * reading the output blob.
- */
 // Inference request object
 typedef struct dv_infer_request {
   dv_infer_request_handle_t *handle; /**< private handle, managed by client library */
@@ -842,148 +513,71 @@ typedef struct dv_infer_request {
   dv_blob_t *op_blob_list;           /**< output blob list */
   dv_inference_status_t status;      /**< inference run status */
   dv_infer_statistics_t *stats;      /**< inference stats */
-  dv_infer_llm_info_t *llm_infer_info; /**< LLM-specific inference response info; valid only for LLM inference requests */
+  dv_infer_llm_info_t *llm_infer_info;
 } dv_infer_request_t;
 
 /********************************** DV Client APIs
  * *************************************************/
 
-/**
- * @brief Converts a status code to its human-readable string representation.
- *
- * Use this when logging errors or displaying status information in diagnostic output.
- * The returned string is statically allocated and must not be freed or modified by
- * the caller. If an unrecognized or out-of-range status code is passed, the function
- * returns the string @c "DV_STATUS_CODE_UNKNOWN_L" rather than crashing or returning NULL.
- *
- * @param[in]  status_code  Status code to stringify.
- * @return                  Null-terminated string name of the status code,
- *                          or @c "DV_STATUS_CODE_UNKNOWN_L" if unrecognized.
+/** Stringify status code
+ * \param[in]   status_code : status code
+ * \param[out]  status      : status code as string
  */
 EXPORT
 const char *dv_stringify_status_code(dv_status_code_t status_code);
 
-/**
- * @brief Sets the log verbosity level for the DV client library.
- *
- * Use this at application startup to control how much diagnostic output the
- * client library emits. In production, prefer @c DV_CLIENT_LOG_LEVEL_WARN or
- * @c DV_CLIENT_LOG_LEVEL_ERROR to reduce log noise. Use @c DV_CLIENT_LOG_LEVEL_DEBUG
- * or @c DV_CLIENT_LOG_LEVEL_TRACE during development or when diagnosing failures.
- * Set to @c DV_CLIENT_LOG_LEVEL_OFF to silence all client library logs.
- * Only messages at or above the specified level are output.
- *
- * @param[in]  log_level  Desired log level as defined by @ref DV_CLIENT_LOG_LEVEL.
- * @return                DV_SUCCESS on success, else error.
- */
-EXPORT
-dv_status_code_t dv_client_set_log_level(dv_client_log_level_t log_level);
-
 /********************************** DV Session APIs
  * *************************************************/
 
-/**
- * @brief Creates a session to the inference proxy server over a Unix domain socket.
- *
- * Use this when the proxy and client are running on the same machine — Unix domain
- * sockets have lower latency and overhead than TCP for local communication.
- * Prefer this over @ref dv_session_create_via_tcp_ipv4_socket for same-host deployments.
- * Note that SHM registration via @ref dv_shmfd_register is only supported over Unix
- * domain sockets, not TCP.
- *
- * @param[in]  socket_file_path  Path to the Unix domain socket file.
- * @param[out] session           Session handle returned on success.
- * @return                       DV_SUCCESS on success, else error.
+/** Create a session to the server using unix file socket
+ * Returns DV_SUCCESS on success, else error
+ * \param[in]   socket_file_path : server unix socket path
+ * \param[out]  session          : session handle returned by api
  */
 EXPORT
 dv_status_code_t dv_session_create_via_unix_socket(const char *socket_file_path, dv_session_t **session);
 
-/**
- * @brief Creates a session to the inference proxy server using a Windows named pipe.
- *
- * Use this only on Windows hosts where Unix domain sockets are unavailable.
- * On Linux, use @ref dv_session_create_via_unix_socket instead.
- *
- * @param[in]  named_pipe  Name of the Windows named pipe.
- * @param[out] session     Session handle returned on success.
- * @return                 DV_SUCCESS on success, else error.
+/** Create a session to the server using windows named pipe
+ * Returns DV_SUCCESS on success, else error
+ * \param[in]   named_pipe       : server pipe
+ * \param[out]  session          : session handle returned by api
  */
 EXPORT
 dv_status_code_t dv_session_create_via_named_pipe(const char *named_pipe, dv_session_t **session);
 
-/**
- * @brief Creates a session to the inference proxy server over a TCP/IPv4 socket.
- *
- * Use this when the proxy is running on a different machine from the client,
- * or in containerized deployments where Unix domain socket sharing is not available.
- * For same-host deployments, prefer @ref dv_session_create_via_unix_socket for
- * lower latency. Note that SHM registration via @ref dv_shmfd_register is not
- * supported over TCP — use raw pointer blobs instead for TCP sessions.
- *
- * @param[in]  tcp_ip_addr  IPv4 address of the inference proxy server.
- * @param[in]  port         TCP port number on which the server is listening.
- * @param[out] session      Session handle returned on success.
- * @return                  DV_SUCCESS on success, else error.
+/** Create a session to the server using TCP/IPv4 sockets
+ * Returns DV_SUCCESS on success, else error
+ * \param[in]  tcp_ip_addr      : server ipv4 address
+ * \param[in]  port             : server port
+ * \param[out] session          : session handle returned by api
  */
 EXPORT
 dv_status_code_t dv_session_create_via_tcp_ipv4_socket(const char *tcp_ip_addr, int port, dv_session_t **session);
 
-/**
- * @brief Closes an open session to the inference proxy server.
- *
- * Call this when the application is done using the proxy — for example, at shutdown.
- * Ensure all in-flight inference requests have completed before closing the session;
- * closing a session with pending inferences will cause those requests to fail.
- * The session handle must not be used after this call.
- *
- * @param[in]  session  Session handle to close.
- * @return              DV_SUCCESS on success, else error.
+/** Close the session to the server
+ * Returns DV_SUCCESS on success, else error
+ * \param[in]  session  : session handle
  */
 EXPORT
 dv_status_code_t dv_session_close(dv_session_t *session);
 
 /********************************** DV SharedFD API
  * ***************************************/
-
-/**
- * @brief Registers a file descriptor with the inference proxy server for shared memory access.
- *
- * Use this to avoid redundant host-to-device data copies across multiple inference
- * requests that use the same input buffer. Once registered, use the returned descriptor
- * as a @ref DV_BLOB_TYPE_SHM_DESCRIPTOR blob in inference calls.
- * Do not use this over TCP sessions — SHM registration is only supported over Unix
- * domain sockets.
- *
- * The server maps the fd into a server-managed shared buffer identified by an opaque
- * buf_id stored in @c shm_desc->handle. This buf_id is server-global: if client A
- * registers a descriptor and client B submits an inference using the same handle value,
- * both clients will access the same underlying server-side buffer with no isolation
- * between them. The registering client is responsible for coordinating concurrent
- * access across clients to avoid data corruption.
- *
- * The descriptor must be unregistered via @ref dv_shmfd_unregister when no longer needed.
- *
- * @param[in]  session   Session handle.
- * @param[in]  fd        File descriptor to register.
- * @param[in]  size      Size in bytes to map.
- * @param[in]  offset    Offset within the file to begin mapping.
- * @param[in]  fd_type   Type hint for the file descriptor provided to the server (reserved).
- * @param[out] shm_desc  Shared memory descriptor returned on success.
- * @return               DV_SUCCESS on success, else error.
+/** Register a file descriptor with the server
+ * Returns DV_SUCCESS on success, else error
+ * \param[in]  session      : session object
+ * \param[in]  fd           : file fd to share
+ * \param[in]  size         : size to mmap
+ * \param[in]  offset       : file offset
+ * \param[in]  fd_type      : fd type to provide hint to server (reserved)
+ * \param[out] shm_desc     : shared memory descriptor
  */
 EXPORT
 dv_status_code_t dv_shmfd_register(dv_session_t *session, int fd, uint32_t size, uint32_t offset, int fd_type, dv_shm_descriptor_t **shm_desc);
 
-/**
- * @brief Unregisters a previously registered shared memory file descriptor from the server.
- *
- * Call this when the shared buffer is no longer needed for inference. Do not unregister
- * a descriptor while another client may still be using its buf_id in an active inference
- * request, as the server-side mapping will be released immediately.
- * The descriptor must not be used after this call.
- *
- * @param[in]  shm_desc  Shared memory descriptor to unregister.
- * @return               DV_SUCCESS on success, else error.
+/** Un-register shared file with the server
+ * Returns DV_SUCCESS on success, else error
+ * \param[in]  shm_desc     : shared buffer descriptor
  */
 EXPORT
 dv_status_code_t dv_shmfd_unregister(dv_shm_descriptor_t *shm_desc);
@@ -991,86 +585,51 @@ dv_status_code_t dv_shmfd_unregister(dv_shm_descriptor_t *shm_desc);
 /********************************** DV Endpoint APIs
  * *************************************************/
 
-/**
- * @brief Retrieves the list of all endpoints currently connected to the inference proxy server.
- *
- * Use this to discover available hardware before selecting an endpoint for model loading
- * or inference. Call this once after session creation and cache the result — the list
- * does not change unless endpoints are added or removed from the proxy.
- *
- * Memory for the endpoint list is allocated statically by the client library and must
- * NOT be freed by the caller.
- *
- * @param[in]  session   Session handle.
- * @param[out] ep_list   Array of endpoint handles returned by the proxy.
- * @param[out] ep_count  Number of endpoints in the returned list.
- * @return               DV_SUCCESS on success, else error.
+/** Get the list of endpoints connected to the server
+ * Endpoint list memory is allocated by the api. It also returns the endpoint
+ * count connected to server Returns DV_SUCCESS on success, else error
+ * \param[in]   session         : session handle
+ * \param[out]  ep_list         : connected endpoint list returned by server
+ * \param[out]  ep_count        : number of endpoint connected to server
  */
 EXPORT
 dv_status_code_t dv_endpoint_get_list(dv_session_t *session, dv_endpoint_t **ep_list, int *ep_count);
 
-/**
- * @brief Retrieves a predefined default endpoint group from the inference proxy server.
- *
- * Use this when you want to submit inference to all endpoints of a given interface type
- * without manually constructing a group. Prefer this over @ref dv_endpoint_create_group
- * when you do not need fine-grained endpoint selection. Use @c DV_ENDPOINT_DEFAULT_GROUP_ALL
- * for maximum throughput across all connected devices, or @c DV_ENDPOINT_DEFAULT_GROUP_PCIE
- * / @c DV_ENDPOINT_DEFAULT_GROUP_USB to restrict to a specific interface type.
- * Memory for the group configuration is managed by client library, and should NOT be deallocated.
- *
- * @param[in]  session  Session handle.
- * @param[in]  grp      Default group type as defined by @ref DV_ENDPOINT_DEFAULT_GROUP.
- * @param[out] ep_grp   Endpoint group handle returned on success.
- * @return              DV_SUCCESS on success, else error.
+/** Get the default endpoint group supported by server.
+ * Type of default group supported is defined in enum DV_ENDPOINT_DEFAULT_GROUP.
+ * API allocates the memory for the endpoint configuration of the group.
+ * Application needs to free the memory using dv_endpoint_free_group() Returns
+ * DV_SUCCESS on success, else error \param[in]   session      : session handle
+ * \param[in]   grp          : enum as defined in enum DV_ENDPOINT_DEFAULT_GROUP
+ * \param[out]  ep_grp       : endpoint group handle
  */
 EXPORT
 dv_status_code_t dv_endpoint_get_default_group(dv_session_t *session, dv_endpoint_default_group_t grp, dv_endpoint_t **ep_grp);
 
-/**
- * @brief Creates a custom endpoint group from a caller-supplied list of endpoints.
- *
- * Use this when you need to load a model or submit inference on a specific subset of
- * endpoints — for example, isolating certain devices for a particular workload.
- * Do not use this if a predefined group via @ref dv_endpoint_get_default_group satisfies
- * your requirements. Memory for the group configuration is allocated by the API and
- * must be freed using @ref dv_endpoint_free_group.
- *
- * @param[in]  session   Session handle.
- * @param[in]  ep_list   Array of endpoint handles to include in the group.
- * @param[in]  ep_count  Number of endpoints in @p ep_list.
- * @param[out] ep_grp    Endpoint group handle returned on success.
- * @return               DV_SUCCESS on success, else error.
+/** Create custom endpoint group from the endpoints connected to the server
+ * API allocates the memory for the endpoint configuration of the group.
+ * Application needs to free the memory using dv_endpoint_free_group() Returns
+ * DV_SUCCESS on success, else error \param[in]   session      : session handle
+ * \param[in]   ep_list      : endpoint list for which custom group needs to be
+ * created \param[in]   ep_count     : number of endpoint in the list
+ * \param[out]  ep_grp       : endpoint group handle
  */
 EXPORT
 dv_status_code_t dv_endpoint_create_group(dv_session_t *session, dv_endpoint_t **ep_list, int ep_count, dv_endpoint_t **ep_grp);
 
-/**
- * @brief Frees a custom endpoint group previously obtained from the proxy.
- *
- * Call this when the endpoint group is no longer needed. Do not free a group while a
- * model is still loaded on it or while inference is in flight on that group.
- * The handle must not be used after this call.
- *
- * @param[in]  ep_grp  Endpoint group handle to free.
- * @return             DV_SUCCESS on success, else error.
+/** Free the default/custom endpoint group
+ * Returns DV_SUCCESS on success, else error
+ * \param[in]   session      : session handle
+ * \param[out]  ep_list      : connected endpoint list returned by server
+ * \param[out]  ep_count     : number of endpoint connected to server
  */
 EXPORT
 dv_status_code_t dv_endpoint_free_group(dv_endpoint_t *ep_grp);
 
-/**
- * @brief Queries the current operational state of an endpoint.
- *
- * Use this before loading a model or submitting inference to confirm the endpoint
- * is in a healthy state. If the endpoint is in @c DV_ENDPOINT_STATE_FAULT, model
- * loading will fail and inference will not be accepted. If the endpoint is in
- * @c DV_ENDPOINT_STATE_THERMAL_ACTIVE_SLOW or @c DV_ENDPOINT_STATE_ACTIVE_SLOW,
- * inference will still run but at reduced throughput.
- *
- * @param[in]  session  Session handle.
- * @param[in]  ep       Endpoint handle to query.
- * @param[out] state    Current state of the endpoint as defined by @ref DV_ENDPOINT_STATE.
- * @return              DV_SUCCESS on success, else error.
+/** Detects endpoint state
+ * \param[in]   session     : session handle
+ * \param[in]   ep          : endpoint handle
+ * \param[out]  state       : endpoint state
  */
 EXPORT
 dv_status_code_t dv_endpoint_check_status(dv_session_t *session, dv_endpoint_t *ep, dv_endpoint_state_t *state);
@@ -1078,101 +637,58 @@ dv_status_code_t dv_endpoint_check_status(dv_session_t *session, dv_endpoint_t *
 /********************************** DV Endpoint stats APIs
  * *************************************************/
 
-/**
- * @brief Retrieves a snapshot of DRAM usage statistics for the specified endpoint or endpoint group.
- *
- * Use this to check memory usage information for an endpoint.
- * Passing NULL for @p ep returns DRAM statistics for all endpoints connected to the server.
- * Memory for the returned statistics is allocated by the API, and must be freed
- * using @ref dv_endpoint_free_dram_statistics.
- *
- * @param[in]  session         Session handle.
- * @param[in]  ep              Endpoint or endpoint group handle, or NULL for all endpoints.
- * @param[out] ep_dram_stats   Array of DRAM statistics structures returned by the server.
- * @param[out] ep_count        Number of endpoints for which statistics are returned.
- * @return                     DV_SUCCESS on success, else error.
+/** Get the dram usage statistics for the endpoint/endpoint group
+ * Server provides the snapshot of the endpoint dram usage at the time of
+ * request. Passing NULL to endpoint handle will provide dram statistics for all
+ * the endpoint connected to the server Memory for the statistics is allocated
+ * by API and dv_endpoint_free_dram_statistics() is needed to free up the memory
+ * Returns DV_SUCCESS on success, else error
+ * \param[in]   session         : session handle
+ * \param[in]   ep              : endpoint/endpoint group handle for particular
+ * endpoint or endpoint group or NULL for all endpoints \param[out]
+ * ep_dram_stats   : list of endpoint dram statistics \param[out]  ep_count :
+ * number of endpoint for which dram statistics is provided
  */
 EXPORT
 dv_status_code_t dv_endpoint_get_dram_statistics(dv_session_t *session, dv_endpoint_t *ep, dv_endpoint_dram_statistics_t **ep_dram_stats, int *ep_count);
 
-/**
- * @brief Frees memory allocated by @ref dv_endpoint_get_dram_statistics.
- *
- * Always call this after processing the DRAM statistics to avoid memory leaks.
- * Do not access @p ep_dram_stats after this call.
- *
- * @param[in]  ep_dram_stats  Pointer to the DRAM statistics array to free.
- * @param[in]  count          Number of elements in the array.
- * @return                    DV_SUCCESS on success, else error.
+/** Free the endpoint dram stats memory allocated in
+ * dv_endpoint_get_dram_statistics() Returns DV_SUCCESS on success, else error
+ * \param[in] ep_dram_stats : endpoint dram statistics to free
+ * \param[in] count         : number of items to free
  */
 EXPORT
 dv_status_code_t dv_endpoint_free_dram_statistics(dv_endpoint_dram_statistics_t *ep_dram_stats, int count);
 
-/**
- * @brief Retrieves a statistics snapshot for the specified endpoint or endpoint group,
- *        with additional inference options to control the statistics retrieval behavior.
+/** Get all the statistics for the endpoint/endpoint group
+ * Server provides the snapshot of the endpoint statistics at the time of
+ * request. Passing NULL to endpoint handle will provide statistics for all the
+ * endpoint connected to the server Memory for the statistics is allocated by
+ * API and dv_endpoint_free_statistics() is needed to free up the memory Returns
+ * DV_SUCCESS on success, else error
  *
- * Use this variant over @ref dv_endpoint_get_statistics when you need to pass
- * inference options — for example, to filter statistics by inference type for LLM workloads.
- * For standard CNN workloads without special filtering, use @ref dv_endpoint_get_statistics.
- * Passing NULL for @p ep returns statistics for all endpoints connected to the server.
- * Memory for the statistics is allocated by the API and must be freed using
- * @ref dv_endpoint_free_statistics.
+ * Notes on usage
+ * -------------
+ * `dv_model_statistics_t` member of `dv_endpoint_statistics_t` contains 2
+ * fields - uint32_t model and void* model_handle. This API will return stats of
+ * all models loaded across all clients - the `uint32_t model` will always hold
+ * a value and is an server generated id. The value of the `void* model_handle`
+ * member can be compared to the `handle` member of `dv_model_t` to map
+ * `dv_model_t` objects to their corresponding `dv_model_statistics_t` objects.
  *
- * The @ref dv_model_statistics_t member of @ref dv_endpoint_statistics_t exposes two
- * model identity fields: @c uint32_t model (server-generated ID, always valid) and
- * @c void* model_handle. The @c model_handle value can be compared against the @c handle
- * member of @ref dv_model_t to correlate statistics with a specific loaded model object.
- * Statistics are returned for all models loaded across all clients.
- *
- * @param[in]  session        Session handle.
- * @param[in]  ep             Endpoint or endpoint group handle, or NULL for all endpoints.
- * @param[out] ep_stats       Array of endpoint statistics structures returned by the server.
- * @param[out] ep_count       Number of endpoints for which statistics are returned.
- * @param[in]  stats_options  Option to select category of state and get info with temperature threshold to filter the statistics response.
- * @return                    DV_SUCCESS on success, else error.
- */
-EXPORT
-dv_status_code_t dv_endpoint_get_statistics_with_options(dv_session_t *session, dv_endpoint_t *ep, dv_endpoint_statistics_t **ep_stats, int *ep_count, dv_stats_options_t *stats_options);
-
-/**
- * @brief Retrieves a statistics snapshot for the specified endpoint or endpoint group.
- *
- * Use this for general-purpose endpoint health monitoring — checking thermal state,
- * clock frequencies, DRAM usage, and active model count. Call this periodically in
- * production to detect thermal throttling (@c DV_ENDPOINT_STATE_THERMAL_ACTIVE_SLOW)
- * or fault conditions (@c DV_ENDPOINT_STATE_FAULT) before they impact inference.
- * If you need to pass inference options to filter the statistics, use
- * @ref dv_endpoint_get_statistics_with_options instead.
- * Passing NULL for @p ep returns statistics for all endpoints connected to the server.
- * Memory for the statistics is allocated by the API and must be freed using
- * @ref dv_endpoint_free_statistics.
- *
- * The @ref dv_model_statistics_t member of @ref dv_endpoint_statistics_t exposes two
- * model identity fields: @c uint32_t model (server-generated ID, always valid) and
- * @c void* model_handle. The @c model_handle value can be compared against the @c handle
- * member of @ref dv_model_t to correlate statistics with a specific loaded model object.
- * Statistics are returned for all models loaded across all clients.
- *
- * @param[in]  session   Session handle.
- * @param[in]  ep        Endpoint or endpoint group handle, or NULL for all endpoints.
- * @param[out] ep_stats  Array of endpoint statistics structures returned by the server.
- * @param[out] ep_count  Number of endpoints for which statistics are returned.
- * @return               DV_SUCCESS on success, else error.
+ * \param[in]   session     : session handle
+ * \param[in]   ep          : endpoint/endpoint group handle for particular
+ * endpoint or endpoint group or NULL for all endpoints \param[out]  ep_stats :
+ * list of endpoint statistics \param[out]  ep_count    : number of endpoint for
+ * which statistics is provided
  */
 EXPORT
 dv_status_code_t dv_endpoint_get_statistics(dv_session_t *session, dv_endpoint_t *ep, dv_endpoint_statistics_t **ep_stats, int *ep_count);
 
-/**
- * @brief Frees memory allocated by @ref dv_endpoint_get_statistics or
- *        @ref dv_endpoint_get_statistics_with_options.
- *
- * Always call this after processing endpoint statistics to avoid memory leaks.
- * Do not access @p ep_stats after this call.
- *
- * @param[in]  ep_stats  Pointer to the endpoint statistics array to free.
- * @param[in]  count     Number of elements in the array.
- * @return               DV_SUCCESS on success, else error.
+/** Free the endpoint stats memory allocated in dv_endpoint_get_statistics()
+ * Returns DV_SUCCESS on success, else error
+ * \param[in] ep_stats  : endpoint statistics list to free
+ * \param[in] count     : number of items to free
  */
 EXPORT
 dv_status_code_t dv_endpoint_free_statistics(dv_endpoint_statistics_t *ep_stats, int count);
@@ -1180,586 +696,313 @@ dv_status_code_t dv_endpoint_free_statistics(dv_endpoint_statistics_t *ep_stats,
 /********************************** DV Model APIs
  * *************************************************/
 
-/**
- * @brief Loads a model from a file and transfers it to the specified endpoint.
+/** Creates a model object and load model contents from file and transfer it to
+ * endpoint Model object contains the model handle and model parameters.
+ * `dv_model_get_loaded_endpoint_list` returns the list of endpoints (individual
+ * device dv_endpoint_t handles) on which the model was successfully loaded.
  *
- * Use this for the simplest model load workflow when the compiled model file is
- * accessible on the local filesystem. For more control over load behavior (async
- * loading, caching, model type), use @ref dv_model_load_from_file_with_options instead.
- * If the model file is already in memory, use @ref dv_model_load_from_blob to avoid
- * an additional file read. If model loading fails on all devices represented by
- * @p endpt, the API returns an error.
+ * If model load fails on all individual devices representing `endpt`, the API
+ * call will error out.
  *
- * @param[in]  session          Session handle.
- * @param[in]  endpt            Endpoint or endpoint group handle to load the model onto.
- * @param[in]  model_file_path  Filesystem path to the compiled model file.
- * @param[in]  model_name       Model name .
- * @param[in]  priority         Model scheduling priority [unused].
- * @param[out] model_handle     Model object returned on success.
- * @return                      DV_SUCCESS if loaded successfully on all devices, DV_PARTIAL_SUCCESS if loaded on only some devices, DV_MODEL_LOAD_FAILURE if loading failed on all devices.
- * @note    Prefer @ref dv_model_load_from_file_s which returns a detailed @ref dv_status_t
- *          instead of a plain status code.
+ * Returns DV_SUCCESS on success, else error
+ * \param[in]   session          : session handle
+ * \param[in]   endpt            : endpoint handle
+ * \param[in]   model_file_path  : model file path
+ * \param[in]   priority         : model priority [unused]
+ * \param[in]   model_name       : model name [unused]
+ * \param[out]  model_handle     : model handle returned by server
  */
 EXPORT
 dv_status_code_t dv_model_load_from_file(dv_session_t *session, dv_endpoint_t *endpt, const char *model_file_path, const char *model_name, dv_model_priority_level_t priority, dv_model_t **model_handle);
 
-/**
- * @brief Wrapper of dv_model_load_from_file with detailed status.
+/** Creates a model object and load model contents from blob and transfer it to
+ * endpoint Model object contains the model handle and model parameters.
+ * `dv_model_get_loaded_endpoint_list` returns the list of endpoints (individual
+ * device dv_endpoint_t handles) on which the model was successfully loaded.
  *
- * Use this instead of @ref dv_model_load_from_file when you need a detailed status
- * object rather than a simple status code.
+ * If model load fails on all individual devices representing `endpt`, the API
+ * call will error out.
  *
- * @param[in]  session          Session handle.
- * @param[in]  endpt            Endpoint or endpoint group handle to load the model onto.
- * @param[in]  model_file_path  Filesystem path to the compiled model file.
- * @param[in]  model_name       Model name.
- * @param[in]  priority         Model scheduling priority [unused].
- * @param[out] model_handle     Model object returned on success.
- * @return                      DV_SUCCESS if loaded successfully on all devices, DV_PARTIAL_SUCCESS if loaded on only some devices, DV_MODEL_LOAD_FAILURE if loading failed on all devices.
- */
-EXPORT
-dv_status_t dv_model_load_from_file_s(dv_session_t *session, dv_endpoint_t *endpt, const char *model_file_path, const char *model_name, dv_model_priority_level_t priority, dv_model_t **model_handle);
-
-/**
- * @brief Loads a model from a blob and transfers it to the specified endpoint.
- *
- * Use this when the model is already resident in host memory — for example, when
- * the model was downloaded over the network or embedded in the application binary.
- * This avoids a filesystem read compared to @ref dv_model_load_from_file.
- * For more control over load behavior, use @ref dv_model_load_from_blob_with_options.
- *
- * @param[in]  session       Session handle.
- * @param[in]  endpt         Endpoint or endpoint group handle to load the model onto.
- * @param[in]  model_blob    Blob descriptor pointing to the model data in memory.
- * @param[in]  model_name    Model name .
- * @param[in]  priority      Model scheduling priority [unused].
- * @param[out] model_handle  Model object returned on success.
- * @return                   DV_SUCCESS if loaded successfully on all devices,
- *                           DV_PARTIAL_SUCCESS if loaded on only some devices,
- *                           Error Status if loading failed on all devices.
+ * Returns DV_SUCCESS on success, else error
+ * \param[in]   session          : session handle
+ * \param[in]   endpt            : endpoint handle
+ * \param[in]   model_blob       : model blob
+ * \param[in]   priority         : model priority [unused]
+ * \param[in]   model_name       : model name [unused]
+ * \param[out]  model_handle     : model handle returned by server
  */
 EXPORT
 dv_status_code_t dv_model_load_from_blob(dv_session_t *session, dv_endpoint_t *endpt, dv_blob_t *model_blob, const char *model_name, dv_model_priority_level_t priority, dv_model_t **model_handle);
 
-/**
- * @brief Unloads a model from its endpoint and releases associated server-side resources.
- *
- * Call this when the model is no longer needed for inference. Ensure all in-flight
- * inference requests using this model have completed before unloading; unloading a
- * model with active inference requests results in those requests failing.
- * The model handle must not be used after this call.
- *
- * @param[in]  model  Model handle to unload.
- * @return            DV_SUCCESS if unloaded successfully on all devices,
- *                    DV_PARTIAL_SUCCESS if unloaded on only some devices,
- *                    DV_MODEL_INVALID_HANDLE if the handel sent is invalid,
- *                    DV_SESSION_INVALID_HANDLE if there is no valid client (user) found,
- *                    DV_MODEL_UNLOAD_FAILURE if unloading failed on all devices.
+/** Unloads a model from the endpoint
+ * Returns DV_SUCCESS on success, else error
+ * \param[in]  model    : model handle
  */
 EXPORT
 dv_status_code_t dv_model_unload(dv_model_t *model);
 
-/**
- * @brief Retrieves model parameters from a file without loading the model onto an endpoint.
- *
- * Use this to inspect model metadata — input/output shapes, layer names, quantization
- * parameters — before committing to a full model load. Do not use the returned model
- * object for inference — it has no endpoint binding and will fail if passed to inference
- * APIs. Memory for the returned model object is allocated by the API and must be freed
- * using @ref dv_model_free_parameters.
- *
- * @param[in]  model_file_path  Filesystem path to the compiled model file.
- * @param[out] model            Model object populated with parameter information.
- * @return                      DV_SUCCESS on success, else error.
+/** Get the model parameters from model file without loading the model to
+ * endpoint(s) API allocates memory for the parameters. Application can free it
+ * by calling dv_model_free_paramaters This is a utility function, useful to get
+ * model parameters without loading the model to endpoint(s). The model object
+ * returned by the api cannot be used Returns DV_SUCCESS on success, else error
+ * \param[in]  model_file_path  : model file path
+ * \param[in]  model            : model parameters
  */
 EXPORT
 dv_status_code_t dv_model_get_parameters_from_file(const char *model_file_path, dv_model_t **model);
 
-/**
- * @brief Retrieves model parameters from a blob without loading the model onto an endpoint.
- *
- * Use this to inspect model metadata when the model is already in memory, without
- * transferring it to an endpoint. Do not use the returned model object for inference —
- * it has no endpoint binding and will fail if passed to inference APIs. Memory for the
- * returned model object is allocated by the API and must be freed using
- * @ref dv_model_free_parameters.
- *
- * @param[in]  model_blob  Blob descriptor pointing to the model data in memory.
- * @param[out] model       Model object populated with parameter information.
- * @return                 DV_SUCCESS on success, else error.
+/** Get the model parameters from model blob without loading the model onto
+ * endpoint(s) API allocates memory for the parameters. Application can free it
+ * by calling dv_model_free_paramaters This is a utility function, useful to get
+ * model parameters without loading the model to endpoint(s) Returns DV_SUCCESS
+ * on success, else error \param[in]  model_blob  : model blob \param[in]  model
+ * : model parameters
  */
 EXPORT
 dv_status_code_t dv_model_get_parameters_from_blob(dv_blob_t *model_blob, dv_model_t **model);
 
-/**
- * @brief Frees memory allocated by @ref dv_model_get_parameters_from_file or
- *        @ref dv_model_get_parameters_from_blob.
- *
- * Always call this after inspecting model parameters to avoid memory leaks.
- * Do not call this on a model handle returned by a model load API — use
- * @ref dv_model_unload for loaded models instead.
- *
- * @param[in]  model  Model handle whose parameter memory is to be freed.
- * @return            DV_SUCCESS on success, else error.
+/** Free the memory allocations for model parameter made by
+ * dv_model_get_parameters_* call Returns DV_SUCCESS on success, else error
+ * \param[in]  model    : model handle
  */
 EXPORT
 dv_status_code_t dv_model_free_parameters(dv_model_t *model);
 
-/**
- * @brief Sends LLM pre/post processing configuration parameters to the proxy or MCP.
- *
- * Use this to update sampling and speculative decoding settings at runtime without
- * reloading the model. Call this after model load and before inference submission.
- * Do not call this during an active inference request on the same model.
- * The @p model parameter is currently unused by the proxy but should be passed
- * for forward compatibility.
- *
- * @param[in]  session         Session handle.
- * @param[in]  ep              Endpoint handle.
- * @param[in]  model           Model handle (currently unused by proxy).
- * @param[in]  llm_cfg_update  Structure containing LLM configuration parameters to apply.
- * @return                     DV_SUCCESS on success, else error.
+/** Pass pre/post processing flags and params to proxy/mcp
+ * \param[in]  session      : session handle
+ * \param[in]  endpt        : endpoint handle
+ * \param[in] model             : model handle // currently unused by proxy
+ * \param[in] llm_cfg_update    : dv_llm_cfg_upd_req_t type representing pre/post processing flags and params
  */
 EXPORT
 dv_status_code_t dv_model_set_llm_cfg_params(dv_session_t *session, dv_endpoint_t *ep, dv_model_t *model, dv_llm_cfg_upd_req_t *llm_cfg_update);
 /********************************** DV Inference APIs
  * *************************************************/
 
-/**
- * @brief Submits a synchronous inference request and blocks until completion or timeout.
- *
- * Use this for simple, sequential inference workflows where the calling thread can
- * block until the result is ready. Do not use this in latency-sensitive or
- * high-throughput pipelines — use @ref dv_infer_async instead to overlap inference
- * with host-side processing. Input and output blobs must conform to the model's
- * declared input and output parameters. Memory for the inference object is allocated
- * by the API and must be freed using @ref dv_infer_free after reading the results.
- *
- * @param[in]  session       Session handle.
- * @param[in]  endpt         Endpoint or endpoint group handle to submit inference to. Although the
- *                           model already carries the endpoint group it was loaded on, this parameter
- *                           allows the caller to narrow or override the target to a specific endpoint
- *                           or sub-group within that group for this inference request.
- * @param[in]  model         Model handle for which inference is requested.
- * @param[in]  ip_array      Array of input blob descriptors, one per model input.
- * @param[in]  op_array      Array of output blob descriptors, one per model output.
- * @param[in]  timeout       Maximum time in milliseconds to wait; pass -1 for default (60s).
- * @param[in]  enable_stats  Enable inference statistics collection (deprecated).
- * @param[out] inf_obj       Inference request object returned on completion.
- * @return                   DV_SUCCESS on success, else error.
+/** Submit an synchronous inference for a model to an endpoint(group)
+ * This is a blocking call, it returns when inference is completed
+ * (success/error) or a timeout has occurred Input and output blobs should be
+ * provided as per input and output parameter provided by model Inference object
+ * memory will be allocated by API and can be freed upon calling dv_infer_free()
+ * Returns DV_SUCCESS on success, else error
+ * \param[in]  session      : session handle
+ * \param[in]  endpt        : endpoint handle
+ * \param[in]  model        : model handle
+ * \param[in]  ip_array     : an array of input blob descriptor
+ * \param[in]  op_array     : an array of output blob descriptor
+ * \param[in]  timeout      : maximum time in mili seconds to wait for request
+ * to complete \param[in]  enable_stats : enable stats for the inference request
+ * (deprecated) \param[out] inf_obj      : inference object
  */
 EXPORT
 dv_status_code_t dv_infer_sync(dv_session_t *session, dv_endpoint_t *endpt, dv_model_t *model, dv_blob_t *ip_array, dv_blob_t *op_array, int timeout, bool enable_stats, dv_infer_request_t **inf_obj);
 
-/**
- * @brief Submits an asynchronous inference request and returns immediately.
- *
- * Use this when you want to overlap inference execution with host-side processing.
- * This is preferred over @ref dv_infer_sync for high-throughput pipelines.
- * After submission, use @ref dv_infer_wait_for_completion or
- * @ref dv_infer_wait_for_all_completion to collect results. Do not read output
- * blobs until the inference has reached @c DV_INFERENCE_STATUS_COMPLETED.
- * Memory for the inference object is allocated by the API and must be freed using
- * @ref dv_infer_free after reading the results.
- *
- * @param[in]  session       Session handle.
- * @param[in]  endpt         Endpoint or endpoint group handle to submit inference to. Although the
- *                           model already carries the endpoint group it was loaded on, this parameter
- *                           allows the caller to narrow or override the target to a specific endpoint
- *                           or sub-group within that group for this inference request.
- * @param[in]  model         Model handle for which inference is requested.
- * @param[in]  ip_array      Array of input blob descriptors, one per model input.
- * @param[in]  op_array      Array of output blob descriptors, one per model output.
- * @param[in]  enable_stats  Enable inference statistics collection (deprecated).
- * @param[out] inf_obj       Inference request object returned immediately after submission.
- * @return                   DV_SUCCESS on success, else error.
- * @note    Prefer @ref dv_infer_async_s which returns a detailed @ref dv_status_t
- *          instead of a plain status code.
+/** Submit an asynchronous inference for a model to an endpoint(group)
+ * Server returns a inference request id which can be used to get the completion
+ * status or wait upon for compleetion after the call. Input and output blobs
+ * should be provided as per input and output parameter provided by model
+ * Inference object memory will be allocated by API and can be freed upon
+ * calling dv_infer_free() Returns DV_SUCCESS on success, else error \param[in]
+ * session      : session handle \param[in]  endpt        : endpoint handle
+ * \param[in]  model        : model handle
+ * \param[in]  ip_array     : an array of input blob descriptor
+ * \param[in]  op_array     : an array of output blob descriptor
+ * \param[in]  enable_stats : enable stats for the inference request
+ * (deprecated) \param[out] inf_obj      : inference object
  */
 EXPORT
 dv_status_code_t dv_infer_async(dv_session_t *session, dv_endpoint_t *endpt, dv_model_t *model, dv_blob_t *ip_array, dv_blob_t *op_array, bool enable_stats, dv_infer_request_t **inf_obj);
 
-/**
- * @brief Wrapper of dv_infer_async with detailed status.
+/** Monitor multiple inference request object and wait until, all of the
+ * request updates/changes run status If the list is empty it waits until,
+ * atleast one inference request submitted in the session changes run status and
+ * API keeps track of status change for a inference request and run status is
+ * reported only once.
  *
- * Use this instead of @ref dv_infer_async when you need a detailed status object
- * rather than a simple status code.
+ * For non-empty request list, application needs to remove the completed
+ * inference object from the list. Request completion status can be reported
+ * multiple times.
  *
- * @param[in]  session       Session handle.
- * @param[in]  endpt         Endpoint or endpoint group handle to submit inference to. Although the
- *                           model already carries the endpoint group it was loaded on, this parameter
- *                           allows the caller to narrow or override the target to a specific endpoint
- *                           or sub-group within that group for this inference request.
- * @param[in]  model         Model handle for which inference is requested.
- * @param[in]  ip_array      Array of input blob descriptors, one per model input.
- * @param[in]  op_array      Array of output blob descriptors, one per model output.
- * @param[in]  enable_stats  Enable inference statistics collection (deprecated).
- * @param[out] inf_obj       Inference request object returned immediately after submission.
- * @return                   Detailed status.
+ * Returns DV_SUCCESS on success, else error
+ * \param[in]  session      : session handle
+ * \param[in]  inf_id_list  : inference request object list
+ * \param[in]  inf_id_count : number of inference request to monitor
+ * \param[in]  timeout      : maximum time in mili seconds to wait for inference
+ * request to change status; defaults to 60 seconds in case timeout is passed as
+ * -1
  */
-EXPORT
-dv_status_t dv_infer_async_s(dv_session_t *session, dv_endpoint_t *endpt, dv_model_t *model, dv_blob_t *ip_array, dv_blob_t *op_array, bool enable_stats, dv_infer_request_t **inf_obj);
 
-/**
- * @brief Waits until all inference requests in the provided list have changed status.
- *
- * Use this when you have submitted multiple async inference requests and need to wait
- * for all of them to complete before proceeding. If @p inf_obj_list is empty, blocks
- * until at least one inference request submitted on the session changes run status.
- * The API tracks status transitions per request and reports each status change only once.
- * For non-empty request lists, the caller is responsible for removing completed inference
- * objects from the list; completion status may be reported multiple times for requests
- * that remain in the list.
- *
- * @param[in]  session              Session handle.
- * @param[in]  inf_obj_list         Array of inference request handles to monitor.
- * @param[in]  inf_obj_count        Number of inference requests in @p inf_obj_list.
- * @param[in]  timeout              Maximum time in milliseconds to wait; pass -1 for default (60s).
- * @param[out] completed_inf_list   Array of inference handles that have completed.
- * @param[out] completed_inf_count  Number of completed inference handles returned.
- * @return                          DV_SUCCESS on success, else error.
- */
 EXPORT
 dv_status_code_t dv_infer_wait_for_all_completion(dv_session_t *session, dv_infer_request_t **inf_obj_list, int inf_obj_count, int timeout, dv_infer_request_t **completed_inf_list, int *completed_inf_count);
 
-/**
- * @brief Waits until at least one inference request in the provided list has changed status.
+/** Monitor multiple inference request object and wait until, atleast one of the
+ * request updates/changes run status If the list is empty it waits until,
+ * atleast one inference request submitted in the session changes run status and
+ * API keeps track of status change for a inference request and run status is
+ * reported only once.
  *
- * Use this in streaming or pipelined workloads where you want to process each completed
- * inference as soon as it finishes, without waiting for all requests to complete.
- * If you need all requests to finish before proceeding, use
- * @ref dv_infer_wait_for_all_completion instead. If @p inf_obj_list is empty, blocks
- * until at least one inference request submitted on the session changes run status.
- * The API tracks status transitions per request and reports each status change only once.
- * For non-empty request lists, the caller is responsible for removing completed inference
- * objects from the list; completion status may be reported multiple times for requests
- * that remain in the list.
+ * For non-empty request list, application needs to remove the completed
+ * inference object from the list. Request completion status can be reported
+ * multiple times.
  *
- * @param[in]  session        Session handle.
- * @param[in]  inf_obj_list   Array of inference request handles to monitor.
- * @param[in]  inf_obj_count  Number of inference requests in @p inf_obj_list.
- * @param[in]  timeout        Maximum time in milliseconds to wait; pass -1 for default (150s).
- * @param[out] inf_obj        Inference request handle for which the status has changed.
- * @return                    DV_SUCCESS on success, else error.
- * @note    Prefer @ref dv_infer_wait_for_completion_s which returns a detailed @ref dv_status_t
- *          instead of a plain status code.
+ * Returns DV_SUCCESS on success, else error
+ * \param[in]  session      : session handle
+ * \param[in]  inf_id_list  : inference request object list
+ * \param[in]  inf_id_count : number of inference request to monitor
+ * \param[in]  timeout      : maximum time in mili seconds to wait for inference
+ * request to change status; defaults to 60 seconds in case timeout is passed as
+ * -1 \param[out] inf_obj      : inference id for which the state is changed
  */
 EXPORT
 dv_status_code_t dv_infer_wait_for_completion(dv_session_t *session, dv_infer_request_t **inf_obj_list, int inf_obj_count, int timeout, dv_infer_request_t **inf_obj);
 
 /**
- * @brief Wrapper of dv_infer_wait_for_completion with detailed status.
+ * Returns the request id of an inference that is sent by the client.
+ * The request id returned will be the same printed in logs if the proxy is
+ * passed the `-t` flag.
  *
- * Use this instead of @ref dv_infer_wait_for_completion when you need a detailed
- * status object rather than a simple status code.
+ * If the inf_obj is null or if inf_obj->handle is null, DV_INVALID_HOST_PTR is
+ * returned. The req_id argument is not set to any value in this case.
  *
- * @param[in]  session        Session handle.
- * @param[in]  inf_obj_list   Array of inference request handles to monitor.
- * @param[in]  inf_obj_count  Number of inference requests in @p inf_obj_list.
- * @param[in]  timeout        Maximum time in milliseconds to wait; pass -1 for default (150s).
- * @param[out] inf_obj        Inference request handle for which the status has changed.
- * @return                    Detailed status.
- */
-EXPORT
-dv_status_t dv_infer_wait_for_completion_s(dv_session_t *session, dv_infer_request_t **inf_obj_list, int inf_obj_count, int timeout, dv_infer_request_t **inf_obj);
-
-/**
- * @brief Returns the server-assigned request ID for a submitted inference request.
+ * If return value is DV_SUCCESS req_id will contain the request id of the
+ * inference request sent to kinara inference proxy.
  *
- * Use this when debugging inference issues — the returned request ID matches the ID
- * printed in proxy logs when the proxy is started with the @c -t flag, allowing you
- * to correlate client-side requests with server-side log output. Call this after
- * submission but before freeing the inference handle.
+ * This api is not thread safe. Calling this API on an inference handle that has
+ * already been `dv_infer_free`'d is incorrect and will result in undefined
+ * behaviour.
  *
- * This API is not thread-safe. Calling this on a handle that has already been freed
- * via @ref dv_infer_free results in undefined behavior. If @p inf_obj is NULL or
- * @c inf_obj->handle is NULL, the function returns @c DV_INVALID_HOST_PTR and
- * @p req_id is not modified.
- *
- * @param[in]  inf_obj  Inference request handle.
- * @param[out] req_id   Server-assigned request ID for the inference.
- * @return              DV_SUCCESS on success; DV_INVALID_HOST_PTR if @p inf_obj or its handle is NULL.
+ * \param[in]  inf_obj   : inference request handle
+ * \param[out] req_id    : request id of the inference request
+ * \since r6.1.1
  */
 EXPORT
 dv_status_code_t dv_infer_get_req_id(dv_infer_request_t *inf_obj, uint64_t *req_id);
 
-/**
- * @brief Frees all resources associated with a completed inference request.
- *
- * Call this after reading all results from the inference object — output blobs,
- * statistics, and LLM info. Do not free an inference request that is still in flight;
- * wait for completion via @ref dv_infer_wait_for_completion first. After this call,
- * the handle is invalid and must not be accessed or passed to any API.
- * Failing to call this will leak memory in the client library.
- *
- * @param[in]  inf_obj  Inference request object to free.
- * @return              DV_SUCCESS on success, else error.
+/** Finish the life cycle for the inference request.
+ * API will free up the associated memory for the inference request and will no
+ * longer be accessible. After completion, any operation on the inference
+ * request will be invalid. Returns DV_SUCCESS on success, else error \param[in]
+ * inf_obj      : inference object
  */
 EXPORT
 dv_status_code_t dv_infer_free(dv_infer_request_t *inf_obj);
 
-/**
- * @brief Returns the number of in-flight inference requests for the session.
- *
- * Use this to implement backpressure in high-throughput pipelines — if the in-flight
- * count is high, delay submitting new requests to avoid overwhelming the proxy queue.
- * An in-flight request is one that has been submitted by the client library but for
- * which a response has not yet been received from the proxy server. This count includes
- * requests submitted by all threads sharing the same session.
- *
- * @param[in]  session  Session handle.
- * @param[out] count    Number of in-flight inference requests.
- * @return              DV_SUCCESS on success, else error.
- */
+/** Returns the number of inflight inference requests for the session object for
+ * which the client library has not recieved a response from the proxy server.
+ * \param[in]  session      : session handle
+ * \param[out] count        : number of inference requests in flight
+ * \since r5.3
+ * */
 EXPORT
 dv_status_code_t dv_infer_get_inflight_count(dv_session_t *session, int *count);
 
-/**
- * @brief Queries the busy state of a specific endpoint.
+/** Get the busyness for the endpoint
+ * Server provides busyness of any one endpoint at the time of request
+ * Memory for is_busy bool variable should be provided by client app
+ * Returns DV_SUCCESS on success, else error
+ * Notes on usage
+ * -------------
  *
- * Use this for lightweight load-balancing decisions — if the endpoint is busy,
- * consider routing the next inference request to a different endpoint. This is a
- * point-in-time snapshot and may not reflect the endpoint state by the time a new
- * inference is submitted. Do not use this in a tight polling loop; prefer
- * @ref dv_infer_wait_for_completion for waiting on specific inference results.
- * The caller must provide the memory for @p is_busy.
- *
- * @param[in]  session   Session handle.
- * @param[in]  ep        Endpoint handle to query.
- * @param[out] is_busy   Set to true if the endpoint is currently busy, false otherwise.
- * @return               DV_SUCCESS on success, else error.
+ * \param[in]   session     : session handle
+ * \param[in]   ep          : endpoint handle for particular endpoint
+ * \param[out]  is_busy    : will return true if endpoint is busy else false
  */
 EXPORT
 dv_status_code_t dv_get_endpoint_busyness(dv_session_t *session, dv_endpoint_t *ep, bool *is_busy);
 
-/**
- * @brief Submits a synchronous inference request with extended options and blocks until completion.
- *
- * Use this instead of @ref dv_infer_sync when you need LLM-specific inference control
- * (token counts, inference type) or fine-grained statistics collection via
- * @ref dv_infer_options_t. For standard CNN inference without special options, use
- * @ref dv_infer_sync instead. Memory for the inference object is allocated by the API
- * and must be freed using @ref dv_infer_free.
- *
- * @param[in]  session        Session handle.
- * @param[in]  endpt          Endpoint or endpoint group handle to submit inference to. Although the
- *                            model already carries the endpoint group it was loaded on, this parameter
- *                            allows the caller to narrow or override the target to a specific endpoint
- *                            or sub-group within that group for this inference request.
- * @param[in]  model          Model handle for which inference is requested.
- * @param[in]  ip_array       Array of input blob descriptors, one per model input.
- * @param[in]  op_array       Array of output blob descriptors, one per model output.
- * @param[in]  timeout        Maximum time in milliseconds to wait; pass -1 for default (60s).
- * @param[out] inf_obj        Inference request object returned on completion.
- * @param[in]  infer_options  Extended inference options controlling request behavior.
- * @return                    DV_SUCCESS on success, else error.
- */
 EXPORT
 dv_status_code_t dv_infer_sync_with_options(dv_session_t *session, dv_endpoint_t *endpt, dv_model_t *model, dv_blob_t *ip_array, dv_blob_t *op_array, int timeout, dv_infer_request_t **inf_obj, dv_infer_options_t *infer_options);
 
-/**
- * @brief Submits an asynchronous inference request with extended options and returns immediately.
- *
- * Use this instead of @ref dv_infer_async when you need LLM-specific inference control
- * (token counts, inference type) or fine-grained statistics collection via
- * @ref dv_infer_options_t. For standard CNN inference without special options, use
- * @ref dv_infer_async instead. Memory for the inference object is allocated by the API
- * and must be freed using @ref dv_infer_free.
- *
- * @param[in]  session        Session handle.
- * @param[in]  endpt          Endpoint or endpoint group handle to submit inference to. Although the
- *                            model already carries the endpoint group it was loaded on, this parameter
- *                            allows the caller to narrow or override the target to a specific endpoint
- *                            or sub-group within that group for this inference request.
- * @param[in]  model          Model handle for which inference is requested.
- * @param[in]  ip_array       Array of input blob descriptors, one per model input.
- * @param[in]  op_array       Array of output blob descriptors, one per model output.
- * @param[out] inf_obj        Inference request object returned immediately after submission.
- * @param[in]  infer_options  Extended inference options controlling request behavior.
- * @return                    DV_SUCCESS on success, else error.
- * @note    Prefer @ref dv_infer_async_with_options_s which returns a detailed @ref dv_status_t
- *          instead of a plain status code.
- */
 EXPORT
 dv_status_code_t dv_infer_async_with_options(dv_session_t *session, dv_endpoint_t *endpt, dv_model_t *model, dv_blob_t *ip_array, dv_blob_t *op_array, dv_infer_request_t **inf_obj, dv_infer_options_t *infer_options);
 
 /**
- * @brief Wrapper of dv_infer_async_with_options with detailed status.
+ * Get output blob for given output layer names
  *
- * Use this instead of @ref dv_infer_async_with_options when you need a detailed
- * status object rather than a simple status code.
- *
- * @param[in]  session        Session handle.
- * @param[in]  endpt          Endpoint or endpoint group handle to submit inference to. Although the
- *                            model already carries the endpoint group it was loaded on, this parameter
- *                            allows the caller to narrow or override the target to a specific endpoint
- *                            or sub-group within that group for this inference request.
- * @param[in]  model          Model handle for which inference is requested.
- * @param[in]  ip_array       Array of input blob descriptors, one per model input.
- * @param[in]  op_array       Array of output blob descriptors, one per model output.
- * @param[out] inf_obj        Inference request object returned immediately after submission.
- * @param[in]  infer_options  Extended inference options controlling request behavior.
- * @return                    Detailed status.
- */
-EXPORT
-dv_status_t dv_infer_async_with_options_s(dv_session_t *session, dv_endpoint_t *endpt, dv_model_t *model, dv_blob_t *ip_array, dv_blob_t *op_array, dv_infer_request_t **inf_obj, dv_infer_options_t *infer_options);
-
-/**
- * @brief Retrieves the output blobs for a specific output layer by name from a completed inference.
- *
- * Use this when a model has multiple output layers and you only need the output of a
- * specific layer by name. Must be called after the inference has completed successfully.
- * Do not call this on an in-flight or failed inference request. The returned blob array
- * is owned by the inference handle and must not be freed separately — freeing the
- * inference handle via @ref dv_infer_free will also free the memory pointed to by
- * @p op_blobs.
- *
- * @param[in]  inf_obj             Inference request handle from a successfully completed inference.
- * @param[in]  src_op_layer_name   Source graph output layer name as specified in the model's
- *                                 output layer parameters (@ref dv_model_output_param_t::src_graph_layer_name).
- * @param[out] op_blobs            Array of output blobs for the specified layer name.
- * @param[out] num_op_blobs        Number of blobs in the @p op_blobs array.
- * @return                         DV_SUCCESS on success, else error.
+ * API is available from r1.2 release onwards
+ * Returns an array of output blobs for a given layer name
+ * Api should be called by passing infer handle for a successfully run inference
+ * Freeing infer handle will free memory pointed by output_blobs
+ * \param[in] inf_obj infer request handle received after running inference successfully
+ * \param[in] src_op_layer_name source graph output layer name, as specified in model output layer params struct
+ * \param[out] op_blobs array of output blobs for given src_op_layer_name
+ * \param[out] num_op_blobs number of output blobs in op_blobs
  */
 EXPORT
 dv_status_code_t dv_fetch_outputs_by_layer_name(dv_infer_request_t *inf_obj, char *src_op_layer_name, dv_blob_t **op_blobs, int *num_op_blobs);
 
-/**
- * @brief Loads a model from a file with extended options and transfers it to the specified endpoint.
+/** Creates a model object and load model contents from blob and transfer it to
+ * endpoint Model object contains the model handle and model parameters.
+ * `dv_model_get_loaded_endpoint_list` returns the list of endpoints (individual
+ * device dv_endpoint_t handles) on which the model was successfully loaded.
  *
- * Use this as the preferred model load API when you need control over async loading,
- * disk caching, or explicit model type selection. Set @c options->async = true to
- * return immediately and poll for completion, which is useful when loading large LLM
- * models that take significant time to transfer. Set @c options->cache = true to cache
- * the model on disk for faster subsequent loads. Always set @c options->model_type
- * explicitly for LLM models — the default @c DV_MODEL_TYPE_ARA2_CNN is incorrect
- * for LLM workloads. If model loading fails on all devices represented by @p endpt,
- * the API returns an error.
+ * If model load fails on all individual devices representing `endpt`, the API
+ * call will error out.
  *
- * @param[in]  session          Session handle.
- * @param[in]  endpt            Endpoint or endpoint group handle to load the model onto.
- * @param[in]  model_file_path  Filesystem path to the compiled model file.
- * @param[out] model_handle     Model object returned on success.
- * @param[in]  options          Model load options controlling load behavior.
- * @return                      DV_SUCCESS if loaded successfully on all devices, DV_PARTIAL_SUCCESS if loaded on only some devices, DV_MODEL_LOAD_FAILURE if loading failed on all devices.
- * @note    Prefer @ref dv_model_load_from_file_with_options_s which returns a detailed @ref dv_status_t
- *          instead of a plain status code.
+ * Returns DV_SUCCESS on success, else error
+ * \param[in]   session          : session handle
+ * \param[in]   endpt            : endpoint handle
+ * \param[in]   model_file_path  : path to model file
+ * \param[out]  model_handle     : model handle returned by server
+ * \param[in]   options          : model load options
+ * \since       r6.0
  */
 EXPORT
 dv_status_code_t dv_model_load_from_file_with_options(dv_session_t *session, dv_endpoint_t *endpt, const char *model_file_path, dv_model_t **model_handle, dv_model_load_options_t *options);
 
-/**
- * @brief Wrapper of dv_model_load_from_file_with_options with detailed status.
+/** Creates a model object and load model contents from blob and transfer it to
+ * endpoint Model object contains the model handle and model parameters.
+ * `dv_model_get_loaded_endpoint_list` returns the list of endpoints (individual
+ * device dv_endpoint_t handles) on which the model was successfully loaded.
  *
- * Use this instead of @ref dv_model_load_from_file_with_options when you need a
- * detailed status object rather than a simple status code.
+ * If model load fails on all individual devices representing `endpt`, the API
+ * call will error out.
  *
- * @param[in]  session          Session handle.
- * @param[in]  endpt            Endpoint or endpoint group handle to load the model onto.
- * @param[in]  model_file_path  Filesystem path to the compiled model file.
- * @param[out] model_handle     Model object returned on success.
- * @param[in]  options          Model load options controlling load behavior.
- * @return                      DV_SUCCESS if loaded successfully on all devices, DV_PARTIAL_SUCCESS if loaded on only some devices, DV_MODEL_LOAD_FAILURE if loading failed on all devices.
- */
-EXPORT
-dv_status_t dv_model_load_from_file_with_options_s(dv_session_t *session, dv_endpoint_t *endpt, const char *model_file_path, dv_model_t **model_handle, dv_model_load_options_t *options);
-
-/**
- * @brief Loads a model from a blob with extended options and transfers it to the specified endpoint.
- *
- * Use this when the model is already in host memory and you need extended load control
- * such as async loading or explicit model type selection. Prefer this over
- * @ref dv_model_load_from_blob when loading LLM models or when async loading is needed.
- * If model loading fails on all devices represented by @p endpt, the API returns an error.
- *
- * @param[in]  session       Session handle.
- * @param[in]  endpt         Endpoint or endpoint group handle to load the model onto.
- * @param[in]  blob          Blob descriptor pointing to the model data in memory.
- * @param[in]  options       Model load options controlling load behavior.
- * @param[out] model_handle  Model object returned on success.
- * @return                   DV_SUCCESS if loaded successfully on all devices,
- *                           DV_PARTIAL_SUCCESS if loaded on only some devices,
- *                           Error Status if loading failed on all devices.
- * @note    Prefer @ref dv_model_load_from_blob_with_options_s which returns a detailed @ref dv_status_t
- *          instead of a plain status code.
+ * Returns DV_SUCCESS on success, else error
+ * \param[in]   session          : session handle
+ * \param[in]   endpt            : endpoint handle
+ * \param[in]   model_blob       : dv_blob_t of the model
+ * \param[in]   options          : model load options
+ * \param[out]  model_handle     : model handle returned by server
+ * \since       r6.0
  */
 EXPORT
 dv_status_code_t dv_model_load_from_blob_with_options(dv_session_t *session, dv_endpoint_t *endpt, dv_blob_t *blob, dv_model_t **model_handle, dv_model_load_options_t *options);
 
-/**
- * @brief Wrapper of dv_model_load_from_blob_with_options with detailed status.
+/** api gives current version details of
+ *model, driver, proxy, firmware version to client
  *
- * Use this instead of @ref dv_model_load_from_blob_with_options when you need a
- * detailed status object rather than a simple status code.
- *
- * @param[in]  session       Session handle.
- * @param[in]  endpt         Endpoint or endpoint group handle to load the model onto.
- * @param[in]  blob          Blob descriptor pointing to the model data in memory.
- * @param[in]  options       Model load options controlling load behavior.
- * @param[out] model_handle  Model object returned on success.
- * @return                   Detailed status structure.
- */
-EXPORT
-dv_status_t dv_model_load_from_blob_with_options_s(dv_session_t *session, dv_endpoint_t *endpt, dv_blob_t *blob, dv_model_t **model_handle, dv_model_load_options_t *options);
-
-/**
- * @brief Retrieves the current active version of each product component from the server.
- *
- * Use this at startup to verify that the client library version is compatible with
- * the running proxy and firmware. For the full set of versions supported by the proxy
- * (not just the currently active ones), use @ref dv_retrieve_version_details instead.
- * Memory for @p product_version is allocated by the API and must be freed using
- * @ref dv_free_version_details.
- *
- * @param[in]  session          Session handle.
- * @param[out] product_version  Array of product version structures returned by the server.
- * @param[out] product_count    Number of product version entries in the returned array.
- * @return                      DV_SUCCESS on success, else error.
+ * Returns DV_SUCCESS on success, else error
+ * \param[in]    session             : session handle
+ * \param[out]   product_version     : product versions
+ * \param[out]   product_count       : number of product version sent
  */
 EXPORT
 dv_status_code_t dv_exchange_current_version_details(dv_session_t *session, dv_product_version_t **product_version, uint8_t *product_count);
 
-/**
- * @brief Retrieves all supported versions for each product component from the server.
+/** api gives all supported version details of
+ *model, driver, proxy, firmware version to client
  *
- * Use this to determine the full compatibility matrix of the running proxy — useful
- * when managing deployments with multiple client library versions. To get only the
- * currently active versions, use @ref dv_exchange_current_version_details instead.
- * Memory for @p product_version is allocated by the API and must be freed using
- * @ref dv_free_version_details.
- *
- * @param[in]  session          Session handle.
- * @param[out] product_version  Array of product version structures returned by the server.
- * @param[out] product_count    Number of product version entries in the returned array.
- * @return                      DV_SUCCESS on success, else error.
+ * Returns DV_SUCCESS on success, else error
+ * \param[in]   product_version        : list of versions
  */
+
 EXPORT
 dv_status_code_t dv_retrieve_version_details(dv_session_t *session, dv_product_version_t **product_version, uint8_t *product_count);
 
-/**
- * @brief Retrieves the version of the currently running client library.
+/** api gives current running version of client library
  *
- * Use this to log or validate the client library version at application startup,
- * or to include version information in bug reports. This does not require a session
- * and can be called before @ref dv_session_create_via_unix_socket. Populates the
- * provided version structure with the major, minor, patch, and patch_minor version
- * fields of the client library in use.
- *
- * @param[out] client_lib_version  Version structure to populate with client library version.
- * @return                         DV_SUCCESS on success, else error.
+ * Returns DV_SUCCESS on success, else error
+ * \param[in]   client_lib_version        : fill struct with client library version
  */
 EXPORT
 dv_status_code_t dv_get_client_lib_version(dv_version_t *client_lib_version);
 
-/**
- * @brief Frees memory allocated by @ref dv_exchange_current_version_details or
- *        @ref dv_retrieve_version_details.
+/** api deletes memory created by dv_exchange_current_version_details or dv_retrieve_version_details apis
  *
- * Always call this after processing version details to avoid memory leaks.
- * Do not access @p product_version after this call.
- *
- * @param[in]  product_version  Pointer to the product version array to free.
- * @return                      DV_SUCCESS on success, else error.
+ * Returns DV_SUCCESS on success, else error
+ * \param[in]   product_version        : list of versions
  */
 EXPORT
 dv_status_code_t dv_free_version_details(dv_product_version_t *product_version);

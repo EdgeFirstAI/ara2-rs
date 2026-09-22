@@ -5,46 +5,113 @@ use std::{
 };
 
 use ara2_sys::{
-    DV_ENDPOINT_STATE, DV_MODEL_PRIORITY_LEVEL_DV_MODEL_PRIORITY_LEVEL_DEFAULT, dv_endpoint,
-    dv_endpoint_dram_statistics, dv_endpoint_statistics, dv_model,
+    DV_ENDPOINT_STATE, DV_ENDPOINT_STATE_1_3_DV_ENDPOINT_STATE_1_3_ACTIVE as V13_ACTIVE,
+    DV_ENDPOINT_STATE_1_3_DV_ENDPOINT_STATE_1_3_ACTIVE_SLOW as V13_ACTIVE_SLOW,
+    DV_ENDPOINT_STATE_1_3_DV_ENDPOINT_STATE_1_3_FAIL_SAFE as V13_FAIL_SAFE,
+    DV_ENDPOINT_STATE_1_3_DV_ENDPOINT_STATE_1_3_FAULT as V13_FAULT,
+    DV_ENDPOINT_STATE_1_3_DV_ENDPOINT_STATE_1_3_IDLE as V13_IDLE,
+    DV_ENDPOINT_STATE_1_3_DV_ENDPOINT_STATE_1_3_INACTIVE as V13_INACTIVE,
+    DV_ENDPOINT_STATE_1_3_DV_ENDPOINT_STATE_1_3_INIT as V13_INIT,
+    DV_ENDPOINT_STATE_1_3_DV_ENDPOINT_STATE_1_3_THERMAL_ACTIVE_SLOW as V13_THERMAL_ACTIVE_SLOW,
+    DV_ENDPOINT_STATE_1_3_DV_ENDPOINT_STATE_1_3_THERMAL_UNKNOWN as V13_THERMAL_UNKNOWN,
+    DV_ENDPOINT_STATE_DV_ENDPOINT_STATE_ACTIVE as V11_ACTIVE,
+    DV_ENDPOINT_STATE_DV_ENDPOINT_STATE_ACTIVE_BOOSTED as V11_ACTIVE_BOOSTED,
+    DV_ENDPOINT_STATE_DV_ENDPOINT_STATE_ACTIVE_SLOW as V11_ACTIVE_SLOW,
+    DV_ENDPOINT_STATE_DV_ENDPOINT_STATE_FAULT as V11_FAULT,
+    DV_ENDPOINT_STATE_DV_ENDPOINT_STATE_IDLE as V11_IDLE,
+    DV_ENDPOINT_STATE_DV_ENDPOINT_STATE_INACTIVE as V11_INACTIVE,
+    DV_ENDPOINT_STATE_DV_ENDPOINT_STATE_INIT as V11_INIT,
+    DV_ENDPOINT_STATE_DV_ENDPOINT_STATE_THERMAL_INACTIVE as V11_THERMAL_INACTIVE,
+    DV_ENDPOINT_STATE_DV_ENDPOINT_STATE_THERMAL_UNKNOWN as V11_THERMAL_UNKNOWN,
+    DV_MODEL_PRIORITY_LEVEL_DV_MODEL_PRIORITY_LEVEL_DEFAULT, dv_endpoint,
+    dv_endpoint_dram_statistics, dv_endpoint_stats, dv_model,
 };
 
 use crate::{
-    Model,
+    Abi, Model,
     error::Error,
     session::{EndpointList, SessionInner},
 };
 
 /// The operational state of an NPU endpoint.
-#[derive(Debug, Clone, Copy, PartialEq)]
+///
+/// The variant set is the union of both DVAPI generations, because 1.3
+/// reuses values 4 and 5 for names 1.1 does not have. Decoding therefore
+/// takes the [`Abi`] of the library that produced the value, and a variant
+/// documented as belonging to one generation is only ever produced under
+/// it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum State {
+    /// Initializing; not yet ready to load models.
     Init,
+    /// Ready to load models or run inference.
     Idle,
+    /// Running inference at the nominal clock.
     Active,
+    /// Running inference at a reduced clock to save power.
     ActiveSlow,
+    /// DVAPI 1.1 value 4. Upstream documents it as "operating at reduced
+    /// frequency", which its name contradicts; 1.3 renamed the same value
+    /// [`State::ThermalActiveSlow`] and kept the documentation, so the
+    /// reduced-clock reading is the likely one.
     ActiveBoosted,
+    /// DVAPI 1.1 value 5, documented as thermally inactive. 1.3 renamed it
+    /// [`State::FailSafe`] without updating that documentation, so whether
+    /// the rename corrected the name or changed the meaning is unsettled.
     ThermalInactive,
+    /// Running inference at a reduced clock because of thermal limits.
+    /// DVAPI 1.3 value 4.
+    ThermalActiveSlow,
+    /// Operating in a restricted fail-safe mode. DVAPI 1.3 value 5.
+    FailSafe,
+    /// Thermal state cannot be determined.
     ThermalUnknown,
+    /// Powered down or otherwise unavailable.
     Inactive,
+    /// Unrecoverable hardware fault.
     Fault,
+    /// A value neither generation defines, carried with the [`Abi`] it was
+    /// read under. The number alone does not identify it, since the
+    /// generations disagree about what some numbers mean.
+    Unknown(DV_ENDPOINT_STATE, Abi),
 }
 
-impl TryFrom<DV_ENDPOINT_STATE> for State {
-    type Error = Error;
-
-    fn try_from(value: DV_ENDPOINT_STATE) -> Result<Self, Self::Error> {
-        Ok(match value {
-            0 => State::Init,
-            1 => State::Idle,
-            2 => State::Active,
-            3 => State::ActiveSlow,
-            4 => State::ActiveBoosted,
-            5 => State::ThermalInactive,
-            6 => State::ThermalUnknown,
-            7 => State::Inactive,
-            8 => State::Fault,
-            _ => return Err(Error::EndpointStateInvalid(value)),
-        })
+impl State {
+    /// Decodes a raw `dv_endpoint_state_t` against the DVAPI generation of
+    /// the library that produced it.
+    ///
+    /// Matches each generation's own generated constants rather than bare
+    /// integers. Upstream reuses these values, so a literal match compiles
+    /// and runs unchanged while reporting the wrong state; going through
+    /// the constants makes a future reassignment a build error.
+    pub fn from_raw(value: DV_ENDPOINT_STATE, abi: Abi) -> Self {
+        match abi {
+            Abi::V1_1 => match value {
+                V11_INIT => State::Init,
+                V11_IDLE => State::Idle,
+                V11_ACTIVE => State::Active,
+                V11_ACTIVE_SLOW => State::ActiveSlow,
+                V11_ACTIVE_BOOSTED => State::ActiveBoosted,
+                V11_THERMAL_INACTIVE => State::ThermalInactive,
+                V11_THERMAL_UNKNOWN => State::ThermalUnknown,
+                V11_INACTIVE => State::Inactive,
+                V11_FAULT => State::Fault,
+                _ => State::Unknown(value, abi),
+            },
+            Abi::V1_3 => match value {
+                V13_INIT => State::Init,
+                V13_IDLE => State::Idle,
+                V13_ACTIVE => State::Active,
+                V13_ACTIVE_SLOW => State::ActiveSlow,
+                V13_THERMAL_ACTIVE_SLOW => State::ThermalActiveSlow,
+                V13_FAIL_SAFE => State::FailSafe,
+                V13_THERMAL_UNKNOWN => State::ThermalUnknown,
+                V13_INACTIVE => State::Inactive,
+                V13_FAULT => State::Fault,
+                _ => State::Unknown(value, abi),
+            },
+        }
     }
 }
 
@@ -127,7 +194,7 @@ impl Endpoint {
             return Err(err.into());
         }
 
-        State::try_from(state)
+        Ok(State::from_raw(state, self.session.abi))
     }
 
     /// Get DRAM usage statistics for this endpoint.
@@ -173,7 +240,7 @@ impl Endpoint {
     /// surfaces the temperature and core voltage instead.
     pub fn statistics(&self) -> Result<EndpointStatistics, Error> {
         let mut ep_count = 1;
-        let mut stats: *mut dv_endpoint_statistics = std::ptr::null_mut();
+        let mut stats: *mut dv_endpoint_stats = std::ptr::null_mut();
         let err = unsafe {
             self.session.lib.dv_endpoint_get_statistics(
                 self.session.ptr,
@@ -219,7 +286,7 @@ impl Endpoint {
         }
 
         Ok(EndpointStatistics {
-            state: State::try_from(state_raw)?,
+            state: State::from_raw(state_raw, self.session.abi),
             sys_clk_mhz,
             dram_clk_mhz,
             core_voltage_v,
@@ -286,18 +353,54 @@ mod tests {
         let endpoint = &endpoints[0];
         let state = endpoint.check_status().expect("should get endpoint status");
 
-        // State should be one of the valid variants (not a conversion error)
-        match state {
-            State::Init
-            | State::Idle
-            | State::Active
-            | State::ActiveSlow
-            | State::ActiveBoosted
-            | State::ThermalInactive
-            | State::ThermalUnknown
-            | State::Inactive
-            | State::Fault => {} // all valid
+        // Decoding is infallible, so the check that carries weight is that
+        // the value resolved to a named state rather than falling through
+        // to Unknown -- which would mean the endpoint reported something
+        // neither DVAPI generation defines.
+        assert!(
+            !matches!(state, State::Unknown(..)),
+            "endpoint reported {state:?} under {}",
+            session.abi()
+        );
+    }
+
+    /// The two values DVAPI 1.3 reuses. A single mapping cannot serve both
+    /// generations, and getting it wrong is silent: the integers are the
+    /// same, so only the reported name differs.
+    #[test]
+    fn state_4_and_5_decode_per_generation() {
+        assert_eq!(State::from_raw(4, Abi::V1_1), State::ActiveBoosted);
+        assert_eq!(State::from_raw(5, Abi::V1_1), State::ThermalInactive);
+        assert_eq!(State::from_raw(4, Abi::V1_3), State::ThermalActiveSlow);
+        assert_eq!(State::from_raw(5, Abi::V1_3), State::FailSafe);
+    }
+
+    #[test]
+    fn state_shared_values_decode_alike() {
+        for (raw, expected) in [
+            (0, State::Init),
+            (1, State::Idle),
+            (2, State::Active),
+            (3, State::ActiveSlow),
+            (6, State::ThermalUnknown),
+            (7, State::Inactive),
+            (8, State::Fault),
+        ] {
+            assert_eq!(State::from_raw(raw, Abi::V1_1), expected);
+            assert_eq!(State::from_raw(raw, Abi::V1_3), expected);
         }
+    }
+
+    #[test]
+    fn state_unknown_keeps_raw_value_and_generation() {
+        assert_eq!(
+            State::from_raw(1007, Abi::V1_3),
+            State::Unknown(1007, Abi::V1_3)
+        );
+        assert_eq!(
+            State::from_raw(1007, Abi::V1_1),
+            State::Unknown(1007, Abi::V1_1)
+        );
     }
 
     #[test]

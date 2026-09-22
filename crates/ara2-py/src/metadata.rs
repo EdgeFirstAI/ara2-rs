@@ -146,16 +146,19 @@ pub struct DatasetInfo(ara2::DatasetInfo);
 
 #[pymethods]
 impl DatasetInfo {
+    /// Class label strings.
     #[getter]
     fn classes(&self) -> Vec<String> {
         self.0.classes.clone()
     }
 
+    /// Dataset identifier (e.g., "coco2017").
     #[getter]
     fn id(&self) -> Option<&str> {
         self.0.id.as_deref()
     }
 
+    /// Human-readable dataset name.
     #[getter]
     fn name(&self) -> Option<&str> {
         self.0.name.as_deref()
@@ -176,26 +179,31 @@ pub struct ModelInfo(ara2::ModelInfo);
 
 #[pymethods]
 impl ModelInfo {
+    /// Task type (e.g., "detect", "segment", "classify").
     #[getter]
     fn model_task(&self) -> Option<&str> {
         self.0.model_task.as_deref()
     }
 
+    /// Model size variant (e.g., "s", "m", "l", "x").
     #[getter]
     fn model_size(&self) -> Option<&str> {
         self.0.model_size.as_deref()
     }
 
+    /// Source model version string.
     #[getter]
     fn model_version(&self) -> Option<&str> {
         self.0.model_version.as_deref()
     }
 
+    /// True if the model produces detection outputs.
     #[getter]
     fn detection(&self) -> bool {
         self.0.detection
     }
 
+    /// True if the model produces segmentation outputs.
     #[getter]
     fn segmentation(&self) -> bool {
         self.0.segmentation
@@ -215,21 +223,25 @@ pub struct DeploymentInfo(ara2::DeploymentInfo);
 
 #[pymethods]
 impl DeploymentInfo {
+    /// Model name for deployment.
     #[getter]
     fn model_name(&self) -> Option<&str> {
         self.0.model_name.as_deref()
     }
 
+    /// Human-readable deployment name.
     #[getter]
     fn name(&self) -> Option<&str> {
         self.0.name.as_deref()
     }
 
+    /// Author or organization.
     #[getter]
     fn author(&self) -> Option<&str> {
         self.0.author.as_deref()
     }
 
+    /// Description of the deployed model.
     #[getter]
     fn description(&self) -> Option<&str> {
         self.0.description.as_deref()
@@ -249,21 +261,25 @@ pub struct InputSpec(ara2::InputSpec);
 
 #[pymethods]
 impl InputSpec {
+    /// Size string (e.g., "640x480").
     #[getter]
     fn size(&self) -> Option<&str> {
         self.0.size.as_deref()
     }
 
+    /// Number of input channels.
     #[getter]
     fn input_channels(&self) -> Option<u32> {
         self.0.input_channels
     }
 
+    /// Number of output channels.
     #[getter]
     fn output_channels(&self) -> Option<u32> {
         self.0.output_channels
     }
 
+    /// Camera adaptor type (e.g., "rgb", "bgr").
     #[getter]
     fn cameraadaptor(&self) -> Option<&str> {
         self.0.cameraadaptor.as_deref()
@@ -288,36 +304,43 @@ pub struct OutputSpec(ara2::OutputSpec);
 
 #[pymethods]
 impl OutputSpec {
+    /// Output index.
     #[getter]
     fn index(&self) -> Option<u32> {
         self.0.index
     }
 
+    /// Output name.
     #[getter]
     fn name(&self) -> Option<&str> {
         self.0.name.as_deref()
     }
 
+    /// Output type (detection, segmentation, etc.).
     #[getter]
     fn output_type(&self) -> Option<&str> {
         self.0.output_type.as_deref()
     }
 
+    /// Decoder to use.
     #[getter]
     fn decoder(&self) -> Option<&str> {
         self.0.decoder.as_deref()
     }
 
+    /// Whether to decode this output.
     #[getter]
     fn decode(&self) -> bool {
         self.0.decode
     }
 
+    /// Data type (float32, int8, etc.).
     #[getter]
     fn dtype(&self) -> Option<&str> {
         self.0.dtype.as_deref()
     }
 
+    /// Tensor shape.
     #[getter]
     fn shape(&self) -> Vec<i64> {
         self.0.shape.clone()
@@ -388,16 +411,19 @@ pub struct CompilationInfo(ara2::CompilationInfo);
 
 #[pymethods]
 impl CompilationInfo {
+    /// Target hardware (e.g., "ara-2").
     #[getter]
     fn target(&self) -> Option<&str> {
         self.0.target.as_deref()
     }
 
+    /// Model format (e.g., "dvm").
     #[getter]
     fn format(&self) -> Option<&str> {
         self.0.format.as_deref()
     }
 
+    /// Performance, power and area metrics.
     #[getter]
     fn ppa(&self) -> Option<PpaMetrics> {
         self.0.ppa.clone().map(PpaMetrics)

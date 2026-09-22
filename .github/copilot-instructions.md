@@ -3,7 +3,8 @@
 ## Project Overview
 
 Rust client library for the ARA-2 neural network accelerator (Kinara hardware).
-Communicates with NPU devices via the `ara2-proxy` system service through FFI
+Communicates with NPU devices via the ARA-2 proxy system service
+(`rt-sdk-ara2.service` on EdgeFirst Yocto images) through FFI
 bindings to `libaraclient`, dlopen'd by trying each name in
 `ara2::LIBRARY_NAMES` (NXP has shipped it as `libaraclient_aarch64.so`,
 `libaraclient_x86_64.so`, and `libaraclient.so.1` across SDK drops).
@@ -22,7 +23,7 @@ bindings to `libaraclient`, dlopen'd by trying each name in
 Session → Endpoint → Model → run() → ModelTiming
 ```
 
-- **Session**: Connection to ara2-proxy via UNIX or TCP socket. Arc-based, cheaply cloneable.
+- **Session**: Connection to the ARA-2 proxy via UNIX or TCP socket. Arc-based, cheaply cloneable.
 - **Endpoint**: A single ARA-2 NPU device. Check status, DRAM stats, load models.
 - **Model**: A loaded DVM neural network. Allocate tensors, set inputs, run inference, read outputs.
 
@@ -88,7 +89,8 @@ maturin build --release --features pyo3/abi3-py311
 ### Runtime (on-target)
 
 - `libaraclient` — Kinara client library, under one of `ara2::LIBRARY_NAMES`. Must be on `LD_LIBRARY_PATH` or in system lib dirs.
-- `ara2-proxy` — System service providing NPU access. Must be running.
+- ARA-2 proxy — System service providing NPU access, `rt-sdk-ara2.service` on
+  EdgeFirst Yocto images. Must be running.
 
 ### Crate Dependencies
 
@@ -110,7 +112,7 @@ maturin build --release --features pyo3/abi3-py311
 All tests require an NXP i.MX + ARA-2 PCIe system with:
 
 1. `libaraclient` installed and accessible under one of `ara2::LIBRARY_NAMES`
-2. `ara2-proxy` service running: `systemctl status ara2-proxy`
+2. Proxy service running: `systemctl status rt-sdk-ara2`
 3. ARA-2 device visible: `lspci | grep -i kinara`
 4. Proxy socket available: `ls -la /var/run/proxy.sock`
 
@@ -135,14 +137,15 @@ cargo nextest run -p ara2
 | Category | Hardware | Env Vars | Notes |
 |----------|----------|----------|-------|
 | `dvm_metadata` | No | None | Pure data parsing tests |
-| `session` | Yes | None | Needs ara2-proxy running |
-| `endpoint` | Yes | None | Needs ara2-proxy + NPU |
+| `session` | Yes | None | Needs the proxy running |
+| `endpoint` | Yes | None | Needs the proxy + NPU |
 | `model` | Yes | `ARA2_TEST_MODEL` | Needs a compiled .dvm file |
 
 ### Environment Variables
 
 | Variable | Description |
 |----------|-------------|
+| `ARA2_SOCKET` | Proxy socket path; overrides `DEFAULT_SOCKET` for `Session::connect()` |
 | `ARA2_TEST_MODEL` | Path to a `.dvm` model file for model tests |
 | `RUST_LOG` | Log level: `debug`, `info`, `warn`, `error` |
 
@@ -155,8 +158,8 @@ cargo nextest run -p ara2
 lspci | grep -i kinara
 
 # Check proxy service
-systemctl status ara2-proxy
-journalctl -u ara2-proxy --no-pager -n 50
+systemctl status rt-sdk-ara2
+journalctl -u rt-sdk-ara2 --no-pager -n 50
 
 # Check socket
 ls -la /var/run/proxy.sock
@@ -256,7 +259,7 @@ Three rules are not negotiable, because the shared workflows assume them:
   an interpreter for the target. Nothing is executed; naming the version is
   enough.
 - **`nextest-args` carries `-E 'test(dvm_metadata)'`.** Every other test needs
-  an ARA-2 NPU and a running `ara2-proxy`. They are deliberately not
+  an ARA-2 NPU and a running proxy. They are deliberately not
   `#[ignore]`d, because on a target they are the point of the suite.
 - **No `clippy-args` override.** `codec` and `decoder` are off by default, so
   the stock pass covers the default build; the cfg-gated arms and the `yolov8`

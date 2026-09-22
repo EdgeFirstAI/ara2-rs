@@ -3,7 +3,7 @@ use ara2_sys::{
     DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_COMPLETED,
     DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_FAILED, DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_QUEUED,
     DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_RUNNING, DV_LAYER_OUTPUT_TYPE, dv_blob, dv_endpoint,
-    dv_infer_request, dv_model, dv_shm_descriptor,
+    dv_infer_request, dv_model, dv_model_output_param, dv_shm_descriptor,
 };
 use edgefirst_tensor::{HostView, Tensor, TensorMapTrait as _, TensorMemory, TensorTrait};
 use log::debug;
@@ -15,8 +15,11 @@ use std::{ops::Add, os::fd::AsRawFd, sync::Arc, time::Duration};
 /// Timing statistics from a model inference run.
 #[derive(Clone, Copy, Debug)]
 pub struct ModelTiming {
+    /// Time the NPU spent executing the model.
     pub run_time: Duration,
+    /// Time spent transferring inputs to the device.
     pub input_time: Duration,
+    /// Time spent transferring outputs back from the device.
     pub output_time: Duration,
 }
 
@@ -850,9 +853,33 @@ impl Model {
         unsafe { (*self.ptr).num_outputs as usize }
     }
 
+    /// Pointer to output parameter `idx`.
+    ///
+    /// The array belongs to `libaraclient`, so the stride is that
+    /// library's `dv_model_output_param` size, which differs between DVAPI
+    /// generations. `<*mut T>::add` would use the size of whichever type
+    /// the bindings name and land at the wrong address on the other
+    /// generation, so the arithmetic is done in bytes against the probed
+    /// [`crate::Abi`].
+    ///
+    /// This is the only place the ABI is allowed to matter: every field
+    /// read through the returned pointer sits at the same offset in both
+    /// generations.
+    fn output_param(&self, idx: usize) -> *mut dv_model_output_param {
+        // SAFETY: `self.ptr` is a live model handle, and callers index
+        // within `num_outputs`, which the library sized the array to.
+        unsafe {
+            (*self.ptr)
+                .output_param
+                .cast::<u8>()
+                .add(idx * self.session.abi.output_param_stride())
+                .cast()
+        }
+    }
+
     /// Get the shape of an output tensor.
     pub fn output_shape(&self, idx: usize) -> [usize; 3] {
-        let output = unsafe { (*self.ptr).output_param.add(idx) };
+        let output = self.output_param(idx);
         unsafe {
             [
                 (*output).nch as usize,
@@ -864,7 +891,7 @@ impl Model {
 
     /// Get the size in bytes of an output tensor (as specified by the model).
     pub fn output_size(&self, idx: usize) -> usize {
-        let output = unsafe { (*self.ptr).output_param.add(idx) };
+        let output = self.output_param(idx);
         unsafe { (*output).size as usize }
     }
 
@@ -877,7 +904,7 @@ impl Model {
     /// Get the bytes per pixel (element size) for an output tensor.
     /// Returns 1 for int8/uint8, 2 for int16/uint16, 4 for float32, etc.
     pub fn output_bpp(&self, idx: usize) -> usize {
-        let output = unsafe { (*self.ptr).output_param.add(idx) };
+        let output = self.output_param(idx);
         unsafe { (*output).bpp as usize }
     }
 
@@ -972,7 +999,7 @@ impl Model {
 
     /// Get detailed information about an output tensor.
     pub fn output_info(&self, idx: usize) -> Result<OutputTensor, Error> {
-        let output = unsafe { (*self.ptr).output_param.add(idx) };
+        let output = self.output_param(idx);
 
         let params = unsafe { (*output).postprocess_param };
         unsafe {
@@ -1504,9 +1531,14 @@ fn dequant_i16_le(lo: u8, hi: u8, offset: i32, scale: f32) -> f32 {
 /// The type of output produced by a model layer.
 #[derive(Debug)]
 pub enum ModelOutputType {
+    /// Per-class scores over the whole input.
     Classification = 0,
+    /// Boxes, scores and classes.
     Detection = 1,
+    /// Per-pixel class map.
     SemanticSegmentation = 2,
+    /// An output the model does not label further; interpret it from the
+    /// shape and the `.dvm` metadata.
     Raw = 3,
 }
 

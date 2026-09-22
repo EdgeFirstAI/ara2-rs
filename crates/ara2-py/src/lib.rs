@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright © 2025 Au-Zone Technologies. All Rights Reserved.
 
+mod discover;
 mod endpoint;
 mod error;
 pub mod metadata;
@@ -10,8 +11,9 @@ pub mod types;
 
 use pyo3::prelude::*;
 
-/// Resolves the ARA-2 proxy socket path: the `ARA2_SOCKET` environment
-/// variable if set, otherwise `DEFAULT_SOCKET`.
+/// Resolves the ARA-2 proxy socket path: `ARA2_SOCKET` if set, otherwise
+/// the first entry in `SOCKET_PATHS` that exists, otherwise
+/// `DEFAULT_SOCKET`.
 #[pyfunction]
 fn socket_path() -> String {
     ara2::socket_path()
@@ -35,17 +37,21 @@ fn init(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Constants
     m.add("DEFAULT_SOCKET", ara2::DEFAULT_SOCKET)?;
+    m.add("SOCKET_PATHS", ara2::SOCKET_PATHS)?;
 
     // Exceptions
     error::register(m)?;
 
     // Core classes
     m.add_class::<session::Session>()?;
+    m.add_class::<discover::Proxy>()?;
+    m.add_class::<discover::ProxyEndpoint>()?;
     m.add_class::<endpoint::Endpoint>()?;
     m.add_class::<model::Model>()?;
     m.add_class::<model::InferRequest>()?;
 
     // Type classes
+    m.add_class::<types::Abi>()?;
     m.add_class::<types::State>()?;
     m.add_class::<types::DramStatistics>()?;
     m.add_class::<types::ModelTiming>()?;
@@ -74,6 +80,7 @@ fn init(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Session helpers
     m.add_function(wrap_pyfunction!(socket_path, m)?)?;
+    m.add_function(wrap_pyfunction!(discover::discover, m)?)?;
 
     Ok(())
 }

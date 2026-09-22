@@ -9,16 +9,20 @@ Published to PyPI as [`edgefirst-ara2`](https://pypi.org/project/edgefirst-ara2/
 ## Architecture
 
 ```
-Python Application ──(UNIX/TCP socket)──▶ ara2-proxy ──(PCIe)──▶ ARA-2 NPU
-       │                                (system service)        (Kinara hardware)
+Python Application ──(UNIX/TCP socket)──▶ ARA-2 proxy ──(PCIe)──▶ ARA-2 NPU
+       │                                (system service)         (Kinara hardware)
        │
 edgefirst-image ──(DMA-BUF fd)──▶ GPU preprocessing (zero-copy)
 ```
 
-Your Python code connects to the `dvproxy` system service (not directly
-to the hardware). The proxy manages device access and must be running before
-your application starts. The systemd unit name is platform-dependent:
-`ara2.service` on EdgeFirst Yocto images, `dvproxy.service` on other platforms.
+Your Python code connects to the proxy system service (not directly to the
+hardware). The proxy manages device access and must be running before your
+application starts — it is `rt-sdk-ara2.service` on EdgeFirst Yocto images
+shipping NXP's rt-sdk-ara2 integration:
+
+```bash
+systemctl status rt-sdk-ara2
+```
 
 ## Installation
 
@@ -59,7 +63,7 @@ maturin develop --release --features abi3
 import edgefirst_ara2
 
 # Connect to ARA-2 proxy
-session = edgefirst_ara2.Session.create_via_unix_socket("/var/run/proxy.sock")
+session = edgefirst_ara2.Session.connect()
 
 # Get version information
 versions = session.versions()
@@ -82,7 +86,7 @@ for endpoint in endpoints:
 import numpy as np
 import edgefirst_ara2
 
-session = edgefirst_ara2.Session.create_via_unix_socket("/var/run/proxy.sock")
+session = edgefirst_ara2.Session.connect()
 endpoints = session.list_endpoints()
 model = endpoints[0].load_model("model.dvm")
 
@@ -124,7 +128,7 @@ import edgefirst.codec as ef_codec
 import edgefirst.image as ef_image
 import edgefirst_ara2 as ara2
 
-session = ara2.Session.create_via_unix_socket(ara2.DEFAULT_SOCKET)
+session = ara2.Session.connect()
 endpoint = session.list_endpoints()[0]
 processor = ef_image.ImageProcessor()
 
@@ -236,7 +240,7 @@ the NPU runs inference on one frame, the CPU can preprocess the next.
 ```python
 import edgefirst_ara2 as ara2
 
-session = ara2.Session.create_via_unix_socket(ara2.DEFAULT_SOCKET)
+session = ara2.Session.connect()
 endpoint = session.list_endpoints()[0]
 model = endpoint.load_model("model.dvm")
 model.allocate_tensors()
@@ -266,6 +270,7 @@ print(f"In-flight: {session.inflight_count()}")
 Connection to the ARA-2 proxy service.
 
 **Static Methods:**
+- `connect() -> Session` - Connect over the UNIX socket named by `ARA2_SOCKET`, falling back to `DEFAULT_SOCKET`
 - `create_via_unix_socket(socket_path: str) -> Session`
 - `create_via_tcp_ipv4_socket(ip: str, port: int) -> Session`
 
@@ -325,6 +330,11 @@ Pending asynchronous inference request, created by `Model.submit()`.
 **Properties:**
 - `request_id: int` - Proxy-assigned ID for log correlation
 
+### Module Functions
+
+- `socket_path() -> str` - Resolve the proxy socket path: `ARA2_SOCKET` if set, otherwise the first entry of `SOCKET_PATHS` that exists
+- `discover() -> list[Proxy]` - Find every running ARA-2 proxy and where it listens
+
 ### Metadata Functions
 
 - `read_metadata(path: str) -> DvmMetadata | None`
@@ -333,7 +343,10 @@ Pending asynchronous inference request, created by `Model.submit()`.
 
 ### Supporting Types
 
-- **State** (enum): Init, Idle, Active, ActiveSlow, ActiveBoosted, ThermalInactive, ThermalUnknown, Inactive, Fault
+- **Proxy**: pid, endpoints, config, exe, `connect()` — a running proxy from `discover()`
+- **ProxyEndpoint**: kind (`"unix"`/`"tcp"`), path, host, port, `connect()`
+- **Abi** (enum): V1_1, V1_3 — the DVAPI generation of the loaded `libaraclient`
+- **State** (enum): Init, Idle, Active, ActiveSlow, ThermalUnknown, Inactive, Fault, Unknown, plus ActiveBoosted and ThermalInactive under DVAPI 1.1 or ThermalActiveSlow and FailSafe under DVAPI 1.3
 - **ModelOutputType** (enum): Classification, Detection, SemanticSegmentation, Raw
 - **DramStatistics**: dram_size, free_size, model_occupancy_size, ...
 - **ModelTiming**: run_time_us, input_time_us, output_time_us

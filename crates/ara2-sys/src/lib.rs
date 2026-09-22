@@ -15,3 +15,75 @@
 #![allow(rustdoc::broken_intra_doc_links)]
 
 include!("ffi.rs");
+
+/// Asserts that `$ext` is `$base` with fields appended: never smaller,
+/// same offset for every field they share.
+///
+/// DVAPI 1.3 extends several 1.1 structs this way, and the safe layer
+/// depends on it -- it reads through the 1.1 layout whatever version is
+/// loaded, consulting the suffixed type only for its size. A future drop
+/// that reorders or retypes a shared field breaks the build here instead
+/// of silently corrupting a read.
+macro_rules! assert_appended {
+    ($base:ty, $ext:ty, $($field:ident),+ $(,)?) => {
+        const _: () = {
+            assert!(::std::mem::size_of::<$base>() <= ::std::mem::size_of::<$ext>());
+            $(assert!(
+                ::std::mem::offset_of!($base, $field) == ::std::mem::offset_of!($ext, $field)
+            );)+
+        };
+    };
+}
+
+assert_appended!(
+    dv_model_output_param,
+    dv_model_output_param_1_3,
+    postprocess_param,
+    layer_id,
+    blob_id,
+    fused_parent_id,
+    layer_name,
+    blob_name,
+    layer_fused_parent_name,
+    layer_type,
+    layout,
+    size,
+    width,
+    height,
+    depth,
+    nch,
+    bpp,
+    num_classes,
+    layer_output_type,
+    num,
+    max_dynamic_id,
+    src_graph_layer_name,
+);
+
+assert_appended!(
+    dv_endpoint_stats,
+    dv_endpoint_statistics_1_3,
+    ep,
+    state,
+    ep_sys_clk,
+    ep_dram_clk,
+    ep_core_voltage,
+    ep_temp,
+    num_inference_queues,
+    ep_infq_stats,
+    num_active_models,
+    model_stats,
+    ep_dram_stats,
+    ep_power_state,
+    ep_soft_reset_count,
+);
+
+assert_appended!(
+    dv_model_options,
+    dv_model_load_options_1_3,
+    model_name,
+    priority,
+    cache,
+    async_,
+    model_type,
+);

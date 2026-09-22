@@ -837,7 +837,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let session = Session::create_via_unix_socket(&args.socket)?;
     let endpoints = session.list_endpoints()?;
     if endpoints.is_empty() {
-        eprintln!("No ARA-2 endpoints found.  Is ara2-proxy running?");
+        eprintln!("No ARA-2 endpoints found.  Is rt-sdk-ara2.service running?");
         std::process::exit(1);
     }
     let endpoint = &endpoints[0];

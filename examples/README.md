@@ -12,7 +12,7 @@ in Python they are four wheels sharing the `edgefirst.` namespace.
 
 ## Prerequisites
 
-- ARA-2 proxy service running: `systemctl status ara2.service`
+- ARA-2 proxy service running: `systemctl status rt-sdk-ara2`
 - ARA-2 PCIe device visible: `lspci | grep -i kinara`
 - Wayland compositor running (Weston) with `zwp_linux_dmabuf_v1` support
 - A compiled DVM model — see [Models](#models) below
@@ -176,7 +176,7 @@ Only the `nxp/neo` pipeline exposes NV12, YUYV, NV16, UYVY, RGB, etc.
 | `--threshold` | 0.50 | Detection confidence threshold |
 | `--iou` | 0.45 | NMS IoU threshold |
 | `--color-mode` | `class` | Mask coloring: `class`, `instance`, or `track` |
-| `--socket` | `/var/run/proxy.sock` | ARA-2 proxy UNIX socket path |
+| `--socket` | `$ARA2_SOCKET`, else `/var/run/proxy.sock` | ARA-2 proxy UNIX socket path |
 
 On i.MX95 with the Neo ISP, only `1920x1080` and `3840x2160` are supported
 capture sizes; other values will be silently adjusted.
@@ -230,7 +230,7 @@ See the Rust `yolov8_live` section above for why
 | `--threshold` | 0.50 | Detection confidence threshold |
 | `--iou` | 0.45 | NMS IoU threshold |
 | `--color-mode` | `class` | Mask coloring: `class`, `instance`, or `track` |
-| `--socket` | `/var/run/proxy.sock` | ARA-2 proxy UNIX socket path |
+| `--socket` | `$ARA2_SOCKET`, else `/var/run/proxy.sock` | ARA-2 proxy UNIX socket path |
 
 ---
 

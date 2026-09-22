@@ -22,6 +22,7 @@ abi3 = ["pyo3/abi3-py311"]
 [dependencies]
 ara2.workspace = true
 edgefirst-tensor.workspace = true
+log.workspace = true
 ndarray.workspace = true
 numpy.workspace = true
 pyo3 = { workspace = true, features = ["extension-module"] }

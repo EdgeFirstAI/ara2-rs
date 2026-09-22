@@ -135,20 +135,28 @@ with a circular buffer of DMA-BUF tensor sets (2x+ throughput improvement).
 
 ## Runtime Requirements
 
-Requires NXP's rt-sdk-ara2 SDK 2.1.1 or later. The following must be present
-on the target system:
+Requires a `libaraclient` implementing DVAPI 1.1 or 1.3. The following must
+be present on the target system:
 
-- **`libaraclient`** — Kinara client library, from NXP's `imx-nxp-ara2`
-  package (rt-sdk-ara2 SDK 2.1.1+). NXP's packaging has changed the shared
-  library's name in every SDK drop so far, so [`open_library`](crates/ara2/src/lib.rs)
-  tries the architecture-suffixed name for the target first
-  (`libaraclient_aarch64.so`, `libaraclient_x86_64.so`), then
-  `libaraclient.so` and `libaraclient.so.1`.
+- **`libaraclient`** — Kinara client library. Both DVAPI generations in
+  circulation are supported: 1.3, from NXP's `imx-nxp-ara2` package
+  (rt-sdk-ara2), and 1.1, from the Kinara ARA-2 runtime that
+  [meta-kinara](https://github.com/EdgeFirstAI/meta-kinara) packages.
+  [`open_library`](crates/ara2/src/lib.rs) probes the loaded library with
+  `dv_get_client_lib_version` and adapts, since the two differ in struct
+  layout. The library's name has also differed in every packaging so far
+  and there is no soname to rely on, so the architecture-suffixed name for
+  the target is tried first (`libaraclient_aarch64.so`,
+  `libaraclient_x86_64.so`), then `libaraclient.so` and
+  `libaraclient.so.1`. Set `ARA2_ABI` to `1.1` or `1.3` to force a layout
+  if a target reports a version this build does not recognise.
 - **The proxy service** — provides NPU access, must be running before
-  connecting (`rt-sdk-ara2.service` on EdgeFirst Yocto images shipping
-  NXP's rt-sdk-ara2 integration; listens on `/var/run/proxy.sock` by
-  default -- see [`DEFAULT_SOCKET`](crates/ara2/src/lib.rs) and the
-  `ARA2_SOCKET` environment variable for overriding this)
+  connecting. It is `rt-sdk-ara2.service` listening on
+  `/var/run/proxy.sock` under NXP's packaging, and `ara2.service`
+  listening on `/var/run/ara2.sock` under meta-kinara's.
+  `Session::connect()` tries both — see
+  [`SOCKET_PATHS`](crates/ara2/src/lib.rs) — or set `ARA2_SOCKET` to pin
+  one explicitly.
 - **ARA-2 hardware** — PCIe accelerator card visible via `lspci`
 
 ## Building

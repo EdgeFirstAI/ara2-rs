@@ -49,8 +49,8 @@ ARA-2 neural network accelerator devices via the ARA-2 proxy service.
               │
               ▼
 ┌───────────────────────────┐
-│    ARA-2 Proxy (dvproxy)  │
-│    (System Service)       │
+│       ARA-2 Proxy         │
+│  (rt-sdk-ara2.service)    │
 └─────────────┬─────────────┘
               │
               ▼
@@ -226,7 +226,7 @@ chaining for integration with `anyhow` and `eyre`.
 
 ```
 1. Session::create_via_unix_socket()
-   └─▶ Connect to ara2-proxy via UNIX socket
+   └─▶ Connect to the ARA-2 proxy via UNIX socket
 
 2. session.list_endpoints()
    └─▶ Query proxy for available NPU devices

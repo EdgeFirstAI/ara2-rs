@@ -14,7 +14,7 @@ Usage::
 
 Requirements:
     edgefirst-ara2
-    ARA-2 proxy service running (dvproxy — systemd unit: ara2.service or dvproxy.service)
+    ARA-2 proxy service running (systemd unit: rt-sdk-ara2.service)
 """
 
 from __future__ import annotations

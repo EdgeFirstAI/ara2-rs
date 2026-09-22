@@ -3,7 +3,46 @@
 
 use pyo3::prelude::*;
 
+/// The DVAPI generation a loaded ``libaraclient`` implements.
+#[pyclass(module = "edgefirst_ara2", eq, eq_int, from_py_object)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Abi {
+    V1_1,
+    V1_3,
+}
+
+impl From<ara2::Abi> for Abi {
+    fn from(abi: ara2::Abi) -> Self {
+        match abi {
+            ara2::Abi::V1_1 => Abi::V1_1,
+            ara2::Abi::V1_3 => Abi::V1_3,
+            // ara2::Abi is #[non_exhaustive]; a generation added upstream
+            // reaches Python as the newest one this build knows.
+            _ => Abi::V1_3,
+        }
+    }
+}
+
+#[pymethods]
+impl Abi {
+    fn __str__(&self) -> &'static str {
+        match self {
+            Abi::V1_1 => "1.1",
+            Abi::V1_3 => "1.3",
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!("Abi.{:?}", self)
+    }
+}
+
 /// Endpoint state enum.
+///
+/// The members are the union of both DVAPI generations: 1.3 reuses values
+/// 4 and 5 for names 1.1 does not have, so which of ``ActiveBoosted`` /
+/// ``ThermalActiveSlow`` (and ``ThermalInactive`` / ``FailSafe``) you see
+/// depends on the library loaded. ``Session.abi`` reports which that is.
 #[pyclass(module = "edgefirst_ara2", eq, from_py_object)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum State {
@@ -13,9 +52,12 @@ pub enum State {
     ActiveSlow,
     ActiveBoosted,
     ThermalInactive,
+    ThermalActiveSlow,
+    FailSafe,
     ThermalUnknown,
     Inactive,
     Fault,
+    Unknown,
 }
 
 impl From<ara2::State> for State {
@@ -27,9 +69,19 @@ impl From<ara2::State> for State {
             ara2::State::ActiveSlow => State::ActiveSlow,
             ara2::State::ActiveBoosted => State::ActiveBoosted,
             ara2::State::ThermalInactive => State::ThermalInactive,
+            ara2::State::ThermalActiveSlow => State::ThermalActiveSlow,
+            ara2::State::FailSafe => State::FailSafe,
             ara2::State::ThermalUnknown => State::ThermalUnknown,
             ara2::State::Inactive => State::Inactive,
             ara2::State::Fault => State::Fault,
+            // A Python enum member cannot carry the raw value, so log it
+            // rather than discard it -- the number is the only thing that
+            // makes an unknown state actionable.
+            ara2::State::Unknown(raw, abi) => {
+                log::warn!("endpoint reported state {raw}, undefined in DVAPI {abi}");
+                State::Unknown
+            }
+            _ => State::Unknown,
         }
     }
 }
@@ -49,11 +101,17 @@ impl State {
 #[pyclass(module = "edgefirst_ara2", get_all, from_py_object)]
 #[derive(Clone, Debug)]
 pub struct DramStatistics {
+    /// Total DRAM capacity in bytes.
     pub dram_size: u64,
+    /// Total occupied DRAM in bytes.
     pub dram_occupancy_size: u64,
+    /// Free DRAM in bytes.
     pub free_size: u64,
+    /// Reserved DRAM in bytes.
     pub reserved_occupancy_size: u64,
+    /// DRAM occupied by loaded models in bytes.
     pub model_occupancy_size: u64,
+    /// DRAM occupied by tensor buffers in bytes.
     pub tensor_occupancy_size: u64,
 }
 
@@ -84,8 +142,11 @@ impl DramStatistics {
 #[pyclass(module = "edgefirst_ara2", get_all, from_py_object)]
 #[derive(Clone, Copy, Debug)]
 pub struct ModelTiming {
+    /// NPU inference execution time in microseconds.
     pub run_time_us: u64,
+    /// Input DMA transfer time in microseconds.
     pub input_time_us: u64,
+    /// Output DMA transfer time in microseconds.
     pub output_time_us: u64,
 }
 
@@ -117,9 +178,13 @@ impl ModelTiming {
 #[pyclass(module = "edgefirst_ara2", get_all, from_py_object)]
 #[derive(Clone, Debug)]
 pub struct InputQuantization {
+    /// Per-tensor quantization scale.
     pub qn: f32,
+    /// Integer zero-point offset.
     pub offset: i32,
+    /// True if the tensor uses signed int8, False for uint8.
     pub is_signed: bool,
+    /// Kinara quantization mode (9 = asymmetric, production default).
     pub qmode: i32,
 }
 
@@ -151,11 +216,19 @@ impl InputQuantization {
 #[pyclass(module = "edgefirst_ara2", get_all, from_py_object)]
 #[derive(Clone, Debug)]
 pub struct InputPreprocess {
+    /// Per-channel mean subtracted during preprocessing.
     pub mean: (f32, f32, f32),
+    /// Per-channel scale applied after mean subtraction.
     pub scale: (f32, f32, f32),
+    /// True if BGR inputs must be swapped to RGB before normalization.
     pub bgr_to_rgb: bool,
+    /// True if the source image should be letterboxed to preserve aspect
+    /// ratio.
     pub aspect_resize: bool,
+    /// True if the input should be horizontally mirrored.
     pub mirror: bool,
+    /// True if the input should be center-cropped to the model's input
+    /// size.
     pub center_crop: bool,
 }
 
@@ -192,8 +265,11 @@ impl InputPreprocess {
 #[pyclass(module = "edgefirst_ara2", get_all, from_py_object)]
 #[derive(Clone, Debug)]
 pub struct OutputQuantization {
+    /// Per-tensor quantization scale. ``float_val = (raw - offset) * qn``.
     pub qn: f32,
+    /// Integer zero-point offset.
     pub offset: i32,
+    /// True if the tensor uses signed int8, False for uint8.
     pub is_signed: bool,
 }
 
@@ -253,19 +329,34 @@ impl ModelOutputType {
 #[pyclass(module = "edgefirst_ara2", get_all, from_py_object)]
 #[derive(Clone, Debug)]
 pub struct InputTensorInfo {
+    /// Model layer this tensor belongs to.
     pub layer_id: i32,
+    /// Blob index within the layer.
     pub blob_id: i32,
+    /// Name of the layer, as compiled into the model.
     pub layer_name: String,
+    /// Name of the blob within the layer.
     pub blob_name: String,
+    /// Layer type reported by the compiler (e.g. "Convolution").
     pub layer_type: String,
+    /// Data layout string (e.g., "NCHW").
     pub layout: String,
+    /// Total size in bytes.
     pub size: usize,
+    /// Width in pixels.
     pub width: usize,
+    /// Height in pixels.
     pub height: usize,
+    /// Number of channels.
     pub nch: usize,
+    /// Bytes per element.
     pub bpp: usize,
+    /// Number of batches this tensor holds.
     pub batch_size: usize,
+    /// Quantization parameters for converting to and from float.
     pub quant: InputQuantization,
+    /// Image preprocessing parameters (per-channel mean/scale, BGR swap,
+    /// etc.).
     pub preprocess: InputPreprocess,
 }
 
@@ -304,22 +395,39 @@ impl InputTensorInfo {
 #[pyclass(module = "edgefirst_ara2", get_all, from_py_object)]
 #[derive(Clone, Debug)]
 pub struct OutputTensorInfo {
+    /// Model layer this tensor belongs to.
     pub layer_id: i32,
+    /// Blob index within the layer.
     pub blob_id: i32,
+    /// Layer this one was fused into, or -1 when it was not fused.
     pub fused_parent_id: i32,
+    /// Name of the layer, as compiled into the model.
     pub layer_name: String,
+    /// Name of the blob within the layer.
     pub blob_name: String,
+    /// Name of the fused parent layer, empty when it was not fused.
     pub layer_fused_parent_name: String,
+    /// Layer type reported by the compiler (e.g. "Convolution").
     pub layer_type: String,
+    /// Data layout string (e.g., "NCHW").
     pub layout: String,
+    /// Total size in bytes.
     pub size: usize,
+    /// Width in pixels.
     pub width: usize,
+    /// Height in pixels.
     pub height: usize,
+    /// Number of channels.
     pub nch: usize,
+    /// Bytes per element.
     pub bpp: usize,
+    /// Number of classes the model was trained on.
     pub num_classes: usize,
+    /// What kind of output this layer produces.
     pub layer_output_type: ModelOutputType,
+    /// Highest batch id this tensor supports.
     pub max_dynamic_id: i32,
+    /// Quantization parameters for converting to and from float.
     pub quant: OutputQuantization,
 }
 

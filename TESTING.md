@@ -20,11 +20,10 @@ DVM metadata tests can run on any machine.
    ```bash
    lspci | grep -i kinara
    ```
-2. **Proxy service** running (`dvproxy`, managed by a systemd unit such as
-   `ara2.service` or `dvproxy.service` depending on the platform):
+2. **Proxy service** running (`rt-sdk-ara2.service` on EdgeFirst Yocto
+   images shipping NXP's rt-sdk-ara2 integration):
    ```bash
-   systemctl status ara2    # EdgeFirst Yocto images
-   systemctl status dvproxy # other platforms
+   systemctl status rt-sdk-ara2
    ```
 3. **Proxy socket** available:
    ```bash
@@ -277,10 +276,9 @@ CI — they require a self-hosted runner with ARA-2 hardware.
 # Check PCIe device
 lspci | grep -i kinara
 
-# Check proxy service (dvproxy — service name varies by platform)
-systemctl status ara2    # EdgeFirst Yocto images
-systemctl status dvproxy # other platforms
-journalctl -u ara2 --no-pager -n 50
+# Check proxy service
+systemctl status rt-sdk-ara2
+journalctl -u rt-sdk-ara2 --no-pager -n 50
 
 # Check socket
 ls -la /var/run/proxy.sock
