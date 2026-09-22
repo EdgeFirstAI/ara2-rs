@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-09-22
+
 ### Changed (BREAKING)
 
 - **`ara2-sys` is built additively from DVAPI 1.1.2, with DVAPI 1.3.2's additions layered on top.** DVAPI is the `dvapi.h` interface version `libaraclient` reports through `dv_get_client_lib_version`; it is not the SDK packaging version. NXP's rt-sdk-ara2 SDK 2.1.1 ships DVAPI 1.3.2, and the Kinara ARA-2 runtime that [meta-kinara](https://github.com/EdgeFirstAI/meta-kinara) packages as 1.2.1 ships DVAPI 1.1.2. Base bindings come from the 1.1.2 headers and `dvapi-1.3.h` carries the measured 1.3 delta — 8 functions, 2 types, 3 enums, 9 status codes and the extended `dv_model_output_param_1_3`. Every 1.3 layout change is a field appended to the end of a struct, so the 1.1 layout remains valid for reading fields both generations share; `assert_appended!` in `ara2-sys` makes a future reorder or retype a build error. The function table needs no versioning: `--dynamic-loading` resolves each symbol into its own `Result`, so a 1.1 library simply leaves the 1.3 entries `Err`.
@@ -916,7 +918,8 @@ Non-qmode-9 DVMs now raise `Ara2Error("unsupported quantization mode: qmode=N ..
 - Requires `edgefirst-hal` for HAL integration
 - Requires `libaraclient.so` runtime library
 
-[Unreleased]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.18.0...HEAD
+[Unreleased]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.15.0...v0.16.0
