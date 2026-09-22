@@ -3,6 +3,7 @@
 
 use crate::endpoint::Endpoint;
 use crate::error::to_py_err;
+use crate::types::Abi;
 use pyo3::prelude::*;
 use std::{collections::HashMap, net::Ipv4Addr, path::PathBuf, str::FromStr};
 
@@ -14,7 +15,7 @@ use std::{collections::HashMap, net::Ipv4Addr, path::PathBuf, str::FromStr};
 ///
 /// Example:
 ///     >>> import edgefirst_ara2
-///     >>> session = edgefirst_ara2.Session.create_via_unix_socket("/var/run/ara2.sock")
+///     >>> session = edgefirst_ara2.Session.connect()
 ///     >>> versions = session.versions()
 ///     >>> endpoints = session.list_endpoints()
 ///     >>> session.close()
@@ -31,11 +32,52 @@ impl Session {
 
 #[pymethods]
 impl Session {
+    /// Create a session connected to the ARA-2 proxy over its UNIX socket,
+    /// at the path `socket_path()` resolves.
+    ///
+    /// This is the recommended way to connect. Use
+    /// `create_via_unix_socket` directly when the path must be hardcoded
+    /// or is chosen some other way.
+    ///
+    /// Returns:
+    ///     Session: A new session connected to the proxy
+    ///
+    /// Raises:
+    ///     ProxyError: If the socket does not exist or the proxy is not running
+    #[staticmethod]
+    fn connect() -> PyResult<Self> {
+        Ok(Session(Some(ara2::Session::connect().map_err(to_py_err)?)))
+    }
+
+    /// Create a session from a proxy configuration file.
+    ///
+    /// Reads the ``proxy:`` section's ``interface_type`` and the address
+    /// list it selects, then connects to the first endpoint declared --
+    /// a UNIX socket for ``SOCKET``, a TCP/IPv4 address for ``IPV4``.
+    /// Use this when the configuration is known but the socket path is
+    /// not, which is the usual case across packagings.
+    ///
+    /// Args:
+    ///     path: Path to the proxy YAML (str or os.PathLike)
+    ///
+    /// Returns:
+    ///     Session: A new session connected to the proxy
+    ///
+    /// Raises:
+    ///     ProxyError: If the file cannot be read or understood, or it
+    ///                 declares no reachable endpoint
+    #[staticmethod]
+    fn from_config(path: PathBuf) -> PyResult<Self> {
+        Ok(Session(Some(
+            ara2::Session::from_config(&path).map_err(to_py_err)?,
+        )))
+    }
+
     /// Create a session connected via UNIX domain socket.
     ///
     /// Args:
     ///     socket_path: Path to the UNIX socket (str or os.PathLike,
-    ///                  e.g., "/var/run/ara2.sock")
+    ///                  e.g., "/var/run/proxy.sock")
     ///
     /// Returns:
     ///     Session: A new session connected to the proxy
@@ -102,6 +144,25 @@ impl Session {
             ara2::SocketType::Unix => "unix",
             ara2::SocketType::Tcp => "tcp",
         })
+    }
+
+    /// The DVAPI generation of the ``libaraclient`` this session uses.
+    ///
+    /// Probed when the library was opened. It determines which of the
+    /// overlapping :class:`State` members can be reported.
+    #[getter]
+    fn abi(&self) -> PyResult<Abi> {
+        Ok(self.inner()?.abi().into())
+    }
+
+    /// The DVAPI version the client library reported, or ``None`` if it
+    /// would not report one.
+    ///
+    /// This is the interface version, not the version of the SDK the
+    /// library was packaged in.
+    #[getter]
+    fn dvapi_version(&self) -> PyResult<Option<String>> {
+        Ok(self.inner()?.dvapi_version().map(|v| v.to_string()))
     }
 
     /// Close this Python session handle.

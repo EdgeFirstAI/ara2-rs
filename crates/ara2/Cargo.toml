@@ -57,6 +57,9 @@ log.workspace = true
 ndarray.workspace = true
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+# Proxy configuration files are YAML; `discover` and `Session::from_config`
+# read the socket or TCP endpoint out of them.
+serde_yaml_ng = "0.10"
 wayland-client = { workspace = true, optional = true }
 wayland-protocols = { workspace = true, optional = true }
 zip = { version = "8.6", default-features = false }

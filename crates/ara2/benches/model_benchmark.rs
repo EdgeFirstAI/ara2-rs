@@ -6,7 +6,7 @@ use edgefirst_tensor::{CpuAccess, PixelFormat, Tensor, TensorDyn, TensorMemory, 
 use std::{env, path::Path};
 
 fn model_benchmark(c: &mut Criterion) {
-    let session = Session::create_via_unix_socket("/var/run/ara2.sock").unwrap();
+    let session = Session::connect().unwrap();
     let endpoint = session.list_endpoints().unwrap().pop().unwrap();
     let modelpath = env::var("MODEL")
         .unwrap_or_else(|_| "testdata/yolov8s_seg_960x544_rgba_nhwc.dvm".to_string());

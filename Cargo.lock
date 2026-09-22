@@ -123,6 +123,7 @@ dependencies = [
  "ndarray",
  "serde",
  "serde_json",
+ "serde_yaml_ng",
  "wayland-client",
  "wayland-protocols",
  "zip",
@@ -134,6 +135,7 @@ version = "0.18.0"
 dependencies = [
  "ara2",
  "edgefirst-tensor",
+ "log",
  "ndarray",
  "numpy",
  "pyo3",

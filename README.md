@@ -22,7 +22,7 @@ Requires [EdgeFirst Yocto Images](https://github.com/EdgeFirstAI/yocto) with ARA
 | Crate | Description |
 |-------|-------------|
 | [`ara2`](crates/ara2) | Core client library — session, endpoint, model, and DVM metadata APIs |
-| [`ara2-sys`](crates/ara2-sys) | FFI bindings to `libaraclient.so` via `libloading` |
+| [`ara2-sys`](crates/ara2-sys) | FFI bindings to `libaraclient` via `libloading` |
 
 ### Integration with the EdgeFirst HAL
 
@@ -62,11 +62,11 @@ See [`crates/ara2-py/README.md`](crates/ara2-py/README.md) for the Python API re
 ## Quick Start
 
 ```rust
-use ara2::{Session, DEFAULT_SOCKET};
+use ara2::Session;
 use edgefirst_tensor::{TensorMemory, TensorTrait as _};
 
 // Connect to the ARA-2 proxy service
-let session = Session::create_via_unix_socket(DEFAULT_SOCKET)?;
+let session = Session::connect()?;
 
 // Enumerate NPU endpoints and check status
 let endpoints = session.list_endpoints()?;
@@ -89,9 +89,9 @@ The `submit()` / `wait()` API enables overlapping CPU work with NPU
 execution — the building block for pipeline parallelism:
 
 ```rust
-use ara2::{Session, DEFAULT_SOCKET, DEFAULT_TIMEOUT_MS};
+use ara2::{Session, DEFAULT_TIMEOUT_MS};
 
-let session = Session::create_via_unix_socket(DEFAULT_SOCKET)?;
+let session = Session::connect()?;
 let endpoints = session.list_endpoints()?;
 let mut model = endpoints[0].load_model_from_file("model.dvm".as_ref())?;
 model.allocate_tensors(None)?;
@@ -115,7 +115,7 @@ The Python API mirrors this exactly:
 ```python
 import edgefirst_ara2 as ara2
 
-session = ara2.Session.create_via_unix_socket(ara2.DEFAULT_SOCKET)
+session = ara2.Session.connect()
 endpoint = session.list_endpoints()[0]
 model = endpoint.load_model("model.dvm")
 model.allocate_tensors()
@@ -135,12 +135,28 @@ with a circular buffer of DMA-BUF tensor sets (2x+ throughput improvement).
 
 ## Runtime Requirements
 
-The following must be present on the target system:
+Requires a `libaraclient` implementing DVAPI 1.1 or 1.3. The following must
+be present on the target system:
 
-- **`libaraclient.so.1`** — Kinara client library (from the ARA-2 SDK)
-- **`ara2-proxy` / `dvproxy`** — System service providing NPU access, must be running
-  (systemd unit name is platform-dependent: `ara2.service` on EdgeFirst Yocto images,
-  `dvproxy.service` on other platforms)
+- **`libaraclient`** — Kinara client library. Both DVAPI generations in
+  circulation are supported: 1.3, from NXP's `imx-nxp-ara2` package
+  (rt-sdk-ara2), and 1.1, from the Kinara ARA-2 runtime that
+  [meta-kinara](https://github.com/EdgeFirstAI/meta-kinara) packages.
+  [`open_library`](crates/ara2/src/lib.rs) probes the loaded library with
+  `dv_get_client_lib_version` and adapts, since the two differ in struct
+  layout. The library's name has also differed in every packaging so far
+  and there is no soname to rely on, so the architecture-suffixed name for
+  the target is tried first (`libaraclient_aarch64.so`,
+  `libaraclient_x86_64.so`), then `libaraclient.so` and
+  `libaraclient.so.1`. Set `ARA2_ABI` to `1.1` or `1.3` to force a layout
+  if a target reports a version this build does not recognise.
+- **The proxy service** — provides NPU access, must be running before
+  connecting. It is `rt-sdk-ara2.service` listening on
+  `/var/run/proxy.sock` under NXP's packaging, and `ara2.service`
+  listening on `/var/run/ara2.sock` under meta-kinara's.
+  `Session::connect()` tries both — see
+  [`SOCKET_PATHS`](crates/ara2/src/lib.rs) — or set `ARA2_SOCKET` to pin
+  one explicitly.
 - **ARA-2 hardware** — PCIe accelerator card visible via `lspci`
 
 ## Building

@@ -110,7 +110,7 @@ jobs:
       # feature would also satisfy pyo3, but the wheel's ABI is a packaging
       # decision and must not be made by a linter.
       env: PYO3_CROSS_PYTHON_VERSION=3.11
-      # Every other test needs an ARA-2 NPU and the ara2-proxy service, which
+      # Every other test needs an ARA-2 NPU and the ARA-2 proxy service, which
       # no hosted runner has. They are not #[ignore]d because on a target they
       # are the point of the suite, so the filter lives here.
       clippy-extra-args: >-

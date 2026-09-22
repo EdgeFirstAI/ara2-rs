@@ -502,7 +502,7 @@ struct Args {
     camera_name: Option<String>,
 
     /// UNIX socket path for the ARA-2 proxy service.
-    #[arg(long, default_value_t = ara2::DEFAULT_SOCKET.to_string())]
+    #[arg(long, default_value_t = ara2::socket_path())]
     socket: String,
 
     /// Camera pixel format.
@@ -837,7 +837,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let session = Session::create_via_unix_socket(&args.socket)?;
     let endpoints = session.list_endpoints()?;
     if endpoints.is_empty() {
-        eprintln!("No ARA-2 endpoints found.  Is ara2-proxy running?");
+        eprintln!("No ARA-2 endpoints found.  Is rt-sdk-ara2.service running?");
         std::process::exit(1);
     }
     let endpoint = &endpoints[0];

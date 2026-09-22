@@ -63,5 +63,5 @@ Paste any error messages or stack traces here
 
 Add any other context about the problem here, such as:
 - Model file used (if applicable)
-- System logs from `journalctl -u ara2-proxy`
+- System logs from `journalctl -u rt-sdk-ara2`
 - Whether the issue is reproducible

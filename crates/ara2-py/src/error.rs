@@ -4,20 +4,62 @@
 use pyo3::prelude::*;
 
 // Exception hierarchy: Ara2Error > specific error types
-pyo3::create_exception!(edgefirst_ara2, Ara2Error, pyo3::exceptions::PyRuntimeError);
-pyo3::create_exception!(edgefirst_ara2, LibraryError, Ara2Error);
-pyo3::create_exception!(edgefirst_ara2, HardwareError, Ara2Error);
-pyo3::create_exception!(edgefirst_ara2, ProxyError, Ara2Error);
-pyo3::create_exception!(edgefirst_ara2, ModelError, Ara2Error);
-pyo3::create_exception!(edgefirst_ara2, TensorError, Ara2Error);
-pyo3::create_exception!(edgefirst_ara2, MetadataError, Ara2Error);
+pyo3::create_exception!(
+    edgefirst_ara2,
+    Ara2Error,
+    pyo3::exceptions::PyRuntimeError,
+    "Base class for every error raised by this module."
+);
+pyo3::create_exception!(
+    edgefirst_ara2,
+    LibraryError,
+    Ara2Error,
+    "The libaraclient client library could not be loaded or is not a supported DVAPI generation."
+);
+pyo3::create_exception!(
+    edgefirst_ara2,
+    HardwareError,
+    Ara2Error,
+    "The NPU or an endpoint reported a fault."
+);
+pyo3::create_exception!(
+    edgefirst_ara2,
+    ProxyError,
+    Ara2Error,
+    "The proxy could not be reached, or its configuration could not be used."
+);
+pyo3::create_exception!(
+    edgefirst_ara2,
+    ModelError,
+    Ara2Error,
+    "A model failed to load, or an inference failed."
+);
+pyo3::create_exception!(
+    edgefirst_ara2,
+    TensorError,
+    Ara2Error,
+    "A tensor could not be allocated, mapped or registered."
+);
+pyo3::create_exception!(
+    edgefirst_ara2,
+    MetadataError,
+    Ara2Error,
+    "The metadata inside a .dvm archive could not be read."
+);
 
 /// Convert an `ara2::Error` into the appropriate Python exception.
 pub fn to_py_err(err: ara2::Error) -> PyErr {
     let msg = err.to_string();
     match &err {
-        ara2::Error::Library(_) => LibraryError::new_err(msg),
+        ara2::Error::Library(_)
+        | ara2::Error::LibraryNotFound { .. }
+        | ara2::Error::UnsupportedDvapi { .. }
+        | ara2::Error::AbiOverrideInvalid(_) => LibraryError::new_err(msg),
         ara2::Error::Io(_) => ProxyError::new_err(msg),
+        ara2::Error::ProxyConfigUnreadable { .. }
+        | ara2::Error::ProxyConfigInvalid { .. }
+        | ara2::Error::NoProxyEndpoint { .. }
+        | ara2::Error::ProcUnavailable { .. } => ProxyError::new_err(msg),
         ara2::Error::Ara2(code) => {
             let code = *code;
             if code >= 500 {
@@ -36,9 +78,7 @@ pub fn to_py_err(err: ara2::Error) -> PyErr {
                 Ara2Error::new_err(msg)
             }
         }
-        ara2::Error::EndpointStateInvalid(_) | ara2::Error::UnknownProductType(_) => {
-            HardwareError::new_err(msg)
-        }
+        ara2::Error::UnknownProductType(_) => HardwareError::new_err(msg),
         ara2::Error::UnknownLayerOutputType(_)
         | ara2::Error::UnsupportedLayout(_)
         | ara2::Error::UnsupportedTypeSize(_) => ModelError::new_err(msg),

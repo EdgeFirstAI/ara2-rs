@@ -17,7 +17,33 @@ import numpy.typing as npt
 __version__: str
 
 DEFAULT_SOCKET: str
-"""Default UNIX socket path for the ARA-2 proxy ("/var/run/ara2.sock")."""
+"""Default UNIX socket path for the ARA-2 proxy ("/var/run/proxy.sock").
+
+Matches ``interface_socket_file`` in NXP's rt-sdk-ara2
+``proxy_config.yaml``, and is the first entry in :data:`SOCKET_PATHS`.
+Override at runtime with the ``ARA2_SOCKET`` environment variable -- see
+:func:`socket_path` and :meth:`Session.connect`.
+"""
+
+SOCKET_PATHS: list[str]
+"""Proxy socket paths tried, in order, when ``ARA2_SOCKET`` is not set.
+
+The socket path is a packaging decision and the two packagings disagree:
+NXP's rt-sdk-ara2 configures ``/var/run/proxy.sock``, and the Kinara
+runtime meta-kinara packages configures ``/var/run/ara2.sock``.
+"""
+
+def socket_path() -> str:
+    """Resolve the ARA-2 proxy socket path.
+
+    Returns ``ARA2_SOCKET`` if it is set, otherwise the first entry in
+    :data:`SOCKET_PATHS` that exists, otherwise :data:`DEFAULT_SOCKET`.
+    :meth:`Session.connect` resolves through this function and then makes
+    a single connection attempt; this is exposed separately for callers
+    that need the path as a string, such as the default value of a CLI
+    flag.
+    """
+    ...
 
 # =============================================================================
 # Exceptions
@@ -29,7 +55,12 @@ class Ara2Error(RuntimeError):
     ...
 
 class LibraryError(Ara2Error):
-    """Failed to load libaraclient.so.1."""
+    """Failed to load the ARA-2 client library.
+
+    The library is loaded by name from NXP's ``imx-nxp-ara2`` package;
+    several candidate names are tried because NXP's packaging has not
+    settled on a stable soname.
+    """
 
     ...
 
@@ -62,8 +93,32 @@ class MetadataError(Ara2Error):
 # Enums
 # =============================================================================
 
+class Abi:
+    """The DVAPI generation a loaded ``libaraclient`` implements.
+
+    This is the version of the ``dvapi.h`` interface, which governs struct
+    layout -- not the version of the SDK the library was packaged in.
+    """
+
+    V1_1: Abi
+    """DVAPI 1.1.x, shipped by the Kinara ARA-2 runtime meta-kinara packages."""
+    V1_3: Abi
+    """DVAPI 1.3.x, shipped by NXP's rt-sdk-ara2 as ``imx-nxp-ara2``."""
+
+    def __eq__(self, other: object) -> bool: ...
+    def __int__(self) -> int: ...
+    def __str__(self) -> str: ...
+    def __repr__(self) -> str: ...
+
 class State:
-    """Endpoint operational state returned by ``Endpoint.check_status()``."""
+    """Endpoint operational state returned by ``Endpoint.check_status()``.
+
+    The members are the union of both DVAPI generations. DVAPI 1.3 reuses
+    values 4 and 5 for names 1.1 does not have, so ``ActiveBoosted`` and
+    ``ThermalInactive`` are only reported under 1.1, and
+    ``ThermalActiveSlow`` and ``FailSafe`` only under 1.3.
+    ``Session.abi`` reports which library is loaded.
+    """
 
     Init: State
     """Device is initializing. Not yet ready for model loading."""
@@ -74,15 +129,25 @@ class State:
     ActiveSlow: State
     """Device is running inference at reduced clock speed (power saving)."""
     ActiveBoosted: State
-    """Device is running inference at boosted clock speed."""
+    """DVAPI 1.1 value 4, documented upstream as reduced clock speed despite
+    its name. DVAPI 1.3 renamed the same value ``ThermalActiveSlow``."""
     ThermalInactive: State
-    """Device suspended due to thermal limits. Wait for it to cool."""
+    """DVAPI 1.1 value 5, thermally inactive. DVAPI 1.3 renamed it
+    ``FailSafe`` without updating the upstream documentation."""
+    ThermalActiveSlow: State
+    """Device is running inference at reduced clock speed due to thermal
+    limits. DVAPI 1.3 value 4."""
+    FailSafe: State
+    """Device is in a restricted fail-safe mode. DVAPI 1.3 value 5."""
     ThermalUnknown: State
     """Thermal state cannot be determined."""
     Inactive: State
     """Device is powered down or not available."""
     Fault: State
-    """Unrecoverable hardware error. Restart ara2-proxy."""
+    """Unrecoverable hardware error. Restart the ARA-2 proxy service."""
+    Unknown: State
+    """A value neither DVAPI generation defines. The raw value is logged at
+    warning level, since a Python enum member cannot carry it."""
 
     def __eq__(self, other: object) -> bool: ...
     def __str__(self) -> str: ...
@@ -193,22 +258,31 @@ class InputTensorInfo:
     """Detailed information about an input tensor."""
 
     layer_id: int
+    """Model layer this tensor belongs to."""
     blob_id: int
+    """Blob index within the layer."""
     layer_name: str
+    """Name of the layer, as compiled into the model."""
     blob_name: str
+    """Name of the blob within the layer."""
     layer_type: str
+    """Layer type reported by the compiler (e.g. "Convolution")."""
     layout: str
     """Data layout string (e.g., "NCHW")."""
     size: int
     """Total size in bytes."""
     width: int
+    """Width in pixels."""
     height: int
+    """Height in pixels."""
     nch: int
     """Number of channels."""
     bpp: int
     """Bytes per element."""
     batch_size: int
+    """Number of batches this tensor holds."""
     quant: InputQuantization
+    """Quantization parameters for converting to and from float."""
     preprocess: InputPreprocess
     """Image preprocessing parameters (per-channel mean/scale, BGR swap, etc.)."""
 
@@ -216,30 +290,125 @@ class OutputTensorInfo:
     """Detailed information about an output tensor."""
 
     layer_id: int
+    """Model layer this tensor belongs to."""
     blob_id: int
+    """Blob index within the layer."""
     fused_parent_id: int
+    """Layer this one was fused into, or -1 when it was not fused."""
     layer_name: str
+    """Name of the layer, as compiled into the model."""
     blob_name: str
+    """Name of the blob within the layer."""
     layer_fused_parent_name: str
+    """Name of the fused parent layer, empty when it was not fused."""
     layer_type: str
+    """Layer type reported by the compiler (e.g. "Convolution")."""
     layout: str
     """Data layout string (e.g., "NCHW")."""
     size: int
     """Total size in bytes."""
     width: int
+    """Width in pixels."""
     height: int
+    """Height in pixels."""
     nch: int
     """Number of channels."""
     bpp: int
     """Bytes per element."""
     num_classes: int
+    """Number of classes the model was trained on."""
     layer_output_type: ModelOutputType
+    """What kind of output this layer produces."""
     max_dynamic_id: int
+    """Highest batch id this tensor supports."""
     quant: OutputQuantization
+    """Quantization parameters for converting to and from float."""
 
 # =============================================================================
 # Core Classes
 # =============================================================================
+
+class ProxyEndpoint:
+    """An address a proxy accepts connections on."""
+
+    @property
+    def kind(self) -> Literal["unix", "tcp"]:
+        """Transport: ``"unix"`` or ``"tcp"``."""
+        ...
+
+    @property
+    def path(self) -> str | None:
+        """Socket path, for a ``"unix"`` endpoint."""
+        ...
+
+    @property
+    def host(self) -> str | None:
+        """IPv4 address, for a ``"tcp"`` endpoint."""
+        ...
+
+    @property
+    def port(self) -> int | None:
+        """TCP port, for a ``"tcp"`` endpoint."""
+        ...
+
+    def connect(self) -> Session:
+        """Open a session against this endpoint."""
+        ...
+
+    def __str__(self) -> str: ...
+    def __repr__(self) -> str: ...
+
+class Proxy:
+    """A running ARA-2 proxy found by :func:`discover`."""
+
+    @property
+    def pid(self) -> int:
+        """Process ID."""
+        ...
+
+    @property
+    def endpoints(self) -> list[ProxyEndpoint]:
+        """Where it accepts connections.
+
+        Empty when neither reading the process's file descriptors nor its
+        configuration file was possible.
+        """
+        ...
+
+    @property
+    def config(self) -> str | None:
+        """Configuration file named on its command line, if it named one."""
+        ...
+
+    @property
+    def exe(self) -> str | None:
+        """Its executable, if readable."""
+        ...
+
+    def connect(self) -> Session:
+        """Open a session against this proxy's first endpoint."""
+        ...
+
+    def __repr__(self) -> str: ...
+
+def discover() -> list[Proxy]:
+    """Find every ARA-2 proxy currently running on this host.
+
+    Returns a list because more than one proxy can be running; an empty
+    list means none was found, which is not an error.
+
+    Endpoints are resolved by observing the sockets each process holds
+    open, which reflects where it is really listening however that was
+    decided. That needs permission to read the process's file descriptors
+    -- the proxy runs as root under both packagings -- so when it is
+    unavailable this falls back to parsing the configuration file named
+    on the command line.
+
+    Example:
+        >>> for proxy in edgefirst_ara2.discover():
+        ...     print(proxy.pid, [str(e) for e in proxy.endpoints])
+    """
+    ...
 
 class Session:
     """ARA-2 session for communicating with the proxy.
@@ -247,23 +416,60 @@ class Session:
     A Session represents a connection to the ARA-2 proxy service.
     Supports the context manager protocol for resource management::
 
-        with Session.create_via_unix_socket("/var/run/ara2.sock") as session:
+        with Session.connect() as session:
             endpoints = session.list_endpoints()
 
     Example::
 
-        session = Session.create_via_unix_socket("/var/run/ara2.sock")
+        session = Session.connect()
         versions = session.versions()
         endpoints = session.list_endpoints()
         session.close()
     """
 
     @staticmethod
+    def connect() -> Session:
+        """Create a session connected to the proxy over its UNIX socket.
+
+        Connects at the path :func:`socket_path` resolves: ``ARA2_SOCKET``
+        if set, otherwise the first entry in :data:`SOCKET_PATHS` that
+        exists. This is the recommended way to connect; use
+        :meth:`create_via_unix_socket` when the path must be hardcoded or
+        is chosen some other way.
+
+        Raises:
+            ProxyError: If the socket does not exist or the proxy is not running.
+        """
+        ...
+
+    @staticmethod
+    def from_config(path: str | os.PathLike[str]) -> Session:
+        """Create a session from a proxy configuration file.
+
+        Reads the ``proxy:`` section's ``interface_type`` and the address
+        list it selects, then connects to the first endpoint declared --
+        a UNIX socket for ``SOCKET``, a TCP/IPv4 address for ``IPV4``.
+        Use this when the configuration is known but the socket path is
+        not, which is the usual case across packagings: NXP's rt-sdk-ara2
+        reads ``/etc/rt-sdk-ara240/proxy_config.yaml`` and the Kinara
+        runtime meta-kinara packages reads ``/etc/ara2.yaml``, and the two
+        name different sockets.
+
+        Args:
+            path: Path to the proxy YAML (str or os.PathLike).
+
+        Raises:
+            ProxyError: If the file cannot be read or understood, or it
+                declares no reachable endpoint.
+        """
+        ...
+
+    @staticmethod
     def create_via_unix_socket(socket_path: str | os.PathLike[str]) -> Session:
         """Create a session connected via UNIX domain socket.
 
         Args:
-            socket_path: Path to the UNIX socket (e.g., "/var/run/ara2.sock")
+            socket_path: Path to the UNIX socket (e.g., "/var/run/proxy.sock")
 
         Raises:
             ProxyError: If the socket does not exist or the proxy is not running.
@@ -308,6 +514,24 @@ class Session:
     @property
     def socket_type(self) -> Literal["unix", "tcp"]:
         """Socket type used for this connection."""
+        ...
+
+    @property
+    def abi(self) -> Abi:
+        """DVAPI generation of the ``libaraclient`` this session uses.
+
+        Probed when the library was opened. It determines which of the
+        overlapping :class:`State` members can be reported.
+        """
+        ...
+
+    @property
+    def dvapi_version(self) -> str | None:
+        """DVAPI version the client library reported, e.g. ``"1.3.2.0"``.
+
+        ``None`` if the library would not report one. This is the
+        interface version, not the version of the SDK it was packaged in.
+        """
         ...
 
     def close(self) -> None:
@@ -810,15 +1034,21 @@ class DeploymentInfo:
     """Deployment metadata describing how this model was packaged."""
 
     @property
-    def model_name(self) -> str | None: ...
+    def model_name(self) -> str | None:
+        """Model name for deployment."""
+        ...
     @property
     def name(self) -> str | None:
         """Human-readable deployment name."""
         ...
     @property
-    def author(self) -> str | None: ...
+    def author(self) -> str | None:
+        """Author or organization."""
+        ...
     @property
-    def description(self) -> str | None: ...
+    def description(self) -> str | None:
+        """Description of the deployed model."""
+        ...
 
 class InputSpec:
     """Input specification from model metadata."""
@@ -828,9 +1058,13 @@ class InputSpec:
         """Size string (e.g., "640x480")."""
         ...
     @property
-    def input_channels(self) -> int | None: ...
+    def input_channels(self) -> int | None:
+        """Number of input channels."""
+        ...
     @property
-    def output_channels(self) -> int | None: ...
+    def output_channels(self) -> int | None:
+        """Number of output channels."""
+        ...
     @property
     def cameraadaptor(self) -> str | None:
         """Camera adaptor type (e.g., "rgb", "bgr")."""
@@ -843,19 +1077,33 @@ class OutputSpec:
     """Output tensor specification from model metadata."""
 
     @property
-    def index(self) -> int | None: ...
+    def index(self) -> int | None:
+        """Output index."""
+        ...
     @property
-    def name(self) -> str | None: ...
+    def name(self) -> str | None:
+        """Output name."""
+        ...
     @property
-    def output_type(self) -> str | None: ...
+    def output_type(self) -> str | None:
+        """Output type (detection, segmentation, etc.)."""
+        ...
     @property
-    def decoder(self) -> str | None: ...
+    def decoder(self) -> str | None:
+        """Decoder to use."""
+        ...
     @property
-    def decode(self) -> bool: ...
+    def decode(self) -> bool:
+        """Whether to decode this output."""
+        ...
     @property
-    def dtype(self) -> str | None: ...
+    def dtype(self) -> str | None:
+        """Data type (float32, int8, etc.)."""
+        ...
     @property
-    def shape(self) -> list[int]: ...
+    def shape(self) -> list[int]:
+        """Tensor shape."""
+        ...
     @property
     def dshape(self) -> list[tuple[str, int]]:
         """Physical axis names in memory order, as ``(name, extent)`` pairs.
@@ -888,7 +1136,9 @@ class CompilationInfo:
         """Model format (e.g., "dvm")."""
         ...
     @property
-    def ppa(self) -> PpaMetrics | None: ...
+    def ppa(self) -> PpaMetrics | None:
+        """Performance, power and area metrics."""
+        ...
 
 class PpaMetrics:
     """Performance, power, and area metrics from compilation."""
@@ -928,8 +1178,13 @@ class Ara2Info:
         ...
 
 __all__ = [
+    "__version__",
     # Constants
     "DEFAULT_SOCKET",
+    "SOCKET_PATHS",
+    # Functions
+    "socket_path",
+    "discover",
     # Exceptions
     "Ara2Error",
     "LibraryError",
@@ -939,6 +1194,7 @@ __all__ = [
     "TensorError",
     "MetadataError",
     # Enums
+    "Abi",
     "State",
     "ModelOutputType",
     # Data classes
@@ -951,6 +1207,8 @@ __all__ = [
     "OutputTensorInfo",
     # Core classes
     "Session",
+    "Proxy",
+    "ProxyEndpoint",
     "Endpoint",
     "Model",
     "InferRequest",

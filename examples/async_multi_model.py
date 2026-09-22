@@ -23,7 +23,7 @@ Usage::
 
 Requirements:
     edgefirst-ara2
-    ARA-2 proxy service running (dvproxy — systemd unit: ara2.service or dvproxy.service)
+    ARA-2 proxy service running (systemd unit: rt-sdk-ara2.service)
 """
 
 from __future__ import annotations
@@ -91,7 +91,7 @@ def main() -> None:
     print()
 
     # ── Connect ──────────────────────────────────────────────────────
-    session = ara2.Session.create_via_unix_socket(ara2.DEFAULT_SOCKET)
+    session = ara2.Session.connect()
     print(f"Connected via {session.socket_type} socket")
 
     endpoints = session.list_endpoints()

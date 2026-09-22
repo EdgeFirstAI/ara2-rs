@@ -225,7 +225,7 @@ pub struct OutputSpec {
     /// Names are the metadata spellings (`"batch"`, `"num_boxes"`,
     /// `"num_protos"`, ...) so a caller can map them onto the decoder's
     /// `DimName` without this crate linking a model decoder. With the
-    /// `decoder` feature, [`OutputSpec::dshape_typed`] does that mapping.
+    /// `decoder` feature, `OutputSpec::dshape_typed` does that mapping.
     ///
     /// The type does not vary by feature. Cargo unifies features across the
     /// whole graph, so a field whose type changed with one would change for

@@ -1,4 +1,4 @@
-use crate::{Endpoint, error::Error};
+use crate::{Abi, DvapiVersion, Endpoint, error::Error};
 use ara2_sys::{araclient, dv_endpoint, dv_product_version, dv_session, dv_version};
 use std::{collections::HashMap, ffi::c_char, net::Ipv4Addr, sync::Arc};
 
@@ -6,7 +6,9 @@ use std::{collections::HashMap, ffi::c_char, net::Ipv4Addr, sync::Arc};
 /// named socket.
 #[derive(Debug, Clone, Copy)]
 pub enum SocketType {
+    /// A TCP/IPv4 connection.
     Tcp,
+    /// A UNIX domain socket.
     Unix,
 }
 
@@ -17,6 +19,11 @@ pub(crate) struct SessionInner {
     pub(crate) lib: araclient,
     pub(crate) ptr: *mut dv_session,
     pub(crate) socket_type: SocketType,
+    /// Probed once when the library is opened. Every struct read through
+    /// `lib` is interpreted against this, so it must not be re-derived
+    /// per call.
+    pub(crate) abi: Abi,
+    pub(crate) dvapi_version: Option<DvapiVersion>,
 }
 
 // Safety: The C library is thread-safe for session operations.
@@ -41,7 +48,7 @@ impl Drop for SessionInner {
 /// ```no_run
 /// use ara2::Session;
 ///
-/// let session = Session::create_via_unix_socket("/var/run/ara2.sock")?;
+/// let session = Session::connect()?;
 /// let endpoints = session.list_endpoints()?;
 /// # Ok::<(), ara2::Error>(())
 /// ```
@@ -54,17 +61,64 @@ impl std::fmt::Debug for Session {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Session")
             .field("socket_type", &self.inner.socket_type)
+            .field("abi", &self.inner.abi)
             .finish()
     }
 }
 
 impl Session {
+    /// Connect to the ARA-2 proxy over its UNIX socket, at the path
+    /// [`crate::socket_path`] resolves.
+    ///
+    /// This is the recommended way to connect: it lets a deployment
+    /// override the socket path (e.g. a proxy configured to listen
+    /// somewhere other than NXP's default) without a recompile. Use
+    /// [`Session::create_via_unix_socket`] directly when the path must be
+    /// hardcoded or is chosen some other way.
+    pub fn connect() -> Result<Self, Error> {
+        // Exactly one connection attempt, against a path chosen by testing
+        // for the socket's existence. Choosing it by connecting instead
+        // would mean a failed attempt whenever the first candidate is not
+        // the right one, and a failed attempt is not free: the DVAPI 1.1
+        // client keeps state across it and a later create on the same
+        // handle can come back DV_SESSION_INVALID_HANDLE.
+        Self::create_via_unix_socket(&crate::socket_path())
+    }
+
+    /// Connect to the proxy described by a proxy configuration file.
+    ///
+    /// Reads the `proxy:` section's `interface_type` and the address list
+    /// it selects, then connects to the first endpoint declared -- a UNIX
+    /// socket for `SOCKET`, a TCP/IPv4 address for `IPV4`.
+    ///
+    /// Use this when the proxy's configuration is known but its socket
+    /// path is not, which is the usual situation across packagings: NXP's
+    /// rt-sdk-ara2 reads `/etc/rt-sdk-ara240/proxy_config.yaml` and the
+    /// Kinara runtime meta-kinara packages reads `/etc/ara2.yaml`, and the
+    /// two name different sockets.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use ara2::Session;
+    /// let session = Session::from_config("/etc/ara2.yaml".as_ref())?;
+    /// # Ok::<(), ara2::Error>(())
+    /// ```
+    pub fn from_config(path: &std::path::Path) -> Result<Self, Error> {
+        let config = crate::ProxyConfig::read(path)?;
+        config
+            .endpoints
+            .first()
+            .ok_or(Error::NoProxyEndpoint { pid: None })?
+            .connect()
+    }
+
     /// Connect to the ARA-2 proxy via a UNIX socket.
     ///
     /// # Arguments
-    /// * `socket_path` - Path to the UNIX socket (e.g., `/var/run/ara2.sock`)
+    /// * `socket_path` - Path to the UNIX socket (e.g., `/var/run/proxy.sock`)
     pub fn create_via_unix_socket(socket_path: &str) -> Result<Self, Error> {
-        let lib = crate::open_library()?;
+        let (lib, abi, dvapi_version) = crate::open_library()?;
         let mut ptr: *mut dv_session = std::ptr::null_mut();
         let socket_path = std::ffi::CString::new(socket_path)
             .map_err(|_| Error::NullPointer("Socket path contains null byte".to_owned()))?;
@@ -81,6 +135,8 @@ impl Session {
                 lib,
                 ptr,
                 socket_type: SocketType::Unix,
+                abi,
+                dvapi_version,
             }),
         })
     }
@@ -91,7 +147,7 @@ impl Session {
     /// * `ip` - IPv4 address of the proxy host
     /// * `port` - TCP port number
     pub fn create_via_tcp_ipv4_socket(ip: Ipv4Addr, port: u16) -> Result<Self, Error> {
-        let lib = crate::open_library()?;
+        let (lib, abi, dvapi_version) = crate::open_library()?;
         let mut ptr: *mut dv_session = std::ptr::null_mut();
         let ip_cstring = std::ffi::CString::new(ip.to_string())
             .map_err(|_| Error::NullPointer("Invalid IP address".to_owned()))?;
@@ -108,8 +164,29 @@ impl Session {
                 lib,
                 ptr,
                 socket_type: SocketType::Tcp,
+                abi,
+                dvapi_version,
             }),
         })
+    }
+
+    /// The DVAPI generation of the `libaraclient` this session is using.
+    ///
+    /// Probed once when the library was opened. Struct layouts and the
+    /// meaning of some endpoint states depend on it, so it is exposed for
+    /// diagnostics and for callers that need to interpret a
+    /// [`crate::State::Unknown`].
+    pub fn abi(&self) -> Abi {
+        self.inner.abi
+    }
+
+    /// The DVAPI version `dv_get_client_lib_version` reported, or `None`
+    /// if the library would not report one.
+    ///
+    /// This is the interface version, not the version of the SDK the
+    /// library was packaged in. See [`DvapiVersion`].
+    pub fn dvapi_version(&self) -> Option<DvapiVersion> {
+        self.inner.dvapi_version
     }
 
     /// Get version information for all components (proxy, firmware, drivers,
@@ -220,8 +297,8 @@ impl Session {
     /// # Example
     ///
     /// ```no_run
-    /// # use ara2::{Session, DEFAULT_SOCKET, DEFAULT_TIMEOUT_MS};
-    /// # let session = Session::create_via_unix_socket(DEFAULT_SOCKET)?;
+    /// # use ara2::{Session, DEFAULT_TIMEOUT_MS};
+    /// # let session = Session::connect()?;
     /// # let endpoints = session.list_endpoints()?;
     /// # let mut model = endpoints[0].load_model_from_file("m.dvm".as_ref())?;
     /// # model.allocate_tensors(None)?;
@@ -281,14 +358,13 @@ mod tests {
 
     #[test]
     fn test_unix_socket_connect() {
-        let session = Session::create_via_unix_socket(crate::DEFAULT_SOCKET)
-            .expect("should connect to ARA-2 proxy");
+        let session = Session::connect().expect("should connect to ARA-2 proxy");
         assert!(matches!(session.socket_type(), SocketType::Unix));
     }
 
     #[test]
     fn test_unix_socket_invalid_path() {
-        let result = Session::create_via_unix_socket("/nonexistent/ara2.sock");
+        let result = Session::create_via_unix_socket("/nonexistent/proxy.sock");
         assert!(result.is_err(), "should fail with invalid socket path");
     }
 
