@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-10-01
+
 ### Changed (BREAKING)
 
 - **EdgeFirst HAL 0.33.** `edgefirst-tensor`, `edgefirst-image`, `edgefirst-codec` and `edgefirst-decoder` move from 0.32 to 0.33. `Model` exposes `edgefirst_tensor::Tensor` and `TensorMemory`, and the `decoder` feature exposes `edgefirst_decoder` types, so a crate using `ara2` must take the same HAL minor release: a 0.x requirement matches only its own minor series, and a 0.32 `Tensor` is a different type from a 0.33 one. HAL 0.33's own breaking changes are in `edgefirst-decoder` (`SchemaV2` and `ConfigOutputs` are `#[non_exhaustive]`, `Decoder::pre_nms_top_k` is `Option<usize>`, class-aware NMS is the default) and in padded and batched tensor strides; none of them touch an API `ara2` uses.
@@ -926,7 +928,8 @@ Non-qmode-9 DVMs now raise `Ara2Error("unsupported quantization mode: qmode=N ..
 - Requires `edgefirst-hal` for HAL integration
 - Requires `libaraclient.so` runtime library
 
-[Unreleased]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.19.0...HEAD
+[Unreleased]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.20.0...HEAD
+[0.20.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.16.0...v0.17.0
