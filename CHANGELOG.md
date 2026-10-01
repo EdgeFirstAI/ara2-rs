@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (BREAKING)
+
+- **EdgeFirst HAL 0.33.** `edgefirst-tensor`, `edgefirst-image`, `edgefirst-codec` and `edgefirst-decoder` move from 0.32 to 0.33. `Model` exposes `edgefirst_tensor::Tensor` and `TensorMemory`, and the `decoder` feature exposes `edgefirst_decoder` types, so a crate using `ara2` must take the same HAL minor release: a 0.x requirement matches only its own minor series, and a 0.32 `Tensor` is a different type from a 0.33 one. HAL 0.33's own breaking changes are in `edgefirst-decoder` (`SchemaV2` and `ConfigOutputs` are `#[non_exhaustive]`, `Decoder::pre_nms_top_k` is `Option<usize>`, class-aware NMS is the default) and in padded and batched tensor strides; none of them touch an API `ara2` uses.
+
+### Changed
+
+- Dependencies updated to their latest semver-compatible releases.
+
 ## [0.19.0] - 2026-09-22
 
 ### Changed (BREAKING)
