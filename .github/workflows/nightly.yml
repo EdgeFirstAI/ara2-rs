@@ -6,7 +6,7 @@
 # Design: https://au-zone.atlassian.net/wiki/spaces/EAM/pages/2750906369/CICD+Pipelines
 #
 # Action Versions (hash-pinned):
-# - EdgeFirstAI/.github@68dd89aa7f781e2a26f2fdb6430c6a43368f9063 (main, 2026-09-18)
+# - EdgeFirstAI/.github@55bc02295af9878e74007b5f9e00fffbffcff62e (v2.1.0)
 
 name: Nightly
 
@@ -23,7 +23,7 @@ on:
 
 jobs:
   changed:
-    uses: EdgeFirstAI/.github/.github/workflows/nightly-gate.yml@68dd89aa7f781e2a26f2fdb6430c6a43368f9063  # main (2026-09-18)
+    uses: EdgeFirstAI/.github/.github/workflows/nightly-gate.yml@55bc02295af9878e74007b5f9e00fffbffcff62e  # v2.1.0
     with:
       # `inputs` is null on a schedule trigger, so the fallback is required;
       # without it the expression yields an empty string and the gate's
@@ -36,12 +36,12 @@ jobs:
   # unchanged main. It reads Cargo.lock without building, on a free standard
   # runner, so running it every night costs nothing.
   advisories:
-    uses: EdgeFirstAI/.github/.github/workflows/advisories.yml@68dd89aa7f781e2a26f2fdb6430c6a43368f9063  # main (2026-09-18)
+    uses: EdgeFirstAI/.github/.github/workflows/advisories.yml@55bc02295af9878e74007b5f9e00fffbffcff62e  # v2.1.0
 
   nightly:
     needs: changed
     if: needs.changed.outputs.run == 'true'
-    uses: EdgeFirstAI/.github/.github/workflows/rust-full.yml@68dd89aa7f781e2a26f2fdb6430c6a43368f9063  # main (2026-09-18)
+    uses: EdgeFirstAI/.github/.github/workflows/rust-full.yml@55bc02295af9878e74007b5f9e00fffbffcff62e  # v2.1.0
     with:
       lanes: host
       nightly: true

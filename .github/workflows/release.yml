@@ -21,7 +21,7 @@
 # Design: https://au-zone.atlassian.net/wiki/spaces/EAM/pages/2750906369/CICD+Pipelines
 #
 # Action Versions (hash-pinned):
-# - EdgeFirstAI/.github@68dd89aa7f781e2a26f2fdb6430c6a43368f9063 (main, 2026-09-18)
+# - EdgeFirstAI/.github@55bc02295af9878e74007b5f9e00fffbffcff62e (v2.1.0)
 
 name: Release Build
 
@@ -43,7 +43,7 @@ jobs:
   # release version a second time -- the CHANGELOG section publish.yml turns
   # into release notes, the full SBOM, and the .crate files crates.io receives.
   verify:
-    uses: EdgeFirstAI/.github/.github/workflows/release-rust.yml@68dd89aa7f781e2a26f2fdb6430c6a43368f9063  # main (2026-09-18)
+    uses: EdgeFirstAI/.github/.github/workflows/release-rust.yml@55bc02295af9878e74007b5f9e00fffbffcff62e  # v2.1.0
     with:
       sbom: true
       # The dependency graph differs by target: the ARA-2 client links G2D and
@@ -61,17 +61,18 @@ jobs:
   # so there is no macOS or Windows target.
   wheels:
     needs: verify
-    uses: EdgeFirstAI/.github/.github/workflows/release-wheels.yml@68dd89aa7f781e2a26f2fdb6430c6a43368f9063  # main (2026-09-18)
+    uses: EdgeFirstAI/.github/.github/workflows/release-wheels.yml@55bc02295af9878e74007b5f9e00fffbffcff62e  # v2.1.0
     permissions:
       contents: read
+      # The shared job declares this unconditionally, for `payloads` to read
+      # sibling artifacts. A reusable workflow can only narrow what the call
+      # site holds, so omitting it fails the job at startup even though this
+      # build uses no payloads.
+      actions: read
       # Build provenance for the wheels, generated in the job that built them:
       # provenance generated where an artifact was downloaded describes the
-      # download. The shared workflow attests by default from the revision that
-      # adds `maturin-build`; without these two the step fails there, and a
-      # reusable workflow cannot grant itself what the caller has not.
-      #
-      # Granted ahead of that pin rather than with it, so the ordering cannot
-      # go wrong: they are inert at this revision, which does not attest.
+      # download. The shared workflow attests after `post-command`, so only
+      # wheels that passed the assertion below carry it.
       id-token: write
       attestations: write
     with:
