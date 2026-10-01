@@ -7,10 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-
-- The CI and release workflows pin the shared EdgeFirstAI workflows at v2.1.0, a tagged release, instead of a commit on its `main`. The publish rehearsal now runs the crates.io dry run as one multi-package `cargo publish`, so `ara2` resolves `ara2-sys` from the workspace rather than from crates.io, where the new version does not exist yet. Every rehearsal had failed there, so the PyPI and GitHub Release steps had never been rehearsed. The PyPI job stages its files with the shared `stage-pypi` action, which selects the `edgefirst-ara2` wheels and sdist by filename and fails if any carries a version other than the tag's, and uploads with `skip-existing` so a retry after a partial upload succeeds. The wheel build job grants `actions: read`, which the shared wheel workflow requires from this revision.
-
 ## [0.20.0] - 2026-10-01
 
 ### Changed (BREAKING)
@@ -20,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Dependencies updated to their latest semver-compatible releases.
+- The CI and release workflows pin the shared EdgeFirstAI workflows at v2.1.0, a tagged release, instead of a commit on its `main`. The publish rehearsal now runs the crates.io dry run as one multi-package `cargo publish`, so `ara2` resolves `ara2-sys` from the workspace rather than from crates.io, where the new version does not exist yet. Every rehearsal had failed there, so the PyPI and GitHub Release steps had never been rehearsed. The PyPI job stages its files with the shared `stage-pypi` action, which selects the `edgefirst-ara2` wheels and sdist by filename and fails if any carries a version other than the tag's, and uploads with `skip-existing` so a retry after a partial upload succeeds. The wheel build job grants `actions: read`, which the shared wheel workflow requires from this revision.
 
 ## [0.19.0] - 2026-09-22
 
