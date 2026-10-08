@@ -108,7 +108,7 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "ara2"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "ara2-sys",
  "clap",
@@ -131,7 +131,7 @@ dependencies = [
 
 [[package]]
 name = "ara2-py"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "ara2",
  "edgefirst-tensor",
@@ -144,7 +144,7 @@ dependencies = [
 
 [[package]]
 name = "ara2-sys"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "libloading 0.9.0",
 ]
