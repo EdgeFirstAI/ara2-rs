@@ -18,13 +18,13 @@ ara2 = { version = "0.20.0", path = "crates/ara2" }
 ara2-sys = { version = "0.20.0", path = "crates/ara2-sys" }
 clap = { version = "4.6", features = ["derive"] }
 criterion = "0.8"
-edgefirst-codec = "0.33"
-edgefirst-decoder = "0.33"
+edgefirst-codec = "0.34"
+edgefirst-decoder = "0.34"
 # `default-features = false` so a member can pick edgefirst-image's feature
 # set; its default set turns on `codec`, which would pull edgefirst-codec
 # into the client library. Members re-list `opengl` and `static`.
-edgefirst-image = { version = "0.33", default-features = false }
-edgefirst-tensor = "0.33"
+edgefirst-image = { version = "0.34", default-features = false }
+edgefirst-tensor = "0.34"
 libcamera = "0.7"
 wayland-client = { version = "0.31", default-features = false }
 wayland-protocols = { version = "0.32", features = ["unstable", "client"] }
