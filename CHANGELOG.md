@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-10-07
+
 ### Changed (BREAKING)
 
 - **EdgeFirst HAL 0.34.** `edgefirst-tensor`, `edgefirst-image`, `edgefirst-codec` and `edgefirst-decoder` move from 0.33 to 0.34. `Model` exposes `edgefirst_tensor::Tensor` and `TensorMemory`, and the `decoder` feature exposes `edgefirst_decoder` types, so a crate using `ara2` must take the same HAL minor release. HAL 0.34 changes no API `ara2` uses. Its GL backend now resamples NV12, NV16 and NV24 sources bilinearly when it resizes, matching OpenCV `INTER_LINEAR`, where it used to sample nearest-neighbour, and it maps source crops from their true edges, so preprocessed pixels differ slightly from 0.33.
@@ -937,7 +939,8 @@ Non-qmode-9 DVMs now raise `Ara2Error("unsupported quantization mode: qmode=N ..
 - Requires `edgefirst-hal` for HAL integration
 - Requires `libaraclient.so` runtime library
 
-[Unreleased]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.20.0...HEAD
+[Unreleased]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.21.0...HEAD
+[0.21.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.17.0...v0.18.0
