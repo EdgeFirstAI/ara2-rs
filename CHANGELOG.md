@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (BREAKING)
 
-- **EdgeFirst HAL 0.35.** `edgefirst-tensor`, `edgefirst-image`, `edgefirst-codec` and `edgefirst-decoder` move from 0.34 to 0.35. `Model` exposes `edgefirst_tensor::Tensor` and `TensorMemory`, and the `decoder` feature exposes `edgefirst_decoder` types, so a crate using `ara2` must take the same HAL minor release. HAL 0.35's breaking change is to `edgefirst_codec::Colorimetry::from_v4l2`, which `ara2` does not use. HAL 0.35 also decodes segmentation masks correctly from models whose prototype outputs are uint8 or uint16, and can allocate physically contiguous DMA-BUF images on request.
+- **EdgeFirst HAL 0.35.** `edgefirst-tensor`, `edgefirst-image`, `edgefirst-codec` and `edgefirst-decoder` move from 0.34 to 0.35. `Model` exposes `edgefirst_tensor::Tensor` and `TensorMemory`, and the `decoder` feature exposes `edgefirst_decoder` types, so a crate using `ara2` must take the same HAL minor release. HAL 0.35's breaking change is to `edgefirst_tensor::Colorimetry::from_v4l2`, which `ara2` does not use. HAL 0.35 also decodes segmentation masks correctly from models whose prototype outputs are uint8 or uint16, and can allocate physically contiguous DMA-BUF images on request.
 
 ### Changed
 
