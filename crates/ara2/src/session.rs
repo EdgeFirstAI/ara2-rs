@@ -410,9 +410,20 @@ mod tests {
     use crate::Component;
 
     #[test]
-    fn test_unix_socket_connect() {
+    fn connect_uses_the_resolved_transport() {
+        let endpoint = crate::proxy_endpoint().expect("should resolve a proxy endpoint");
         let session = Session::connect().expect("should connect to ARA-2 proxy");
-        assert!(matches!(session.socket_type(), SocketType::Unix));
+        println!("connected to {endpoint:?}");
+        match endpoint {
+            crate::ProxyEndpoint::Unix(_) => {
+                assert!(matches!(session.socket_type(), SocketType::Unix));
+                assert!(session.supports_fd_passing());
+            }
+            crate::ProxyEndpoint::Tcp(..) => {
+                assert!(matches!(session.socket_type(), SocketType::Tcp));
+                assert!(!session.supports_fd_passing());
+            }
+        }
     }
 
     #[test]

@@ -1738,8 +1738,23 @@ const _: () = {
 
 #[cfg(test)]
 mod tests {
-    use super::DEFAULT_TIMEOUT_MS;
-    use edgefirst_tensor::TensorMemory;
+    use super::{DEFAULT_TIMEOUT_MS, Model};
+    use crate::Error;
+    use edgefirst_tensor::{TensorMapTrait as _, TensorMemory, TensorTrait as _};
+
+    /// The fd-registration tests below need a session that can pass file
+    /// descriptors. On any other session they check the refusal instead.
+    fn fd_passing_or_refused(session: &crate::Session, model: &mut Model) -> bool {
+        if session.supports_fd_passing() {
+            return true;
+        }
+        assert!(matches!(
+            model.allocate_tensors(Some(TensorMemory::DmaBuf)),
+            Err(Error::FdPassingUnavailable)
+        ));
+        eprintln!("session cannot pass file descriptors; checked the refusal only");
+        false
+    }
 
     /// Number of file descriptors the running proxy holds. The proxy keeps
     /// one per registered buffer, so a leak shows up here.
@@ -1761,6 +1776,9 @@ mod tests {
         let mut model = endpoint
             .load_model_from_file(&crate::tests::test_model_path())
             .unwrap();
+        if !fd_passing_or_refused(&session, &mut model) {
+            return;
+        }
         model.allocate_tensors(Some(TensorMemory::DmaBuf)).unwrap();
         model.run().unwrap();
         let before = proxy_fd_count();
@@ -1795,6 +1813,9 @@ mod tests {
         let mut model = endpoint
             .load_model_from_file(&crate::tests::test_model_path())
             .unwrap();
+        if !fd_passing_or_refused(&session, &mut model) {
+            return;
+        }
         let proxy_pid = crate::discover().unwrap().remove(0).pid;
         model.allocate_tensors(Some(TensorMemory::DmaBuf)).unwrap();
         model.run().unwrap();
@@ -1824,6 +1845,9 @@ mod tests {
         let mut model = endpoint
             .load_model_from_file(&crate::tests::test_model_path())
             .unwrap();
+        if !fd_passing_or_refused(&session, &mut model) {
+            return;
+        }
         model.allocate_tensors(Some(TensorMemory::DmaBuf)).unwrap();
         let outputs = model
             .allocate_output_set(Some(TensorMemory::DmaBuf))
@@ -1943,6 +1967,137 @@ mod tests {
         // Verify we can still run inference after dropping a request
         let timing = model.run().expect("inference should succeed after drop");
         assert!(timing.run_time.as_micros() > 0);
+    }
+
+    /// A wrong struct layout reads garbage rather than failing a call, so
+    /// check every model field we rely on for internal consistency, and
+    /// against the .dvm metadata where the file carries it.
+    #[test]
+    fn model_layout_reads_are_sane() {
+        let session = crate::tests::test_session();
+        let path = crate::tests::test_model_path();
+        let model = session.list_endpoints().unwrap()[0]
+            .load_model_from_file(&path)
+            .unwrap();
+
+        let (n_in, n_out) = (model.n_inputs(), model.n_outputs());
+        assert!((1..=16).contains(&n_in), "n_inputs = {n_in}");
+        assert!((1..=64).contains(&n_out), "n_outputs = {n_out}");
+        for i in 0..n_in {
+            let [c, h, w] = model.input_shape(i);
+            assert!(
+                c >= 1 && h >= 1 && w >= 1 && c <= 4096 && h <= 8192 && w <= 8192,
+                "input {i}: {c}x{h}x{w}"
+            );
+            assert!(
+                model.input_size(i) >= c * h * w,
+                "input {i} size {} < {c}*{h}*{w}",
+                model.input_size(i)
+            );
+        }
+        for i in 0..n_out {
+            let [c, h, w] = model.output_shape(i);
+            assert!(c * h * w >= 1, "output {i}: {c}x{h}x{w}");
+            assert!(
+                model.output_size(i) >= c * h * w * model.output_bpp(i).max(1) / 2,
+                "output {i} size"
+            );
+            let info = model.output_info(i).expect("output info");
+            assert!(!format!("{info:?}").is_empty());
+        }
+
+        // Metadata `size` is "WIDTHxHEIGHT"; input_shape is [C, H, W].
+        if let Ok(Some(meta)) = crate::read_metadata_from_file(&path) {
+            if let Some((w, h)) = meta.input.as_ref().and_then(|i| i.dimensions()) {
+                let [_, mh, mw] = model.input_shape(0);
+                assert_eq!(
+                    (mw, mh),
+                    (w as usize, h as usize),
+                    "input 0 vs .dvm metadata"
+                );
+            }
+            if let Some(c) = meta.input.as_ref().and_then(|i| i.input_channels) {
+                assert_eq!(
+                    model.input_shape(0)[0],
+                    c as usize,
+                    "input 0 channels vs .dvm metadata"
+                );
+            }
+        }
+    }
+
+    fn fd_memories() -> [TensorMemory; 2] {
+        [TensorMemory::DmaBuf, TensorMemory::Shm]
+    }
+
+    /// Over TCP every allocation path must refuse fd-backed tensors before
+    /// reaching the library; over UNIX they must work and match heap output.
+    #[test]
+    fn fd_tensors_follow_the_transport() {
+        let session = crate::tests::test_session();
+        let path = crate::tests::test_model_path();
+        let endpoint = session.list_endpoints().unwrap().remove(0);
+
+        if !session.supports_fd_passing() {
+            eprintln!("fd_tensors_follow_the_transport: TCP branch");
+            for memory in fd_memories() {
+                let mut model = endpoint.load_model_from_file(&path).unwrap();
+                assert!(matches!(
+                    model.allocate_tensors(Some(memory)),
+                    Err(Error::FdPassingUnavailable)
+                ));
+                assert!(matches!(
+                    model.allocate_input_set(Some(memory)),
+                    Err(Error::FdPassingUnavailable)
+                ));
+                assert!(matches!(
+                    model.allocate_output_set(Some(memory)),
+                    Err(Error::FdPassingUnavailable)
+                ));
+            }
+            let mut model = endpoint.load_model_from_file(&path).unwrap();
+            model.allocate_tensors(None).unwrap();
+            model.run().expect("heap inference over TCP");
+            return;
+        }
+
+        eprintln!("fd_tensors_follow_the_transport: UNIX branch");
+        let mut heap = endpoint.load_model_from_file(&path).unwrap();
+        heap.allocate_tensors(None).unwrap();
+        fill_input_pattern(&mut heap);
+        heap.run().unwrap();
+        for memory in fd_memories() {
+            let mut model = endpoint.load_model_from_file(&path).unwrap();
+            model
+                .allocate_tensors(Some(memory))
+                .unwrap_or_else(|e| panic!("{memory:?}: {e}"));
+            fill_input_pattern(&mut model);
+            model
+                .run()
+                .unwrap_or_else(|e| panic!("{memory:?} inference: {e}"));
+            for i in 0..model.n_outputs() {
+                assert_eq!(
+                    output_bytes(&model, i),
+                    output_bytes(&heap, i),
+                    "{memory:?} output {i}"
+                );
+            }
+            eprintln!("{memory:?}: {} outputs equal heap", model.n_outputs());
+        }
+    }
+
+    fn fill_input_pattern(model: &mut Model) {
+        for i in 0..model.n_inputs() {
+            let tensor = model.input_tensor(i);
+            let mut map = tensor.map().unwrap();
+            for (j, b) in map.as_mut_slice().iter_mut().enumerate() {
+                *b = (j % 251) as u8;
+            }
+        }
+    }
+
+    fn output_bytes(model: &Model, i: usize) -> Vec<u8> {
+        model.output_tensor(i).map().unwrap().as_slice().to_vec()
     }
 }
 
