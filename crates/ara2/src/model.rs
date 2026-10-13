@@ -138,17 +138,23 @@ impl Drop for ShmRegistration {
     fn drop(&mut self) {
         // SAFETY: `desc` came from dv_shmfd_register on this session and is
         // unregistered exactly once, here.
+        let (fd, size) = unsafe {
+            let desc = self.desc.as_ref();
+            (desc.fd, desc.size)
+        };
         let err = unsafe { self.session.lib.dv_shmfd_unregister(self.desc.as_ptr()) };
         if err != 0 {
-            log::warn!("dv_shmfd_unregister failed with status {err}");
+            log::warn!("dv_shmfd_unregister of fd {fd} ({size} bytes) failed with status {err}");
         }
     }
 }
 
 /// A tensor and, for shared-memory or DMA-BUF memory, its registration.
 ///
-/// `shm` is declared first so it drops first: the proxy releases its
-/// mapping before the tensor's buffer is freed.
+/// When this is the last reference, `shm` drops first so the proxy unmaps
+/// the buffer before it is freed. A pending [`InferRequest`] may hold the
+/// registration longer, which is safe because the proxy keeps its own
+/// reference to the file descriptor.
 pub(crate) struct BoundTensor {
     shm: Option<Arc<ShmRegistration>>,
     tensor: Tensor<u8>,
@@ -1159,7 +1165,8 @@ fn extract_timing(request: *mut dv_infer_request) -> Result<ModelTiming, Error> 
 /// The `InferRequest` borrows the model's tensor buffers. The caller must
 /// keep the originating [`Model`] alive (and must not call
 /// [`allocate_tensors`](Model::allocate_tensors)) until this request is
-/// consumed by [`wait`](Self::wait) or dropped.
+/// consumed by [`wait`](Self::wait) or dropped. Shared-memory and DMA-BUF
+/// registrations are kept alive by the request itself.
 ///
 /// # Example
 ///
@@ -1336,6 +1343,35 @@ impl InferRequest {
 
 impl Drop for InferRequest {
     fn drop(&mut self) {
+        // The proxy may still be using the registered buffers of a request
+        // that has not finished. Unregistering them mid-flight crashes the
+        // proxy, so give the request a bounded chance to reach a terminal
+        // state before the registrations are released.
+        if !self._shm_guards.is_empty() {
+            let mut list = [self.ptr];
+            let mut completed: *mut dv_infer_request = std::ptr::null_mut();
+            loop {
+                let status = unsafe { (*self.ptr).status };
+                if status != DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_QUEUED
+                    && status != DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_RUNNING
+                {
+                    break;
+                }
+                let err = unsafe {
+                    self.session.lib.dv_infer_wait_for_completion(
+                        self.session.ptr,
+                        list.as_mut_ptr(),
+                        1,
+                        DEFAULT_TIMEOUT_MS,
+                        &mut completed,
+                    )
+                };
+                if err != 0 {
+                    log::warn!("pending request did not finish before drop (status {err})");
+                    break;
+                }
+            }
+        }
         unsafe {
             self.session.lib.dv_infer_free(self.ptr);
         }
@@ -1360,10 +1396,6 @@ pub struct OutputSet {
     session: Arc<SessionInner>,
     tensors: Vec<BoundTensor>,
 }
-
-// Safety: Arc is Send+Sync; raw pointers are FFI-registered descriptors used
-// only through the session library handle.
-unsafe impl Send for OutputSet {}
 
 impl OutputSet {
     /// Reference to the output tensor at `idx`.
@@ -1394,10 +1426,6 @@ pub struct InputSet {
     session: Arc<SessionInner>,
     tensors: Vec<BoundTensor>,
 }
-
-// Safety: Arc is Send+Sync; raw pointers are FFI-registered descriptors used
-// only through the session library handle.
-unsafe impl Send for InputSet {}
 
 impl InputSet {
     /// Reference to the input tensor at `idx`.
@@ -1621,6 +1649,12 @@ impl TryFrom<DV_LAYER_OUTPUT_TYPE> for ModelOutputType {
     }
 }
 
+const _: () = {
+    fn assert_send_sync<T: Send + Sync>() {}
+    let _ = assert_send_sync::<OutputSet>;
+    let _ = assert_send_sync::<InputSet>;
+};
+
 #[cfg(test)]
 mod tests {
     use super::DEFAULT_TIMEOUT_MS;
@@ -1671,6 +1705,35 @@ mod tests {
         model.allocate_tensors(None).unwrap();
         model.run().unwrap();
         assert!(proxy_fd_count() <= after);
+    }
+
+    #[test]
+    fn dmabuf_request_dropped_before_completion_is_safe() {
+        let session = crate::tests::test_session();
+        let endpoint = session.list_endpoints().unwrap().remove(0);
+        let mut model = endpoint
+            .load_model_from_file(&crate::tests::test_model_path())
+            .unwrap();
+        let proxy_pid = crate::discover().unwrap().remove(0).pid;
+        model.allocate_tensors(Some(TensorMemory::DmaBuf)).unwrap();
+        model.run().unwrap();
+        let before = proxy_fd_count();
+
+        drop(model.submit().unwrap());
+        model.allocate_tensors(Some(TensorMemory::DmaBuf)).unwrap();
+        for _ in 0..10 {
+            model.run().unwrap();
+        }
+        let after = proxy_fd_count();
+        eprintln!("proxy fds: before={before} after={after}");
+        assert!(
+            after <= before + 4,
+            "proxy fds grew from {before} to {after}"
+        );
+        assert!(
+            std::path::Path::new(&format!("/proc/{proxy_pid}")).exists(),
+            "proxy exited"
+        );
     }
 
     #[test]
