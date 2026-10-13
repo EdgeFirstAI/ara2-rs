@@ -95,6 +95,7 @@ mod endpoint;
 mod error;
 mod model;
 mod session;
+mod version;
 
 pub use connect::proxy_endpoint;
 pub use discover::{PROXY_COMM, Proxy, ProxyConfig, ProxyEndpoint, discover};
@@ -110,6 +111,7 @@ pub use model::{
     Model, ModelOutputType, ModelTiming, OutputQuantization, OutputSet, OutputTensor,
 };
 pub use session::{Session, SocketType};
+pub use version::{Component, ComponentVersion};
 
 /// Default socket path for the ARA-2 proxy service.
 ///

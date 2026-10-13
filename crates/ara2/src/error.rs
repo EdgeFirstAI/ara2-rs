@@ -84,8 +84,6 @@ pub enum Error {
     /// Codes are grouped by range: 100s hardware, 200s proxy, 300s client
     /// library, 400s proxy transport, 500s device.
     Ara2(dv_status_code_t),
-    /// A `dv_product_type_t` outside the set this build recognises.
-    UnknownProductType(i32),
     /// A `dv_layer_output_type_t` outside the set this build recognises.
     UnknownLayerOutputType(DV_LAYER_OUTPUT_TYPE),
     /// A tensor layout string the crate cannot map to an axis order.
@@ -251,7 +249,6 @@ impl std::fmt::Display for Error {
                 crate::ABI_OVERRIDE_ENV
             ),
             Error::Ara2(e) => write!(f, "Ara2 error: {e:?}"),
-            Error::UnknownProductType(e) => write!(f, "Unknown product type: {e:?}"),
             Error::UnknownLayerOutputType(e) => write!(f, "Unknown layer output type: {e:?}"),
             Error::UnsupportedLayout(e) => write!(f, "Unsupported layout: {e:?}"),
             Error::UnsupportedTypeSize(e) => write!(f, "Unsupported type size: {e:?}"),

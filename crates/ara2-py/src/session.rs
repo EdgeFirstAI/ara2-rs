@@ -109,12 +109,16 @@ impl Session {
         )))
     }
 
-    /// Get version information for all components.
+    /// Get the versions of the components currently running.
     ///
     /// Returns:
     ///     dict: Dictionary mapping component names to version strings
     fn versions(&self) -> PyResult<HashMap<String, String>> {
-        self.inner()?.versions().map_err(to_py_err)
+        let versions = self.inner()?.versions().map_err(to_py_err)?;
+        Ok(versions
+            .into_iter()
+            .map(|v| (v.component.to_string(), v.version.to_string()))
+            .collect())
     }
 
     /// List all available endpoints.

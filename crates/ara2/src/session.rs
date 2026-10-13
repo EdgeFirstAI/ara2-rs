@@ -1,6 +1,6 @@
-use crate::{Abi, DvapiVersion, Endpoint, error::Error};
-use ara2_sys::{araclient, dv_endpoint, dv_product_version, dv_session, dv_version};
-use std::{collections::HashMap, ffi::c_char, net::Ipv4Addr, sync::Arc};
+use crate::{Abi, ComponentVersion, DvapiVersion, Endpoint, error::Error};
+use ara2_sys::{araclient, dv_endpoint, dv_product_version, dv_session, dv_status_code_t};
+use std::{ffi::c_char, net::Ipv4Addr, sync::Arc};
 
 /// The Ara-2 proxy supports session connections over either a TCP or UNIX
 /// named socket.
@@ -203,65 +203,42 @@ impl Session {
         self.inner.dvapi_version
     }
 
-    /// Get version information for all components (proxy, firmware, drivers,
-    /// etc.).
-    pub fn versions(&self) -> Result<HashMap<String, String>, Error> {
+    /// Versions of the components currently running: proxy, firmware,
+    /// client library and so on, as the proxy reports them.
+    pub fn versions(&self) -> Result<Vec<ComponentVersion>, Error> {
+        // SAFETY: `s` is this session's live handle; the out-pointers are
+        // the locals `version_list` passes.
+        self.version_list(|s, p, c| unsafe {
+            self.inner.lib.dv_exchange_current_version_details(s, p, c)
+        })
+    }
+
+    /// Every component version the proxy supports, which can list several
+    /// versions of the same component (e.g. each firmware it can load).
+    pub fn supported_versions(&self) -> Result<Vec<ComponentVersion>, Error> {
+        // SAFETY: as in `versions`.
+        self.version_list(|s, p, c| unsafe { self.inner.lib.dv_retrieve_version_details(s, p, c) })
+    }
+
+    fn version_list(
+        &self,
+        call: impl FnOnce(*mut dv_session, *mut *mut dv_product_version, *mut u8) -> dv_status_code_t,
+    ) -> Result<Vec<ComponentVersion>, Error> {
         let mut products: *mut dv_product_version = std::ptr::null_mut();
         let mut count: u8 = 0;
-        let err = unsafe {
-            self.inner
-                .lib
-                .dv_retrieve_version_details(self.inner.ptr, &mut products, &mut count)
-        };
+        let err = call(self.inner.ptr, &mut products, &mut count);
         if err != 0 {
             return Err(err.into());
         }
-
-        let mut versions = HashMap::new();
-        for i in 0..count {
-            let product = unsafe { products.offset(i as isize) };
-            unsafe {
-                match (*product).product_type {
-                    ara2_sys::DV_PRODUCT_TYPE_PROXY => versions.insert(
-                        "proxy".to_owned(),
-                        version_to_string((*product).product_version),
-                    ),
-                    ara2_sys::DV_PRODUCT_TYPE_PCI_DRIVER => versions.insert(
-                        "pci_driver".to_owned(),
-                        version_to_string((*product).product_version),
-                    ),
-                    ara2_sys::DV_PRODUCT_TYPE_FIRMWARE => versions.insert(
-                        "firmware".to_owned(),
-                        version_to_string((*product).product_version),
-                    ),
-                    ara2_sys::DV_PRODUCT_TYPE_CNN_MODEL => versions.insert(
-                        "cnn_model".to_owned(),
-                        version_to_string((*product).product_version),
-                    ),
-                    ara2_sys::DV_PRODUCT_TYPE_LLM_MODEL => versions.insert(
-                        "llm_model".to_owned(),
-                        version_to_string((*product).product_version),
-                    ),
-                    ara2_sys::DV_PRODUCT_TYPE_CLIENT_LIB => versions.insert(
-                        "client_lib".to_owned(),
-                        version_to_string((*product).product_version),
-                    ),
-                    ara2_sys::DV_PRODUCT_TYPE_SYSAPI => versions.insert(
-                        "sysapi".to_owned(),
-                        version_to_string((*product).product_version),
-                    ),
-                    MCS_LLM_MODEL => versions.insert(
-                        "mcs_llm_model".to_owned(),
-                        version_to_string((*product).product_version),
-                    ),
-                    t => {
-                        return Err(Error::UnknownProductType(t));
-                    }
-                };
-            }
+        if products.is_null() {
+            return Ok(Vec::new());
         }
-
-        Ok(versions)
+        // SAFETY: the library returned `count` entries at `products`.
+        let list = unsafe { std::slice::from_raw_parts(products, count as usize) };
+        let out = crate::version::component_versions(list);
+        // SAFETY: `products` came from the call above and is freed once.
+        unsafe { self.inner.lib.dv_free_version_details(products) };
+        Ok(out)
     }
 
     /// List all available NPU endpoints connected to the proxy.
@@ -363,20 +340,10 @@ impl Drop for EndpointList {
     }
 }
 
-fn version_to_string(version: dv_version) -> String {
-    format!(
-        "{}.{}.{}.{}",
-        version.major, version.minor, version.patch, version.patch_minor
-    )
-}
-
-/// `DV_PRODUCT_TYPE` value DVAPI 3.0 added. It is not in the common
-/// bindings because the 1.x headers do not declare it.
-const MCS_LLM_MODEL: i32 = 7;
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Component;
 
     #[test]
     fn test_unix_socket_connect() {
@@ -391,20 +358,30 @@ mod tests {
     }
 
     #[test]
-    fn test_versions_returns_expected_keys() {
+    fn test_versions_report_running_components() {
         let session = crate::tests::test_session();
-        let versions = session.versions().expect("should retrieve versions");
-
-        // The proxy and client_lib versions should always be present
-        assert!(versions.contains_key("proxy"), "missing proxy version");
+        let running = session
+            .versions()
+            .expect("should retrieve running versions");
         assert!(
-            versions.contains_key("client_lib"),
-            "missing client_lib version"
+            running.iter().any(|v| v.component == Component::Proxy),
+            "{running:?}"
         );
-
-        // All version strings should be non-empty
-        for (key, value) in &versions {
-            assert!(!value.is_empty(), "version for '{key}' should not be empty");
-        }
+        assert!(
+            running.iter().any(|v| v.component == Component::ClientLib),
+            "{running:?}"
+        );
+        let firmware: Vec<_> = running
+            .iter()
+            .filter(|v| v.component == Component::Firmware)
+            .collect();
+        assert!(
+            firmware.len() <= 1,
+            "running firmware should be one entry: {running:?}"
+        );
+        let supported = session
+            .supported_versions()
+            .expect("should retrieve supported versions");
+        assert!(!supported.is_empty());
     }
 }

@@ -79,7 +79,6 @@ pub fn to_py_err(err: ara2::Error) -> PyErr {
                 Ara2Error::new_err(msg)
             }
         }
-        ara2::Error::UnknownProductType(_) => HardwareError::new_err(msg),
         ara2::Error::UnknownLayerOutputType(_)
         | ara2::Error::UnsupportedLayout(_)
         | ara2::Error::UnsupportedTypeSize(_) => ModelError::new_err(msg),
