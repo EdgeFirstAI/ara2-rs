@@ -205,6 +205,14 @@ impl Endpoint {
             return Err(self.session.status_error(err));
         }
 
+        if !dram_stats.is_null() && ep_count <= 0 {
+            // Hand the buffer back with the count the library reported.
+            unsafe {
+                self.session
+                    .lib
+                    .dv_endpoint_free_dram_statistics(dram_stats, ep_count);
+            }
+        }
         if dram_stats.is_null() || ep_count <= 0 {
             return Err(Error::NullPointer(
                 "dv_endpoint_get_dram_statistics returned success with a null or empty buffer"
@@ -256,6 +264,14 @@ impl Endpoint {
             return Err(self.session.status_error(err));
         }
 
+        if !stats.is_null() && ep_count <= 0 {
+            // Hand the buffer back with the count the library reported.
+            unsafe {
+                self.session
+                    .lib
+                    .dv_endpoint_free_statistics(stats, ep_count);
+            }
+        }
         if stats.is_null() || ep_count <= 0 {
             return Err(Error::NullPointer(
                 "dv_endpoint_get_statistics returned success with a null or empty buffer"

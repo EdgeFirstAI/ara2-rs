@@ -197,14 +197,30 @@ impl std::fmt::Display for Error {
                 tried.join(", ")
             ),
             Error::UnsupportedDvapi { name, version } => match version {
-                Some(version) => write!(
-                    f,
-                    "{name} implements DVAPI {version}, which this build of ara2 has no \
-                     struct layout for; add one by running crates/ara2-sys/update.sh \
-                     --verify against that SDK's headers, or set {} to a layout of the \
-                     same major version to bring it up",
-                    crate::ABI_OVERRIDE_ENV
-                ),
+                Some(version) => {
+                    write!(
+                        f,
+                        "{name} implements DVAPI {version}, which this build of ara2 has \
+                         no struct layout for; declare it in a new \
+                         crates/ara2-sys/include/dvapi_v{}_{}.h and check it with \
+                         crates/ara2-sys/update.sh --verify against that SDK's headers",
+                        version.major, version.minor
+                    )?;
+                    let same_major = match version.major {
+                        1 => Some("1.1 or 1.3"),
+                        3 => Some("3.0"),
+                        _ => None,
+                    };
+                    if let Some(layouts) = same_major {
+                        write!(
+                            f,
+                            ", or set {} to a known layout of the same major version \
+                             ({layouts}) to try bringing it up",
+                            crate::ABI_OVERRIDE_ENV
+                        )?;
+                    }
+                    Ok(())
+                }
                 None => write!(
                     f,
                     "{name} would not report a DVAPI version (no usable \

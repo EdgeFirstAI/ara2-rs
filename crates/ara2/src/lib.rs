@@ -178,10 +178,10 @@ pub const LIBRARY_NAMES: &[&str] = &["libaraclient.so", "libaraclient.so.1"];
 /// 1.2.1 ships DVAPI 1.1.2.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct DvapiVersion {
-    /// Major version. Both generations in circulation report `1`.
+    /// Major version: `1` for DVAPI 1.1 and 1.3, `3` for DVAPI 3.0.
     pub major: u8,
-    /// Minor version. This is what distinguishes the generations, and
-    /// what [`Abi`] is keyed on.
+    /// Minor version. Together with `major` it selects the [`Abi`], which
+    /// is keyed on major.minor.
     pub minor: u8,
     /// Patch version.
     pub patch: u8,
@@ -427,6 +427,30 @@ mod offline_tests {
     #[test]
     fn forcing_applies_when_the_probe_failed() {
         assert_eq!(resolve_abi(Some(Abi::V1_1), None).unwrap(), Some(Abi::V1_1));
+    }
+
+    #[test]
+    fn unsupported_dvapi_hints_abi_only_for_known_majors() {
+        let message = |major, minor| {
+            error::Error::UnsupportedDvapi {
+                name: "libaraclient.so",
+                version: Some(DvapiVersion {
+                    major,
+                    minor,
+                    patch: 0,
+                    patch_minor: 0,
+                }),
+            }
+            .to_string()
+        };
+        let m = message(3, 1);
+        assert!(
+            m.contains("dvapi_v3_1.h") && m.contains("update.sh --verify"),
+            "{m}"
+        );
+        assert!(m.contains("ARA2_ABI") && m.contains("(3.0)"), "{m}");
+        assert!(message(1, 4).contains("(1.1 or 1.3)"));
+        assert!(!message(4, 0).contains("ARA2_ABI"));
     }
 }
 

@@ -1257,7 +1257,7 @@ impl InferRequest {
     /// after extracting timing information. Calling `wait` a second time
     /// is not possible since `self` is moved.
     ///
-    /// # Cancellation on error
+    /// # On error
     ///
     /// Because `wait` takes `self` by value, any error (including timeout)
     /// drops the `InferRequest`. The drop blocks for up to about 4 s more

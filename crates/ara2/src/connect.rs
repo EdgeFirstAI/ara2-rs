@@ -28,11 +28,13 @@ pub(crate) fn parse_endpoint(s: &str) -> Result<ProxyEndpoint, Error> {
 
 /// Picks the endpoint to connect to: the override if given, else the first
 /// existing path in `existing`, else a discovered proxy's UNIX endpoint,
-/// else a discovered proxy's TCP endpoint.
+/// else a discovered proxy's TCP endpoint. `discovery_error` is why
+/// discovery produced nothing, reported if no endpoint is found.
 pub(crate) fn choose_endpoint(
     override_: Option<&str>,
     existing: &[&str],
     proxies: &[Proxy],
+    discovery_error: Option<&str>,
 ) -> Result<ProxyEndpoint, Error> {
     if let Some(value) = override_ {
         return parse_endpoint(value);
@@ -53,7 +55,9 @@ pub(crate) fn choose_endpoint(
             .iter()
             .map(|p| format!("proxy pid {} (no reachable endpoint)", p.pid)),
     );
-    if proxies.is_empty() {
+    if let Some(e) = discovery_error {
+        checked.push(format!("discovery failed: {e}"));
+    } else if proxies.is_empty() {
         checked.push("no running proxy found".to_owned());
     }
     Err(Error::NoProxyFound { checked })
@@ -72,12 +76,20 @@ pub fn proxy_endpoint() -> Result<ProxyEndpoint, Error> {
         .copied()
         .filter(|p| std::path::Path::new(p).exists())
         .collect();
-    let proxies = if override_.is_none() && existing.is_empty() {
-        crate::discover().unwrap_or_default()
+    let (proxies, discovery_error) = if override_.is_none() && existing.is_empty() {
+        match crate::discover() {
+            Ok(proxies) => (proxies, None),
+            Err(e) => (Vec::new(), Some(e.to_string())),
+        }
     } else {
-        Vec::new()
+        (Vec::new(), None)
     };
-    choose_endpoint(override_.as_deref(), &existing, &proxies)
+    choose_endpoint(
+        override_.as_deref(),
+        &existing,
+        &proxies,
+        discovery_error.as_deref(),
+    )
 }
 
 #[cfg(test)]
@@ -130,15 +142,20 @@ mod offline_tests {
 
     #[test]
     fn override_wins() {
-        let chosen =
-            choose_endpoint(Some("tcp:10.0.0.2:6000"), &["/var/run/proxy.sock"], &[]).unwrap();
+        let chosen = choose_endpoint(
+            Some("tcp:10.0.0.2:6000"),
+            &["/var/run/proxy.sock"],
+            &[],
+            None,
+        )
+        .unwrap();
         assert_eq!(chosen, ProxyEndpoint::Tcp(Ipv4Addr::new(10, 0, 0, 2), 6000));
     }
 
     #[test]
     fn existing_socket_path_beats_discovery() {
         let tcp = proxy(vec![ProxyEndpoint::Tcp(Ipv4Addr::LOCALHOST, 5000)]);
-        let chosen = choose_endpoint(None, &["/var/run/ara2.sock"], &[tcp]).unwrap();
+        let chosen = choose_endpoint(None, &["/var/run/ara2.sock"], &[tcp], None).unwrap();
         assert_eq!(chosen, ProxyEndpoint::Unix("/var/run/ara2.sock".into()));
     }
 
@@ -146,7 +163,7 @@ mod offline_tests {
     fn discovery_prefers_unix_over_tcp_across_proxies() {
         let tcp = proxy(vec![ProxyEndpoint::Tcp(Ipv4Addr::LOCALHOST, 5000)]);
         let unix = proxy(vec![ProxyEndpoint::Unix(PathBuf::from("/srv/p.sock"))]);
-        let chosen = choose_endpoint(None, &[], &[tcp, unix]).unwrap();
+        let chosen = choose_endpoint(None, &[], &[tcp, unix], None).unwrap();
         assert_eq!(chosen, ProxyEndpoint::Unix("/srv/p.sock".into()));
     }
 
@@ -154,17 +171,33 @@ mod offline_tests {
     fn discovery_falls_back_to_tcp() {
         let tcp = proxy(vec![ProxyEndpoint::Tcp(Ipv4Addr::LOCALHOST, 5000)]);
         assert_eq!(
-            choose_endpoint(None, &[], &[tcp]).unwrap(),
+            choose_endpoint(None, &[], &[tcp], None).unwrap(),
             ProxyEndpoint::Tcp(Ipv4Addr::LOCALHOST, 5000)
         );
     }
 
     #[test]
     fn nothing_found_lists_what_was_checked() {
-        match choose_endpoint(None, &[], &[proxy(vec![])]) {
+        match choose_endpoint(None, &[], &[proxy(vec![])], None) {
             Err(Error::NoProxyFound { checked }) => {
                 assert!(checked.iter().any(|c| c.contains("/var/run/proxy.sock")));
                 assert!(checked.iter().any(|c| c.contains("pid 1")));
+            }
+            other => panic!("expected NoProxyFound, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn failed_discovery_is_reported_not_swallowed() {
+        match choose_endpoint(None, &[], &[], Some("/proc is not readable")) {
+            Err(Error::NoProxyFound { checked }) => {
+                assert!(
+                    checked
+                        .iter()
+                        .any(|c| c == "discovery failed: /proc is not readable"),
+                    "{checked:?}"
+                );
+                assert!(!checked.iter().any(|c| c == "no running proxy found"));
             }
             other => panic!("expected NoProxyFound, got {other:?}"),
         }
