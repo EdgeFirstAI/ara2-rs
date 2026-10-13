@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Shared-memory and DMA-BUF tensors are now unregistered from the proxy when dropped. Previously every registration leaked a proxy-side file descriptor and mapping, so repeated `allocate_tensors`, `allocate_input_set` or `allocate_output_set` calls grew the proxy without bound. A pending `InferRequest` keeps the registrations it uses alive until it completes.
+
 ## [0.22.0] - 2026-10-12
 
 ### Changed (BREAKING)
