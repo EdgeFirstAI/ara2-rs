@@ -1,5 +1,5 @@
 use crate::DvapiVersion;
-use ara2_sys::{DV_LAYER_OUTPUT_TYPE, dv_status_code_t};
+use ara2_sys::DV_LAYER_OUTPUT_TYPE;
 
 /// `#[non_exhaustive]` because the variant set is not fixed: `Error::Codec`
 /// exists only with the `codec` feature, and Cargo unifies features across the
@@ -80,10 +80,26 @@ pub enum Error {
         /// Why reading it failed.
         source: std::io::Error,
     },
-    /// The client library returned a `dv_status_code_t` indicating failure.
-    /// Codes are grouped by range: 100s hardware, 200s proxy, 300s client
-    /// library, 400s proxy transport, 500s device.
-    Ara2(dv_status_code_t),
+    /// The client library returned a failing status. `name` is the
+    /// library's own name for `code`; `detail` is present when the call
+    /// had a detailed-status variant (DVAPI 1.3 and later). Codes are
+    /// grouped by range: 100s hardware, 200s proxy, 300s client library,
+    /// 400s proxy transport, 500s device.
+    Ara2 {
+        /// The `dv_status_code_t` value.
+        code: i32,
+        /// The library's name for it, from `dv_stringify_status_code`.
+        name: String,
+        /// Component and severity, when the library provided them.
+        detail: Option<crate::StatusDetail>,
+    },
+    /// The loaded DVAPI version does not provide this feature.
+    Unsupported {
+        /// What was asked for.
+        feature: &'static str,
+        /// The loaded version.
+        abi: crate::Abi,
+    },
     /// A `dv_layer_output_type_t` outside the set this build recognises.
     UnknownLayerOutputType(DV_LAYER_OUTPUT_TYPE),
     /// A tensor layout string the crate cannot map to an axis order.
@@ -135,12 +151,6 @@ impl From<edgefirst_codec::CodecError> for Error {
 impl From<libloading::Error> for Error {
     fn from(e: libloading::Error) -> Self {
         Error::Library(e)
-    }
-}
-
-impl From<dv_status_code_t> for Error {
-    fn from(e: dv_status_code_t) -> Self {
-        Error::Ara2(e)
     }
 }
 
@@ -248,7 +258,23 @@ impl std::fmt::Display for Error {
                  layout is only allowed for an unrecognised version of the same major release",
                 crate::ABI_OVERRIDE_ENV
             ),
-            Error::Ara2(e) => write!(f, "Ara2 error: {e:?}"),
+            Error::Ara2 {
+                code,
+                name,
+                detail: None,
+            } => write!(f, "{name} ({code})"),
+            Error::Ara2 {
+                code,
+                name,
+                detail: Some(d),
+            } => write!(
+                f,
+                "{name} ({code}) from the {}, {} (sub-code {})",
+                d.component, d.severity, d.sub_code
+            ),
+            Error::Unsupported { feature, abi } => {
+                write!(f, "{feature} is not available with DVAPI {abi}")
+            }
             Error::UnknownLayerOutputType(e) => write!(f, "Unknown layer output type: {e:?}"),
             Error::UnsupportedLayout(e) => write!(f, "Unsupported layout: {e:?}"),
             Error::UnsupportedTypeSize(e) => write!(f, "Unsupported type size: {e:?}"),

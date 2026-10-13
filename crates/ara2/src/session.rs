@@ -1,4 +1,4 @@
-use crate::{Abi, ComponentVersion, DvapiVersion, Endpoint, error::Error};
+use crate::{Abi, ComponentVersion, DvapiVersion, Endpoint, error::Error, status::RawStatus};
 use ara2_sys::{araclient, dv_endpoint, dv_product_version, dv_session, dv_status_code_t};
 use std::{ffi::c_char, net::Ipv4Addr, sync::Arc};
 
@@ -24,6 +24,66 @@ pub(crate) struct SessionInner {
     /// per call.
     pub(crate) abi: Abi,
     pub(crate) dvapi_version: Option<DvapiVersion>,
+    /// The functions only `abi`'s version has, from the same library.
+    pub(crate) vlib: VersionLib,
+}
+
+/// The version-specific function table for the loaded library.
+pub(crate) enum VersionLib {
+    // No call is routed through the 1.1 table yet; it has no detailed-status variants.
+    #[allow(dead_code)]
+    V1_1(ara2_sys::v1_1::araclient_v1_1),
+    V1_3(ara2_sys::v1_3::araclient_v1_3),
+    V3_0(ara2_sys::v3_0::araclient_v3_0),
+}
+
+impl VersionLib {
+    /// Opens the version-specific function table from the same library.
+    /// dlopen reference-counts, so this maps no second copy.
+    pub(crate) fn open(abi: Abi, name: &str) -> Result<Self, Error> {
+        // SAFETY: `name` is the library the common table already loaded.
+        unsafe {
+            Ok(match abi {
+                Abi::V1_1 => VersionLib::V1_1(ara2_sys::v1_1::araclient_v1_1::new(name)?),
+                Abi::V1_3 => VersionLib::V1_3(ara2_sys::v1_3::araclient_v1_3::new(name)?),
+                Abi::V3_0 => VersionLib::V3_0(ara2_sys::v3_0::araclient_v3_0::new(name)?),
+            })
+        }
+    }
+}
+
+impl SessionInner {
+    /// A failing status code as an [`Error`], named by the library.
+    pub(crate) fn status_error(&self, code: dv_status_code_t) -> Error {
+        crate::status::status_error_from(&self.lib, code)
+    }
+
+    /// A failing detailed status as an [`Error`], named by the library.
+    pub(crate) fn detailed_error(&self, status: RawStatus) -> Error {
+        Error::Ara2 {
+            code: status.code as i32,
+            name: self.status_name(status.code),
+            detail: Some(crate::StatusDetail {
+                sub_code: status.sub_code,
+                component: crate::StatusComponent::from_raw(status.component),
+                severity: crate::Severity::from_raw(status.severity),
+            }),
+        }
+    }
+
+    /// The library's own name for `code`.
+    pub(crate) fn status_name(&self, code: dv_status_code_t) -> String {
+        crate::status::status_name(&self.lib, code)
+    }
+}
+
+/// `Ok` for a successful detailed status, the named error otherwise.
+pub(crate) fn status_result(session: &SessionInner, status: RawStatus) -> Result<(), Error> {
+    if status.code == 0 {
+        Ok(())
+    } else {
+        Err(session.detailed_error(status))
+    }
 }
 
 // Safety: The C library is thread-safe for session operations.
@@ -132,7 +192,8 @@ impl Session {
     /// # Arguments
     /// * `socket_path` - Path to the UNIX socket (e.g., `/var/run/proxy.sock`)
     pub fn create_via_unix_socket(socket_path: &str) -> Result<Self, Error> {
-        let (lib, abi, dvapi_version) = crate::open_library()?;
+        let (lib, abi, dvapi_version, name) = crate::open_library()?;
+        let vlib = VersionLib::open(abi, name)?;
         let mut ptr: *mut dv_session = std::ptr::null_mut();
         let socket_path = std::ffi::CString::new(socket_path)
             .map_err(|_| Error::NullPointer("Socket path contains null byte".to_owned()))?;
@@ -141,7 +202,7 @@ impl Session {
         };
 
         if err != 0 {
-            return Err(err.into());
+            return Err(crate::status::status_error_from(&lib, err));
         }
 
         Ok(Self {
@@ -151,6 +212,7 @@ impl Session {
                 socket_type: SocketType::Unix,
                 abi,
                 dvapi_version,
+                vlib,
             }),
         })
     }
@@ -161,7 +223,8 @@ impl Session {
     /// * `ip` - IPv4 address of the proxy host
     /// * `port` - TCP port number
     pub fn create_via_tcp_ipv4_socket(ip: Ipv4Addr, port: u16) -> Result<Self, Error> {
-        let (lib, abi, dvapi_version) = crate::open_library()?;
+        let (lib, abi, dvapi_version, name) = crate::open_library()?;
+        let vlib = VersionLib::open(abi, name)?;
         let mut ptr: *mut dv_session = std::ptr::null_mut();
         let ip_cstring = std::ffi::CString::new(ip.to_string())
             .map_err(|_| Error::NullPointer("Invalid IP address".to_owned()))?;
@@ -170,7 +233,7 @@ impl Session {
         };
 
         if err != 0 {
-            return Err(err.into());
+            return Err(crate::status::status_error_from(&lib, err));
         }
 
         Ok(Self {
@@ -180,6 +243,7 @@ impl Session {
                 socket_type: SocketType::Tcp,
                 abi,
                 dvapi_version,
+                vlib,
             }),
         })
     }
@@ -228,7 +292,7 @@ impl Session {
         let mut count: u8 = 0;
         let err = call(self.inner.ptr, &mut products, &mut count);
         if err != 0 {
-            return Err(err.into());
+            return Err(self.inner.status_error(err));
         }
         if products.is_null() {
             return Ok(Vec::new());
@@ -255,7 +319,7 @@ impl Session {
         };
 
         if err != 0 {
-            return Err(err.into());
+            return Err(self.inner.status_error(err));
         }
 
         // Wrap the endpoint list pointer so it is freed when all Endpoint
@@ -312,7 +376,7 @@ impl Session {
                 .dv_infer_get_inflight_count(self.inner.ptr, &mut count)
         };
         if err != 0 {
-            return Err(err.into());
+            return Err(self.inner.status_error(err));
         }
         Ok(count)
     }
@@ -355,6 +419,25 @@ mod tests {
     fn test_unix_socket_invalid_path() {
         let result = Session::create_via_unix_socket("/nonexistent/proxy.sock");
         assert!(result.is_err(), "should fail with invalid socket path");
+    }
+
+    #[test]
+    fn failing_calls_name_their_status() {
+        let session = crate::tests::test_session();
+        let endpoints = session.list_endpoints().unwrap();
+        let err = endpoints[0]
+            .load_model_from_file("/nonexistent/model.dvm".as_ref())
+            .expect_err("loading a missing file must fail");
+        println!("load of a missing model: {err}");
+        match err {
+            Error::Ara2 { name, detail, .. } => {
+                assert!(name.starts_with("DV_"), "{name}");
+                if session.abi() != crate::Abi::V1_1 {
+                    assert!(detail.is_some(), "1.3+ should give a detailed status");
+                }
+            }
+            other => panic!("expected Error::Ara2, got {other:?}"),
+        }
     }
 
     #[test]

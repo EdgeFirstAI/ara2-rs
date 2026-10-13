@@ -31,7 +31,7 @@ use ara2_sys::{
 use crate::{
     Abi, Model,
     error::Error,
-    session::{EndpointList, SessionInner},
+    session::{EndpointList, SessionInner, VersionLib, status_result},
 };
 
 /// The operational state of an NPU endpoint.
@@ -182,7 +182,7 @@ impl Endpoint {
         };
 
         if err != 0 {
-            return Err(err.into());
+            return Err(self.session.status_error(err));
         }
 
         Ok(State::from_raw(state, self.session.abi))
@@ -202,7 +202,7 @@ impl Endpoint {
         };
 
         if err != 0 {
-            return Err(err.into());
+            return Err(self.session.status_error(err));
         }
 
         if dram_stats.is_null() || ep_count <= 0 {
@@ -253,7 +253,7 @@ impl Endpoint {
         };
 
         if err != 0 {
-            return Err(err.into());
+            return Err(self.session.status_error(err));
         }
 
         if stats.is_null() || ep_count <= 0 {
@@ -312,20 +312,63 @@ impl Endpoint {
             .map_err(|_| Error::NullPointer("Invalid model name".to_owned()))?;
 
         let mut model: *mut dv_model = std::ptr::null_mut();
-        let err = unsafe {
-            self.session.lib.dv_model_load_from_file(
-                self.session.ptr,
-                self.ptr,
-                path_cstr.as_ptr() as *const c_char,
-                name_cstr.as_ptr() as *const c_char,
-                DV_MODEL_PRIORITY_LEVEL_DV_MODEL_PRIORITY_LEVEL_DEFAULT,
-                &mut model,
-            )
+        let session = &*self.session;
+        let path_ptr = path_cstr.as_ptr() as *const c_char;
+        let name_ptr = name_cstr.as_ptr() as *const c_char;
+        let priority = DV_MODEL_PRIORITY_LEVEL_DV_MODEL_PRIORITY_LEVEL_DEFAULT;
+        // SAFETY: the session and endpoint handles are live, the strings
+        // outlive the call, and `model` is a local out-pointer.
+        let result = match &session.vlib {
+            VersionLib::V1_1(_) => {
+                let code = unsafe {
+                    session.lib.dv_model_load_from_file(
+                        session.ptr,
+                        self.ptr,
+                        path_ptr,
+                        name_ptr,
+                        priority,
+                        &mut model,
+                    )
+                };
+                if code == 0 {
+                    Ok(())
+                } else {
+                    Err(session.status_error(code))
+                }
+            }
+            VersionLib::V1_3(v) => status_result(
+                session,
+                unsafe {
+                    v.dv_model_load_from_file_s(
+                        session.ptr,
+                        self.ptr,
+                        path_ptr,
+                        name_ptr,
+                        priority,
+                        &mut model,
+                    )
+                }
+                .into(),
+            ),
+            VersionLib::V3_0(v) => status_result(
+                session,
+                unsafe {
+                    v.dv_model_load_from_file_e(
+                        session.ptr,
+                        self.ptr,
+                        path_ptr,
+                        name_ptr,
+                        priority,
+                        &mut model,
+                    )
+                }
+                .into(),
+            ),
         };
 
-        if err != 0 {
-            log::error!("dv_model_load_from_file error: {err}");
-            return Err(err.into());
+        if let Err(err) = result {
+            log::error!("dv_model_load_from_file of {}: {err}", path.display());
+            return Err(err);
         }
 
         Ok(Model::new(Arc::clone(&self.session), self.ptr, model))

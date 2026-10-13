@@ -206,7 +206,8 @@ A unified `Error` enum covers all failure modes:
 pub enum Error {
     Io(std::io::Error),         // File I/O errors
     Library(libloading::Error), // Library loading failures
-    Ara2(dv_status_code),       // NPU/proxy error codes
+    Ara2 { code: i32, name: String, detail: Option<StatusDetail> }, // named NPU/proxy status
+    Unsupported { feature: &'static str, abi: Abi }, // not in the loaded DVAPI version
     NullPointer(String),        // Null pointer from FFI
     InferenceFailed,            // Async inference failed on NPU
     InferenceNotCompleted(u32), // Unexpected completion status
@@ -216,6 +217,8 @@ pub enum Error {
     // ... see crates/ara2/src/error.rs for the full list
 }
 ```
+
+`Error::Ara2` names the code with the library's own `dv_stringify_status_code`. On DVAPI 1.3 and 3.0, model loading, asynchronous submission and waiting go through the `_s` / `_e` detailed-status variants, so their errors also carry the component, severity and sub-code.
 
 All error variants implement `std::error::Error` with proper `source()`
 chaining for integration with `anyhow` and `eyre`.

@@ -48,6 +48,9 @@ pyo3::create_exception!(
 );
 
 /// Convert an `ara2::Error` into the appropriate Python exception.
+///
+/// A status error carries `code` and `name` attributes, plus `sub_code`,
+/// `component` and `severity` when the library gave a detailed status.
 pub fn to_py_err(err: ara2::Error) -> PyErr {
     let msg = err.to_string();
     match &err {
@@ -61,9 +64,9 @@ pub fn to_py_err(err: ara2::Error) -> PyErr {
         | ara2::Error::ProxyConfigInvalid { .. }
         | ara2::Error::NoProxyEndpoint { .. }
         | ara2::Error::ProcUnavailable { .. } => ProxyError::new_err(msg),
-        ara2::Error::Ara2(code) => {
+        ara2::Error::Ara2 { code, name, detail } => {
             let code = *code;
-            if code >= 500 {
+            let py_err = if code >= 500 {
                 HardwareError::new_err(msg)
             } else if code >= 400 {
                 ProxyError::new_err(msg)
@@ -77,8 +80,23 @@ pub fn to_py_err(err: ara2::Error) -> PyErr {
                 HardwareError::new_err(msg)
             } else {
                 Ara2Error::new_err(msg)
-            }
+            };
+            Python::attach(|py| {
+                let value = py_err.value(py);
+                // Setting an attribute on a fresh exception instance cannot
+                // fail short of memory exhaustion; the message carries the
+                // same information either way.
+                let _ = value.setattr("code", code);
+                let _ = value.setattr("name", name.as_str());
+                if let Some(d) = detail {
+                    let _ = value.setattr("sub_code", d.sub_code);
+                    let _ = value.setattr("component", d.component.to_string());
+                    let _ = value.setattr("severity", d.severity.to_string());
+                }
+            });
+            py_err
         }
+        ara2::Error::Unsupported { .. } => Ara2Error::new_err(msg),
         ara2::Error::UnknownLayerOutputType(_)
         | ara2::Error::UnsupportedLayout(_)
         | ara2::Error::UnsupportedTypeSize(_) => ModelError::new_err(msg),

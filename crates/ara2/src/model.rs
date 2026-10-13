@@ -1,4 +1,7 @@
-use crate::{Error, session::SessionInner};
+use crate::{
+    Error,
+    session::{SessionInner, VersionLib, status_result},
+};
 use ara2_sys::{
     DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_COMPLETED,
     DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_FAILED, DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_QUEUED,
@@ -145,7 +148,10 @@ impl Drop for ShmRegistration {
         // unregistered exactly once, here.
         let err = unsafe { self.session.lib.dv_shmfd_unregister(self.desc.as_ptr()) };
         if err != 0 {
-            log::warn!("dv_shmfd_unregister of fd {fd} ({size} bytes) failed with status {err}");
+            log::warn!(
+                "dv_shmfd_unregister of fd {fd} ({size} bytes) failed with {} ({err})",
+                self.session.status_name(err)
+            );
         }
     }
 }
@@ -176,6 +182,51 @@ fn shm_guards<'a>(tensors: impl Iterator<Item = &'a BoundTensor>) -> Vec<Arc<Shm
 
 /// Blob descriptors paired with map guards that keep memory mappings alive.
 type BlobsWithGuards = (Vec<dv_blob>, Vec<dv_blob>, Vec<HostView<'static, u8>>);
+
+impl Model {
+    /// Submits `dv_infer_async`, through the detailed-status variant where
+    /// the loaded version has one.
+    ///
+    /// # Safety
+    ///
+    /// The blobs must describe buffers that stay valid until the request
+    /// completes.
+    unsafe fn infer_async(
+        &self,
+        inputs: &mut [dv_blob],
+        outputs: &mut [dv_blob],
+        request: &mut *mut dv_infer_request,
+    ) -> Result<(), Error> {
+        let session = &*self.session;
+        let (ip, op) = (inputs.as_mut_ptr(), outputs.as_mut_ptr());
+        let (ep, model) = (self.endpoint_ptr, self.ptr);
+        unsafe {
+            match &session.vlib {
+                VersionLib::V1_1(_) => {
+                    let code =
+                        session
+                            .lib
+                            .dv_infer_async(session.ptr, ep, model, ip, op, true, request);
+                    if code == 0 {
+                        Ok(())
+                    } else {
+                        Err(session.status_error(code))
+                    }
+                }
+                VersionLib::V1_3(v) => status_result(
+                    session,
+                    v.dv_infer_async_s(session.ptr, ep, model, ip, op, true, request)
+                        .into(),
+                ),
+                VersionLib::V3_0(v) => status_result(
+                    session,
+                    v.dv_infer_async_e(session.ptr, ep, model, ip, op, true, request)
+                        .into(),
+                ),
+            }
+        }
+    }
+}
 
 impl Model {
     /// Create a new Model instance.
@@ -308,7 +359,7 @@ impl Model {
         };
 
         if err != 0 {
-            return Err(err.into());
+            return Err(self.session.status_error(err));
         }
 
         let timing = extract_timing(request);
@@ -320,7 +371,7 @@ impl Model {
         let timing = timing?;
 
         if free_err != 0 {
-            return Err(free_err.into());
+            return Err(self.session.status_error(free_err));
         }
 
         Ok(timing)
@@ -371,21 +422,9 @@ impl Model {
 
         let mut request: *mut dv_infer_request = std::ptr::null_mut();
 
-        let err = unsafe {
-            self.session.lib.dv_infer_async(
-                self.session.ptr,
-                self.endpoint_ptr,
-                self.ptr,
-                input_blobs.as_mut_ptr(),
-                output_blobs.as_mut_ptr(),
-                true,
-                &mut request,
-            )
-        };
-
-        if err != 0 {
-            return Err(err.into());
-        }
+        // SAFETY: the guards for these buffers move into the returned
+        // InferRequest, which keeps them valid until it completes.
+        unsafe { self.infer_async(&mut input_blobs, &mut output_blobs, &mut request)? };
 
         if request.is_null() {
             return Err(Error::NullPointer(
@@ -554,21 +593,9 @@ impl Model {
 
         let mut request: *mut dv_infer_request = std::ptr::null_mut();
 
-        let err = unsafe {
-            self.session.lib.dv_infer_async(
-                self.session.ptr,
-                self.endpoint_ptr,
-                self.ptr,
-                input_blobs.as_mut_ptr(),
-                output_blobs.as_mut_ptr(),
-                true,
-                &mut request,
-            )
-        };
-
-        if err != 0 {
-            return Err(err.into());
-        }
+        // SAFETY: the guards for these buffers move into the returned
+        // InferRequest, which keeps them valid until it completes.
+        unsafe { self.infer_async(&mut input_blobs, &mut output_blobs, &mut request)? };
 
         if request.is_null() {
             return Err(Error::NullPointer(
@@ -692,21 +719,9 @@ impl Model {
 
         let mut request: *mut dv_infer_request = std::ptr::null_mut();
 
-        let err = unsafe {
-            self.session.lib.dv_infer_async(
-                self.session.ptr,
-                self.endpoint_ptr,
-                self.ptr,
-                input_blobs.as_mut_ptr(),
-                output_blobs.as_mut_ptr(),
-                true,
-                &mut request,
-            )
-        };
-
-        if err != 0 {
-            return Err(err.into());
-        }
+        // SAFETY: the guards for these buffers move into the returned
+        // InferRequest, which keeps them valid until it completes.
+        unsafe { self.infer_async(&mut input_blobs, &mut output_blobs, &mut request)? };
 
         if request.is_null() {
             return Err(Error::NullPointer(
@@ -822,7 +837,7 @@ impl Model {
         };
 
         if result != 0 {
-            return Err(result.into());
+            return Err(self.session.status_error(result));
         }
 
         let desc = std::ptr::NonNull::new(desc)
@@ -1278,18 +1293,35 @@ impl InferRequest {
         // with the same timeout each iteration — the proxy tracks
         // elapsed time internally.
         loop {
-            let err = unsafe {
-                self.session.lib.dv_infer_wait_for_completion(
-                    self.session.ptr,
-                    list.as_mut_ptr(),
-                    1,
-                    timeout_ms,
-                    &mut completed,
-                )
-            };
-
-            if err != 0 {
-                return Err(err.into());
+            let session = &*self.session;
+            let (sp, lp) = (session.ptr, list.as_mut_ptr());
+            // SAFETY: `ptr` is valid until dv_infer_free in drop and `list`
+            // holds only that request.
+            unsafe {
+                match &session.vlib {
+                    VersionLib::V1_1(_) => {
+                        let code = session.lib.dv_infer_wait_for_completion(
+                            sp,
+                            lp,
+                            1,
+                            timeout_ms,
+                            &mut completed,
+                        );
+                        if code != 0 {
+                            return Err(session.status_error(code));
+                        }
+                    }
+                    VersionLib::V1_3(v) => status_result(
+                        session,
+                        v.dv_infer_wait_for_completion_s(sp, lp, 1, timeout_ms, &mut completed)
+                            .into(),
+                    )?,
+                    VersionLib::V3_0(v) => status_result(
+                        session,
+                        v.dv_infer_wait_for_completion_e(sp, lp, 1, timeout_ms, &mut completed)
+                            .into(),
+                    )?,
+                }
             }
 
             // Use the `completed` out-parameter to read status — this is
@@ -1354,7 +1386,7 @@ impl InferRequest {
         let mut req_id: u64 = 0;
         let err = unsafe { self.session.lib.dv_infer_get_req_id(self.ptr, &mut req_id) };
         if err != 0 {
-            return Err(err.into());
+            return Err(self.session.status_error(err));
         }
         Ok(req_id)
     }

@@ -95,6 +95,7 @@ mod endpoint;
 mod error;
 mod model;
 mod session;
+mod status;
 mod version;
 
 pub use connect::proxy_endpoint;
@@ -111,6 +112,7 @@ pub use model::{
     Model, ModelOutputType, ModelTiming, OutputQuantization, OutputSet, OutputTensor,
 };
 pub use session::{Session, SocketType};
+pub use status::{Severity, StatusComponent, StatusDetail};
 pub use version::{Component, ComponentVersion};
 
 /// Default socket path for the ARA-2 proxy service.
@@ -323,7 +325,11 @@ pub(crate) fn resolve_abi(
     }
 }
 
-pub(crate) fn open_library() -> Result<(araclient, Abi, Option<DvapiVersion>), error::Error> {
+/// Opens the first usable candidate in [`LIBRARY_NAMES`], returning its
+/// common function table, ABI, reported version and the name it loaded
+/// under.
+pub(crate) fn open_library()
+-> Result<(araclient, Abi, Option<DvapiVersion>, &'static str), error::Error> {
     let forced = abi_override()?;
     let mut last_err = None;
     let mut rejected: Option<(&'static str, Option<DvapiVersion>)> = None;
@@ -339,7 +345,7 @@ pub(crate) fn open_library() -> Result<(araclient, Abi, Option<DvapiVersion>), e
 
         let version = probe_version(&lib);
         match resolve_abi(forced, version)? {
-            Some(abi) => return Ok((lib, abi, version)),
+            Some(abi) => return Ok((lib, abi, version, *name)),
             // Keep going rather than failing here: an image can carry more
             // than one libaraclient, and a later candidate may well be a
             // generation this build does know.
