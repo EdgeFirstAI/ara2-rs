@@ -626,8 +626,9 @@ class Model:
 
         Args:
             memory: Memory type — ``"dma"``, ``"shm"``, ``"mem"``, or
-                    ``None`` (auto-select, tries DMA first). Use ``"dma"``
-                    for zero-copy workflows with edgefirst-image.
+                    ``None`` (auto-select, tries DMA first; heap on a TCP
+                    session, which cannot pass file descriptors). Use
+                    ``"dma"`` for zero-copy workflows with edgefirst-image.
         """
         ...
 

@@ -366,7 +366,7 @@ impl Model {
         // Map guards keep raw-pointer memory mappings alive. For
         // RAW_POINTER blobs the NPU references the mapped pointers
         // throughout execution, so guards are stored in InferRequest
-        // and dropped only after wait() or cancellation.
+        // and dropped only after wait() or the request's drop.
         let (mut input_blobs, mut output_blobs, map_guards) = self.build_blobs()?;
 
         let mut request: *mut dv_infer_request = std::ptr::null_mut();
@@ -409,6 +409,9 @@ impl Model {
     /// [`Self::allocate_tensors`]-allocated outputs, decoupling the output buffer
     /// from the model slot.
     ///
+    /// `memory: None` allocates heap (`TensorMemory::Mem`) when the session
+    /// cannot pass file descriptors (TCP); see [`Self::allocate_tensors`].
+    ///
     /// Allocate more sets than pipeline slots so a decoder can hold some sets
     /// while the model keeps inferring into others.
     pub fn allocate_output_set(&self, memory: Option<TensorMemory>) -> Result<OutputSet, Error> {
@@ -438,6 +441,9 @@ impl Model {
     /// sizes and memory type. Pass it to [`Self::submit_with_io_set`] to read from
     /// an arbitrary pool tensor instead of the model's own input, decoupling
     /// the input DMA-BUF from the model slot.
+    ///
+    /// `memory: None` allocates heap (`TensorMemory::Mem`) when the session
+    /// cannot pass file descriptors (TCP); see [`Self::allocate_tensors`].
     pub fn allocate_input_set(&self, memory: Option<TensorMemory>) -> Result<InputSet, Error> {
         let memory = self.resolve_memory(memory);
         let tensors = (0..self.n_inputs())
@@ -1158,12 +1164,12 @@ fn extract_timing(request: *mut dv_infer_request) -> Result<ModelTiming, Error> 
 /// the NPU finishes and retrieve timing statistics.
 ///
 /// The underlying C request is freed automatically on drop via
-/// `dv_infer_free`. A request that uses only heap tensors and has not
-/// completed when it is dropped is cancelled by the C library. A request
-/// holding shared-memory or DMA-BUF registrations instead waits for
-/// completion on drop, blocking up to about [`DEFAULT_TIMEOUT_MS`] per
-/// state change and at most 4 waits. If it still has not finished, its
-/// registrations are leaked rather than released.
+/// `dv_infer_free`. A request still pending when it is dropped is waited
+/// for first, for up to `MAX_DROP_WAITS` waits of [`DEFAULT_TIMEOUT_MS`]
+/// each (about 4 s), and then freed; freeing an in-flight request leaves
+/// the model unable to accept the next submit. If it is still pending after
+/// that, its shared-memory and DMA-BUF registrations are leaked rather than
+/// released.
 ///
 /// # Thread safety
 ///
@@ -1205,7 +1211,7 @@ pub struct InferRequest {
     /// Keeps raw-pointer memory mappings alive until the request completes.
     /// For `RAW_POINTER` blobs the NPU references the mapped pointers
     /// throughout execution, so these guards must not be dropped until
-    /// after `wait()` or cancellation via `Drop`.
+    /// after `wait()` or the request's drop.
     _map_guards: Vec<HostView<'static, u8>>,
 }
 
@@ -1226,8 +1232,9 @@ impl InferRequest {
     /// # Cancellation on error
     ///
     /// Because `wait` takes `self` by value, any error (including timeout)
-    /// drops the `InferRequest`, which calls `dv_infer_free` and cancels
-    /// the in-flight request. If you need longer wait times, increase
+    /// drops the `InferRequest`. The drop blocks for up to about 4 s more
+    /// while it waits for the in-flight request to finish, then frees it.
+    /// If you need longer wait times, increase
     /// `timeout_ms` rather than retrying — the timeout applies per poll
     /// iteration, not cumulatively.
     ///
@@ -1240,7 +1247,8 @@ impl InferRequest {
     /// # Errors
     ///
     /// - [`Error::Ara2`] — the wait call itself failed (e.g., timeout
-    ///   expired). The request is cancelled on drop.
+    ///   expired). Dropping the request then waits up to about 4 s for it
+    ///   to finish before freeing it.
     /// - [`Error::InferenceFailed`] — the NPU reported a failure
     /// - [`Error::InferenceNotCompleted`] — the request reached an
     ///   unexpected terminal state (e.g., UNKNOWN)
@@ -1353,7 +1361,7 @@ impl InferRequest {
 }
 
 /// Upper bound on `dv_infer_wait_for_completion` calls when a request that
-/// holds registrations is dropped.
+/// is still pending is dropped.
 const MAX_DROP_WAITS: usize = 4;
 
 impl InferRequest {
