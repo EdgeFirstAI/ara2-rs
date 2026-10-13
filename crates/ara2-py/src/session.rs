@@ -43,7 +43,8 @@ impl Session {
     ///     Session: A new session connected to the proxy
     ///
     /// Raises:
-    ///     ProxyError: If the socket does not exist or the proxy is not running
+    ///     ProxyError: If no proxy endpoint is found, or the connection to
+    ///         the endpoint fails
     #[staticmethod]
     fn connect() -> PyResult<Self> {
         Ok(Session(Some(ara2::Session::connect().map_err(to_py_err)?)))

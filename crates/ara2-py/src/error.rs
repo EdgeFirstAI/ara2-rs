@@ -65,6 +65,8 @@ pub fn to_py_err(err: ara2::Error) -> PyErr {
         ara2::Error::ProxyConfigUnreadable { .. }
         | ara2::Error::ProxyConfigInvalid { .. }
         | ara2::Error::NoProxyEndpoint { .. }
+        | ara2::Error::NoProxyFound { .. }
+        | ara2::Error::InvalidSocketOverride(_)
         | ara2::Error::ProcUnavailable { .. } => ProxyError::new_err(msg),
         ara2::Error::Ara2 { code, .. } => {
             let code = *code;
@@ -84,6 +86,7 @@ pub fn to_py_err(err: ara2::Error) -> PyErr {
                 Ara2Error::new_err(msg)
             }
         }
+        ara2::Error::FdPassingUnavailable => TensorError::new_err(msg),
         ara2::Error::Unsupported { .. } => Ara2Error::new_err(msg),
         ara2::Error::UnknownLayerOutputType(_)
         | ara2::Error::UnsupportedLayout(_)
@@ -94,6 +97,8 @@ pub fn to_py_err(err: ara2::Error) -> PyErr {
         }
         ara2::Error::Zip(_) | ara2::Error::Json(_) => MetadataError::new_err(msg),
         ara2::Error::UnsupportedQmode(_) => Ara2Error::new_err(msg),
+        // Every `ara2::Error` variant should have an explicit arm above; this
+        // wildcard exists only because the enum is `#[non_exhaustive]`.
         #[allow(unreachable_patterns)]
         _ => Ara2Error::new_err(msg),
     };
