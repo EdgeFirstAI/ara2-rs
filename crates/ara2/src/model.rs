@@ -136,12 +136,13 @@ impl ShmRegistration {
 
 impl Drop for ShmRegistration {
     fn drop(&mut self) {
-        // SAFETY: `desc` came from dv_shmfd_register on this session and is
-        // unregistered exactly once, here.
+        // SAFETY: `desc` is a live descriptor from dv_shmfd_register.
         let (fd, size) = unsafe {
             let desc = self.desc.as_ref();
             (desc.fd, desc.size)
         };
+        // SAFETY: `desc` came from dv_shmfd_register on this session and is
+        // unregistered exactly once, here.
         let err = unsafe { self.session.lib.dv_shmfd_unregister(self.desc.as_ptr()) };
         if err != 0 {
             log::warn!("dv_shmfd_unregister of fd {fd} ({size} bytes) failed with status {err}");
@@ -1151,8 +1152,12 @@ fn extract_timing(request: *mut dv_infer_request) -> Result<ModelTiming, Error> 
 /// the NPU finishes and retrieve timing statistics.
 ///
 /// The underlying C request is freed automatically on drop via
-/// `dv_infer_free`. If the request has not completed when it is dropped,
-/// the C library cancels it.
+/// `dv_infer_free`. A request that uses only heap tensors and has not
+/// completed when it is dropped is cancelled by the C library. A request
+/// holding shared-memory or DMA-BUF registrations instead waits for
+/// completion on drop, blocking up to about [`DEFAULT_TIMEOUT_MS`] per
+/// state change and at most 4 waits. If it still has not finished, its
+/// registrations are leaked rather than released.
 ///
 /// # Thread safety
 ///
@@ -1341,22 +1346,37 @@ impl InferRequest {
     }
 }
 
+/// Upper bound on `dv_infer_wait_for_completion` calls when a request that
+/// holds registrations is dropped.
+const MAX_DROP_WAITS: usize = 4;
+
+impl InferRequest {
+    fn is_pending(&self) -> bool {
+        // SAFETY: `ptr` stays valid until dv_infer_free in `drop`; this is
+        // the same status read `wait()` performs.
+        let status = unsafe { (*self.ptr).status };
+        status == DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_QUEUED
+            || status == DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_RUNNING
+    }
+}
+
 impl Drop for InferRequest {
     fn drop(&mut self) {
         // The proxy may still be using the registered buffers of a request
-        // that has not finished. Unregistering them mid-flight crashes the
-        // proxy, so give the request a bounded chance to reach a terminal
-        // state before the registrations are released.
+        // that has not finished, and unregistering them mid-flight crashes
+        // the proxy. Give such a request a bounded chance to finish; if it
+        // does not, leak the registrations rather than release them. The
+        // heap `_map_guards` are handled as before: they drop with the
+        // request after dv_infer_free.
         if !self._shm_guards.is_empty() {
             let mut list = [self.ptr];
             let mut completed: *mut dv_infer_request = std::ptr::null_mut();
-            loop {
-                let status = unsafe { (*self.ptr).status };
-                if status != DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_QUEUED
-                    && status != DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_RUNNING
-                {
+            for _ in 0..MAX_DROP_WAITS {
+                if !self.is_pending() {
                     break;
                 }
+                // SAFETY: `ptr` is valid until dv_infer_free below and `list`
+                // holds only that request.
                 let err = unsafe {
                     self.session.lib.dv_infer_wait_for_completion(
                         self.session.ptr,
@@ -1367,11 +1387,21 @@ impl Drop for InferRequest {
                     )
                 };
                 if err != 0 {
-                    log::warn!("pending request did not finish before drop (status {err})");
                     break;
                 }
             }
+            if self.is_pending() {
+                let guards = std::mem::take(&mut self._shm_guards);
+                log::warn!(
+                    "request did not finish within the drop timeout; leaking {} \
+                     shared-memory registrations so the proxy is not left using \
+                     unmapped buffers",
+                    guards.len()
+                );
+                std::mem::forget(guards);
+            }
         }
+        // SAFETY: `ptr` came from dv_infer_async and is freed exactly once.
         unsafe {
             self.session.lib.dv_infer_free(self.ptr);
         }
