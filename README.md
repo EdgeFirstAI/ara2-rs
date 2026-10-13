@@ -143,7 +143,7 @@ Requires a `libaraclient` implementing DVAPI 1.1, 1.3 or 3.0. The following must
   |-----------|-------|-------------------------|
   | Kinara ARA-2 runtime 1.2.1, packaged by [meta-kinara](https://github.com/EdgeFirstAI/meta-kinara) | 1.1 | UNIX `/var/run/ara2.sock` |
   | NXP `imx-nxp-ara2` (rt-sdk-ara2 2.1.1) | 1.3 | UNIX `/var/run/proxy.sock` |
-  | Kinara arart r3.0 | 3.0 | TCP `127.0.0.1:5000` (sample config), or UNIX with `interface_type: "SOCKET"` |
+  | Kinara arart r3.0 | 3.0 | TCP `127.0.0.1:5000` (sample config); UNIX with `interface_type: "SOCKET"` is expected to work but is untested in this release |
 
   [`open_library`](crates/ara2/src/lib.rs) probes the loaded library with `dv_get_client_lib_version` and reads every version-specific struct at that version's layout; 3.0 moves fields within `dv_model`, so no one layout serves all three. A proxy accepts only clients of its own DVAPI version, so a system carries one library. The library's name has also differed in every packaging so far and there is no soname to rely on, so the architecture-suffixed name for the target is tried first (`libaraclient_aarch64.so`, `libaraclient_x86_64.so`), then `libaraclient.so` and `libaraclient.so.1`.
 - **The proxy service** — provides NPU access, must be running before connecting. It is `rt-sdk-ara2.service` under NXP's packaging and `ara2.service` under meta-kinara's.
@@ -159,11 +159,15 @@ Requires a `libaraclient` implementing DVAPI 1.1, 1.3 or 3.0. The following must
 
 `ara2::proxy_endpoint()` reports the endpoint `connect()` would open without opening it; when nothing is found the error lists what was checked.
 
-Only a UNIX socket can pass file descriptors. On a TCP session (`Session::supports_fd_passing()` is false), `allocate_tensors(None)` and the input/output set allocators default to heap memory, and an explicit `TensorMemory::Shm` or `TensorMemory::DmaBuf` fails with `Error::FdPassingUnavailable` before any call reaches the library. Inference works on both transports; zero-copy DMA-BUF needs UNIX. For r3.0, set `interface_type: "SOCKET"` and `interface_socket_file` in the proxy configuration to get it.
+Only a UNIX socket can pass file descriptors. On a TCP session (`Session::supports_fd_passing()` is false), `allocate_tensors(None)` and the input/output set allocators default to heap memory, and an explicit `TensorMemory::Shm` or `TensorMemory::DmaBuf` fails with `Error::FdPassingUnavailable` before any call reaches the library. Inference works on both transports; zero-copy DMA-BUF needs UNIX. `connect()` logs a warning when it selects a TCP endpoint. For r3.0, setting `interface_type: "SOCKET"` and `interface_socket_file` in the proxy configuration is expected to give a UNIX socket with fd passing; that configuration is untested on hardware in this release.
+
+### Versions
+
+`Session::versions()` returns the component versions actually running (client library, proxy, firmware and so on), one entry per component. `Session::supported_versions()` returns every version the proxy declares support for, and may list a component several times (r3.0 lists four firmware versions).
 
 ### Forcing a layout
 
-`ARA2_ABI` (`1.1`, `1.3` or `3.0`) forces a layout, for bringing up a library reporting a version this build does not recognise. It is honoured only when the version probe failed, or when the reported version is unrecognised and has the same major version as the forced layout (forcing `3.0` on a future 3.1 library works; forcing `1.3` on a 3.0 library does not). Any other use fails with `Error::AbiOverrideRejected`, and the search for another library stops there rather than trying the next name.
+`ARA2_ABI` (`1.1`, `1.3` or `3.0`) forces a layout, for bringing up a library reporting a version this build does not recognise. It is refused with `Error::AbiOverrideRejected` when it contradicts the version the library reports: a recognised version other than the forced one, or an unrecognised version with a different major version. Forcing the version the library already reports is accepted, as is any force when the version probe failed. So forcing `3.0` on a future 3.1 library works, and forcing `1.3` on a 3.0 library does not. A refusal stops the library search rather than trying the next name.
 
 ## Building
 

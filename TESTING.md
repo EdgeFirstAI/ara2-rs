@@ -31,8 +31,8 @@ A new test that needs no hardware must be named `offline` (or sit in an `offline
 
 | Board and runtime | DVAPI | Library | Proxy transport | Coverage |
 |-------------------|-------|---------|-----------------|----------|
-| i.MX 8M Plus FRDM with Kinara runtime 1.2.1 | 1.1 | system | UNIX `/run/ara2.sock` | SDK verifier and offline layout tests only for this release |
-| i.MX 95 board with NXP rt-sdk-ara2 2.1.1 | 1.3 | `/usr/lib/libaraclient_aarch64.so` | UNIX `/run/proxy.sock` | Full suite and Python tests |
+| i.MX 8M Plus FRDM with Kinara runtime 1.2.1 | 1.1 | system | UNIX `/var/run/ara2.sock` | SDK verifier and offline layout tests only for this release |
+| i.MX 95 board with NXP rt-sdk-ara2 2.1.1 | 1.3 | `/usr/lib/libaraclient_aarch64.so` | UNIX `/var/run/proxy.sock` | Full suite and Python tests |
 | i.MX 95 FRDM with arart r3.0 | 3.0 | `LD_LIBRARY_PATH=/opt/ara2/art/linux/aarch64/lib` | TCP `127.0.0.1:5000` by default, UNIX with `interface_type: "SOCKET"` | Full suite and Python tests over TCP |
 
 Run the hardware suite single-threaded, since the tests share one NPU.
@@ -74,22 +74,25 @@ These tests check their own expectations against the transport the session is on
 - `model::tests::shm_registrations_are_released`, `dmabuf_request_dropped_before_completion_is_safe`, `registration_outlives_dropped_set_while_pending` — exercise shared-memory registration over UNIX; over TCP they check the refusal and stop.
 - `model::tests::model_layout_reads_are_sane` — every model field read through the version layout is in range and consistent, and input 0 matches the `.dvm` metadata's size and channels where the file has them. A wrong layout reads garbage here rather than failing a call.
 
-To cover both branches on one board, run the suite once per transport. On an r3.0 board whose proxy listens on TCP, switch its configuration to a UNIX socket temporarily (with the board owner's agreement):
+To cover both branches on one board, run the suite once per transport. On an r3.0 board whose proxy listens on TCP, switch its configuration to a UNIX socket temporarily, with the board owner's agreement.
+
+Where the proxy's unit runs chip bring-up before starting the proxy (as the r3.0 install on the i.MX 95 FRDM does), apply each configuration change with a power cycle. That bring-up only succeeds on a cold chip: `systemctl restart` and a warm reboot both leave the chip initialised, the bring-up fails, and the proxy stays down until the board is powered off and on.
 
 ```bash
 cp /opt/ara2/proxy_run.yaml /opt/ara2/proxy_run.yaml.tcp-backup
 # In the proxy: section set
 #     interface_type: "SOCKET"
 #     interface_socket_file: ["/var/run/proxy.sock"]
-systemctl restart <proxy unit>
-# Wait for: test -S /var/run/proxy.sock && systemctl is-active <proxy unit>
+poweroff                      # then cut and restore board power
+# After boot, wait for: systemctl is-active <proxy unit> && test -S /var/run/proxy.sock
 # Run the suite with no ARA2_SOCKET; connect() must pick /var/run/proxy.sock.
 mv /opt/ara2/proxy_run.yaml.tcp-backup /opt/ara2/proxy_run.yaml
-systemctl restart <proxy unit>
-grep ':1388' /proc/net/tcp   # port 5000 listening again
+poweroff                      # then cut and restore board power
+# After boot: systemctl is-active <proxy unit>
+grep ':1388' /proc/net/tcp    # port 5000 listening again
 ```
 
-The restart reruns the unit's chip bring-up. On an r3.0 install whose unit runs chip bring-up before the proxy, that bring-up is written for a cold chip, and its `active_enable` step fails when the chip is already up, leaving the unit failed. A warm reboot does not reset the PCIe card either, so on such a board plan the switch around a power cycle.
+On an install whose unit does no chip bring-up and only starts the proxy, `systemctl restart <proxy unit>` in place of each power cycle is enough.
 
 ### SDK verifier
 

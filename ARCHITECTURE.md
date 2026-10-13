@@ -155,12 +155,7 @@ Session ──Arc──▶ SessionInner (lib handle + session ptr)
   endpoints from the list are dropped.
 - **Model**: NOT cloneable. Owns its loaded NPU resources. Automatically
   unloaded via `dv_model_unload` on drop.
-- **InferRequest**: Created by `Model::submit()`. Holds an `Arc` to the
-  session for the wait call, and the shared-memory registrations of the
-  tensors it uses. Dropping a request that is still pending waits for it,
-  bounded at 4 × `DEFAULT_TIMEOUT_MS`, before `dv_infer_free`; if it is still
-  pending after that, its registrations are leaked rather than released
-  under a running inference.
+- **InferRequest**: Created by `Model::submit()`. Holds an `Arc` to the session for the wait call, and the shared-memory registrations of the tensors it uses. Dropping a request that is still pending waits for it, bounded at 4 × `DEFAULT_TIMEOUT_MS`, before `dv_infer_free`; if it is still pending after that, its registrations are leaked rather than released under a running inference.
 
 ### Thread Safety
 
@@ -225,7 +220,7 @@ ara2-sys                                   ara2
 ```
 
 - **Common and per-version modules.** The crate root holds everything identical across versions; structs whose layout differs are opaque there. `v1_1`, `v1_3` and `v3_0` declare those structs at their own layout under the same names, and carry function tables for functions that exist only in, or differ in signature in, that version. They are loaded from the same library handle as the shared table.
-- **ABI selection.** `open_library()` calls `dv_get_client_lib_version` before anything else and maps major.minor to an `Abi` once per session. `ARA2_ABI` can force one only where it cannot contradict the library: when the probe failed, or when the reported version is unknown and shares the forced ABI's major version. Otherwise it fails with `Error::AbiOverrideRejected`.
+- **ABI selection.** `open_library()` calls `dv_get_client_lib_version` before anything else and maps major.minor to an `Abi` once per session. `ARA2_ABI` is refused with `Error::AbiOverrideRejected` when it contradicts the reported version: a recognised version other than the forced one, or an unrecognised version of a different major version. A force equal to the recognised version, a force when the probe failed, and a force of the same major version over an unrecognised minor are accepted.
 - **One reader.** `raw.rs` is the only module that reads a version-specific struct. Its `with_layout!` macro casts an opaque pointer to the module the session's `Abi` selects and expands its body once per version, so every field access is type-checked against that version's own declaration. Everything else in `ara2` uses the accessors `raw.rs` provides.
 - **Verification.** `crates/ara2-sys/update.sh --verify <version> <sdk-include-dir>` compiles C assertions of every declared size, offset, enumerator and prototype against the real SDK header. It is run by hand when an SDK drops, since SDKs are not available in CI. `ara2-sys/src/lib.rs` pins the verified sizes and offsets as compile-time assertions, so an edit that changes a layout fails the build.
 
