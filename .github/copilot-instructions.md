@@ -9,6 +9,20 @@ bindings to `libaraclient`, dlopen'd by trying each name in
 `ara2::LIBRARY_NAMES` (NXP has shipped it as `libaraclient_aarch64.so`,
 `libaraclient_x86_64.so`, and `libaraclient.so.1` across SDK drops).
 
+Three DVAPI versions are supported: 1.1 (Kinara runtime 1.2.1, packaged by meta-kinara), 1.3 (NXP rt-sdk-ara2 2.1.1) and 3.0 (arart r3.0). Their struct layouts differ (3.0 inserts `hw_cycles` mid-`dv_model`), so the loaded library's version is probed once per session as an `ara2::Abi` and every version-specific struct is read at that version's layout.
+
+### DVAPI layouts
+
+- `ara2-sys` declares the API itself in `crates/ara2-sys/include/`: `dvapi_common.h` (crate root; version-specific structs opaque) and `dvapi_v1_1.h`, `dvapi_v1_3.h`, `dvapi_v3_0.h` (modules `v1_1`, `v1_3`, `v3_0`, each struct in full). No SDK header is committed; our headers carry the Au-Zone Apache-2.0 SPDX header.
+- In our headers: every enumerator has an explicit `= value`; every prototype is on one line; inside `dvapi_v*.h`, version-specific structs are referenced by `struct tag`, never by their `_t` typedef (which names the opaque common type).
+- **Only `crates/ara2/src/raw.rs` reads version-specific structs**, through `with_layout!`. Nowhere else may dereference a `dv_model`, `dv_endpoint_statistics` or similar.
+- After editing a header, run `crates/ara2-sys/update.sh`, then `update.sh --verify <1.1|1.3|3.0> <sdk-include-dir>` for every affected version (see TESTING.md), and update the pins in `crates/ara2-sys/src/lib.rs`.
+- `ARA2_ABI` forces a layout only when the probe failed, or when the reported version is unrecognised and has the same major version; otherwise `Error::AbiOverrideRejected`, and the library search stops there.
+
+### Connection
+
+`Session::connect()` resolves one endpoint and makes one attempt (a failed attempt can poison the 1.1 client): `ARA2_SOCKET` (`/path`, `unix:/path`, `tcp:IPV4:PORT`), then the first existing `SOCKET_PATHS` entry, then `discover()` preferring UNIX over TCP. `ara2::proxy_endpoint()` reports the choice without connecting. TCP sessions cannot pass file descriptors: `supports_fd_passing()` is false, `None` memory allocates heap, and explicit `Shm`/`DmaBuf` fails with `Error::FdPassingUnavailable`.
+
 ### Workspace Structure
 
 | Crate | Purpose | Publish Target |
@@ -23,7 +37,7 @@ bindings to `libaraclient`, dlopen'd by trying each name in
 Session → Endpoint → Model → run() → ModelTiming
 ```
 
-- **Session**: Connection to the ARA-2 proxy via UNIX or TCP socket. Arc-based, cheaply cloneable.
+- **Session**: Connection to the ARA-2 proxy via UNIX or TCP socket (fd-backed tensors need UNIX). Arc-based, cheaply cloneable.
 - **Endpoint**: A single ARA-2 NPU device. Check status, DRAM stats, load models.
 - **Model**: A loaded DVM neural network. Allocate tensors, set inputs, run inference, read outputs.
 
@@ -112,9 +126,19 @@ maturin build --release --features pyo3/abi3-py311
 All tests require an NXP i.MX + ARA-2 PCIe system with:
 
 1. `libaraclient` installed and accessible under one of `ara2::LIBRARY_NAMES`
-2. Proxy service running: `systemctl status rt-sdk-ara2`
+2. Proxy service running (`rt-sdk-ara2`, `ara2`, or the board's r3.0 unit)
 3. ARA-2 device visible: `lspci | grep -i kinara`
-4. Proxy socket available: `ls -la /var/run/proxy.sock`
+4. Proxy endpoint reachable: `Session::connect()` finds it, or set `ARA2_SOCKET`
+
+### Board matrix
+
+| Board | DVAPI | Library | Proxy | Access |
+|-------|-------|---------|-------|--------|
+| imx8mp-frdm | 1.1 | system | UNIX `/run/ara2.sock` | **Occupied: ask the user before any ssh, scp or test run.** Without approval, 1.1 is covered only by the SDK verifier and offline layout tests. |
+| imx95-pro | 1.3 | `/usr/lib/libaraclient_aarch64.so` | UNIX `/run/proxy.sock` | Free to use |
+| imx95-frdm | 3.0 | `LD_LIBRARY_PATH=/opt/ara2/art/linux/aarch64/lib` | TCP `127.0.0.1:5000` | Free to use; changing `ara2-r3.service` or its config needs the user's confirmation and must be restored. A restart of that unit reruns a cold-chip bring-up that fails on a warm chip until the board reboots. |
+
+Run the hardware suite with `--test-threads=1`. Install Python wheels on boards into `~/ara2-rs-test/venv`, never the system Python.
 
 ### Running Tests
 
@@ -137,6 +161,7 @@ cargo nextest run -p ara2
 | Category | Hardware | Env Vars | Notes |
 |----------|----------|----------|-------|
 | `dvm_metadata` | No | None | Pure data parsing tests |
+| `offline` | No | None | Hardware-free logic; name new host-only tests `offline` (or put them in `offline_tests`) so CI runs them |
 | `session` | Yes | None | Needs the proxy running |
 | `endpoint` | Yes | None | Needs the proxy + NPU |
 | `model` | Yes | `ARA2_TEST_MODEL` | Needs a compiled .dvm file |
@@ -145,7 +170,9 @@ cargo nextest run -p ara2
 
 | Variable | Description |
 |----------|-------------|
-| `ARA2_SOCKET` | Proxy socket path; overrides `DEFAULT_SOCKET` for `Session::connect()` |
+| `ARA2_SOCKET` | Pins the proxy endpoint for `Session::connect()`: a socket path, `unix:/path` or `tcp:IPV4:PORT` |
+| `ARA2_ABI` | Forces a layout (`1.1`, `1.3`, `3.0`) under the same-major rule |
+| `ARA2_SDK_V1_1` / `_V1_3` / `_V3_0`, `ARA2_SDK_REQUIRE` | SDK include directories for `ara2-sys`'s `verify_sdk` test |
 | `ARA2_TEST_MODEL` | Path to a `.dvm` model file for model tests |
 | `RUST_LOG` | Log level: `debug`, `info`, `warn`, `error` |
 
@@ -213,7 +240,7 @@ The `Error` enum in `crates/ara2/src/error.rs` covers all error types. Follow th
 ### Unsafe Code
 
 All unsafe blocks are in the FFI layer. When adding new FFI calls:
-1. Add the C function signature to `crates/ara2-sys/src/ffi.rs` (generated by bindgen)
+1. Declare the C prototype in `crates/ara2-sys/include/` (common header if identical in every version, else each `dvapi_v*.h`), regenerate with `update.sh`, and verify against the SDKs
 2. Wrap in a safe Rust function in the appropriate module
 3. Check return codes and convert to `Error`
 4. Document the safety invariant in a `// Safety:` comment

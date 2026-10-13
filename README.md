@@ -135,29 +135,35 @@ with a circular buffer of DMA-BUF tensor sets (2x+ throughput improvement).
 
 ## Runtime Requirements
 
-Requires a `libaraclient` implementing DVAPI 1.1 or 1.3. The following must
-be present on the target system:
+Requires a `libaraclient` implementing DVAPI 1.1, 1.3 or 3.0. The following must be present on the target system:
 
-- **`libaraclient`** — Kinara client library. Both DVAPI generations in
-  circulation are supported: 1.3, from NXP's `imx-nxp-ara2` package
-  (rt-sdk-ara2), and 1.1, from the Kinara ARA-2 runtime that
-  [meta-kinara](https://github.com/EdgeFirstAI/meta-kinara) packages.
-  [`open_library`](crates/ara2/src/lib.rs) probes the loaded library with
-  `dv_get_client_lib_version` and adapts, since the two differ in struct
-  layout. The library's name has also differed in every packaging so far
-  and there is no soname to rely on, so the architecture-suffixed name for
-  the target is tried first (`libaraclient_aarch64.so`,
-  `libaraclient_x86_64.so`), then `libaraclient.so` and
-  `libaraclient.so.1`. Set `ARA2_ABI` to `1.1` or `1.3` to force a layout
-  if a target reports a version this build does not recognise.
-- **The proxy service** — provides NPU access, must be running before
-  connecting. It is `rt-sdk-ara2.service` listening on
-  `/var/run/proxy.sock` under NXP's packaging, and `ara2.service`
-  listening on `/var/run/ara2.sock` under meta-kinara's.
-  `Session::connect()` tries both — see
-  [`SOCKET_PATHS`](crates/ara2/src/lib.rs) — or set `ARA2_SOCKET` to pin
-  one explicitly.
+- **`libaraclient`** — Kinara client library. Three DVAPI generations are in circulation and all are supported:
+
+  | Packaging | DVAPI | Typical proxy transport |
+  |-----------|-------|-------------------------|
+  | Kinara ARA-2 runtime 1.2.1, packaged by [meta-kinara](https://github.com/EdgeFirstAI/meta-kinara) | 1.1 | UNIX `/var/run/ara2.sock` |
+  | NXP `imx-nxp-ara2` (rt-sdk-ara2 2.1.1) | 1.3 | UNIX `/var/run/proxy.sock` |
+  | Kinara arart r3.0 | 3.0 | TCP `127.0.0.1:5000` (sample config), or UNIX with `interface_type: "SOCKET"` |
+
+  [`open_library`](crates/ara2/src/lib.rs) probes the loaded library with `dv_get_client_lib_version` and reads every version-specific struct at that version's layout; 3.0 moves fields within `dv_model`, so no one layout serves all three. A proxy accepts only clients of its own DVAPI version, so a system carries one library. The library's name has also differed in every packaging so far and there is no soname to rely on, so the architecture-suffixed name for the target is tried first (`libaraclient_aarch64.so`, `libaraclient_x86_64.so`), then `libaraclient.so` and `libaraclient.so.1`.
+- **The proxy service** — provides NPU access, must be running before connecting. It is `rt-sdk-ara2.service` under NXP's packaging and `ara2.service` under meta-kinara's.
 - **ARA-2 hardware** — PCIe accelerator card visible via `lspci`
+
+### Connecting
+
+`Session::connect()` chooses one endpoint by inspection and makes a single connection attempt. It takes the first of:
+
+1. `ARA2_SOCKET`, if set: a UNIX socket path (`/var/run/proxy.sock`), `unix:/path`, or `tcp:IPV4:PORT` (`tcp:127.0.0.1:5000`).
+2. The first existing path in [`SOCKET_PATHS`](crates/ara2/src/lib.rs) (`/var/run/proxy.sock`, `/var/run/ara2.sock`).
+3. A running proxy found by `ara2::discover()`, taking a UNIX endpoint over a TCP one.
+
+`ara2::proxy_endpoint()` reports the endpoint `connect()` would open without opening it; when nothing is found the error lists what was checked.
+
+Only a UNIX socket can pass file descriptors. On a TCP session (`Session::supports_fd_passing()` is false), `allocate_tensors(None)` and the input/output set allocators default to heap memory, and an explicit `TensorMemory::Shm` or `TensorMemory::DmaBuf` fails with `Error::FdPassingUnavailable` before any call reaches the library. Inference works on both transports; zero-copy DMA-BUF needs UNIX. For r3.0, set `interface_type: "SOCKET"` and `interface_socket_file` in the proxy configuration to get it.
+
+### Forcing a layout
+
+`ARA2_ABI` (`1.1`, `1.3` or `3.0`) forces a layout, for bringing up a library reporting a version this build does not recognise. It is honoured only when the version probe failed, or when the reported version is unrecognised and has the same major version as the forced layout (forcing `3.0` on a future 3.1 library works; forcing `1.3` on a 3.0 library does not). Any other use fails with `Error::AbiOverrideRejected`, and the search for another library stops there rather than trying the next name.
 
 ## Building
 

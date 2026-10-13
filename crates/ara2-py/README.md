@@ -353,7 +353,7 @@ Pending asynchronous inference request, created by `Model.submit()`.
 - **ProxyEndpoint**: kind (`"unix"`/`"tcp"`), path, host, port, `connect()`
 - **ComponentVersion**: component, version — one entry of `Session.versions()`
 - **Abi** (enum): V1_1, V1_3, V3_0 — the DVAPI generation of the loaded `libaraclient`
-- **State** (enum): Init, Idle, Active, ActiveSlow, ThermalUnknown, Inactive, Fault, Unknown, plus ActiveBoosted and ThermalInactive under DVAPI 1.1 or ThermalActiveSlow and FailSafe under DVAPI 1.3
+- **State** (enum): Init, Idle, Active, ActiveSlow, ThermalUnknown, Inactive, Fault, Unknown, plus ActiveBoosted and ThermalInactive under DVAPI 1.1 or ThermalActiveSlow and FailSafe under DVAPI 1.3 and 3.0
 - **ModelOutputType** (enum): Classification, Detection, SemanticSegmentation, Raw
 - **DramStatistics**: dram_size, free_size, model_occupancy_size, ...
 - **ModelTiming**: run_time_us, input_time_us, output_time_us
