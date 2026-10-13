@@ -455,7 +455,7 @@ impl Model {
     /// Allocate more sets than pipeline slots so a decoder can hold some sets
     /// while the model keeps inferring into others.
     pub fn allocate_output_set(&self, memory: Option<TensorMemory>) -> Result<OutputSet, Error> {
-        let memory = self.resolve_memory(memory);
+        let memory = self.resolve_memory(memory)?;
         let tensors = (0..self.n_outputs())
             .map(|i| {
                 let size = self.output_size(i);
@@ -485,7 +485,7 @@ impl Model {
     /// `memory: None` allocates heap (`TensorMemory::Mem`) when the session
     /// cannot pass file descriptors (TCP); see [`Self::allocate_tensors`].
     pub fn allocate_input_set(&self, memory: Option<TensorMemory>) -> Result<InputSet, Error> {
-        let memory = self.resolve_memory(memory);
+        let memory = self.resolve_memory(memory)?;
         let tensors = (0..self.n_inputs())
             .map(|i| {
                 // Use CHW shape so the tensor is compatible with HAL's TensorImageRef,
@@ -763,7 +763,7 @@ impl Model {
     /// Output tensors use flat shape since they may have padding or
     /// different element sizes.
     pub fn allocate_tensors(&mut self, memory: Option<TensorMemory>) -> Result<(), Error> {
-        let memory = self.resolve_memory(memory);
+        let memory = self.resolve_memory(memory)?;
         self.inputs = (0..self.n_inputs())
             .map(|i| {
                 // Allocate with CHW shape for compatibility with HAL TensorImageRef
@@ -796,15 +796,11 @@ impl Model {
         Ok(())
     }
 
-    /// Heap memory stands in for the platform default on a session that
-    /// cannot pass file descriptors; explicit choices are left alone.
-    fn resolve_memory(&self, memory: Option<TensorMemory>) -> Option<TensorMemory> {
-        match memory {
-            None if !matches!(self.session.socket_type, crate::SocketType::Unix) => {
-                Some(TensorMemory::Mem)
-            }
-            other => other,
-        }
+    fn resolve_memory(&self, memory: Option<TensorMemory>) -> Result<Option<TensorMemory>, Error> {
+        resolve_memory_for(
+            matches!(self.session.socket_type, crate::SocketType::Unix),
+            memory,
+        )
     }
 
     /// Register a tensor's file descriptor with the proxy for zero-copy
@@ -1143,6 +1139,22 @@ impl Model {
                 },
             })
         }
+    }
+}
+
+/// The memory to allocate for `memory` on a session that can (or cannot)
+/// pass file descriptors. Without fd passing, `None` becomes heap and an
+/// explicit `Shm` or `DmaBuf` is refused before anything is allocated.
+fn resolve_memory_for(
+    fd_passing: bool,
+    memory: Option<TensorMemory>,
+) -> Result<Option<TensorMemory>, Error> {
+    match memory {
+        None if !fd_passing => Ok(Some(TensorMemory::Mem)),
+        Some(TensorMemory::Shm | TensorMemory::DmaBuf) if !fd_passing => {
+            Err(Error::FdPassingUnavailable)
+        }
+        other => Ok(other),
     }
 }
 
@@ -2220,5 +2232,42 @@ mod quant_tests {
         assert!(msg.contains("1024"));
         assert!(msg.contains("512"));
         assert!(msg.contains("mismatch"));
+    }
+}
+
+#[cfg(test)]
+mod offline_tests {
+    use super::resolve_memory_for;
+    use crate::Error;
+    use edgefirst_tensor::TensorMemory;
+
+    #[test]
+    fn memory_with_fd_passing_is_unchanged() {
+        for memory in [
+            None,
+            Some(TensorMemory::Mem),
+            Some(TensorMemory::Shm),
+            Some(TensorMemory::DmaBuf),
+        ] {
+            assert_eq!(resolve_memory_for(true, memory).unwrap(), memory);
+        }
+    }
+
+    #[test]
+    fn memory_without_fd_passing_defaults_to_heap_and_refuses_fds() {
+        assert_eq!(
+            resolve_memory_for(false, None).unwrap(),
+            Some(TensorMemory::Mem)
+        );
+        assert_eq!(
+            resolve_memory_for(false, Some(TensorMemory::Mem)).unwrap(),
+            Some(TensorMemory::Mem)
+        );
+        for memory in [TensorMemory::Shm, TensorMemory::DmaBuf] {
+            assert!(matches!(
+                resolve_memory_for(false, Some(memory)),
+                Err(Error::FdPassingUnavailable)
+            ));
+        }
     }
 }
