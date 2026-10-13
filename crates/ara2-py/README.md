@@ -80,9 +80,7 @@ for endpoint in endpoints:
     print(f"State: {state}, Free DRAM: {stats.free_size / stats.dram_size * 100:.1f}%")
 ```
 
-Over TCP (`create_via_tcp_ipv4_socket`, or a proxy configured for `IPV4`)
-file descriptors cannot be passed, so `session.supports_fd_passing` is
-`False` and tensors use heap memory instead of shared-memory or DMA-BUF. Explicitly requesting `"shm"` or `"dma"` from `allocate_tensors()` over TCP raises.
+Over TCP file descriptors cannot be passed, so `session.supports_fd_passing` is `False` and tensors use heap memory instead of shared-memory or DMA-BUF. That applies to `create_via_tcp_ipv4_socket`, and also to `Session.connect()` when the only proxy it finds listens on TCP (a proxy configured for `IPV4`, as the r3.0 sample configuration is). Explicitly requesting `"shm"` or `"dma"` from `allocate_tensors()` over TCP raises `TensorError`.
 
 ## Inference with numpy
 

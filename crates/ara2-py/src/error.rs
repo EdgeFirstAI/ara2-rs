@@ -50,9 +50,9 @@ pyo3::create_exception!(
 /// Convert an `ara2::Error` into the appropriate Python exception.
 ///
 /// Every exception carries `code`, `name`, `sub_code`, `component` and
-/// `severity` attributes. `code` and `name` are set for a status error, the
-/// other three when the library also gave a detailed status; the rest are
-/// `None`.
+/// `severity` attributes (defaulted to `None` on `Ara2Error` by
+/// [`register`]). `code` and `name` are set for a status error, the other
+/// three when the library also gave a detailed status.
 pub fn to_py_err(err: ara2::Error) -> PyErr {
     let msg = err.to_string();
     let py_err = match &err {
@@ -97,8 +97,13 @@ pub fn to_py_err(err: ara2::Error) -> PyErr {
         }
         ara2::Error::Zip(_) | ara2::Error::Json(_) => MetadataError::new_err(msg),
         ara2::Error::UnsupportedQmode(_) => Ara2Error::new_err(msg),
-        // Every `ara2::Error` variant should have an explicit arm above; this
-        // wildcard exists only because the enum is `#[non_exhaustive]`.
+        ara2::Error::TensorSizeMismatch { .. } => TensorError::new_err(msg),
+        ara2::Error::InferenceFailed | ara2::Error::InferenceNotCompleted(_) => {
+            ModelError::new_err(msg)
+        }
+        // Reached by `ara2::Error::Codec`, which exists only when something
+        // else in the build enables ara2's `codec` feature (this crate does
+        // not, so it cannot name the variant), and by variants added later.
         #[allow(unreachable_patterns)]
         _ => Ara2Error::new_err(msg),
     };
@@ -122,6 +127,12 @@ pub fn to_py_err(err: ara2::Error) -> PyErr {
 
 /// Register all exception types on the Python module.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // Class-level defaults, so an exception raised without going through
+    // `to_py_err` still has every attribute the stubs promise.
+    let base = m.py().get_type::<Ara2Error>();
+    for attr in ["code", "name", "sub_code", "component", "severity"] {
+        base.setattr(attr, m.py().None())?;
+    }
     m.add("Ara2Error", m.py().get_type::<Ara2Error>())?;
     m.add("LibraryError", m.py().get_type::<LibraryError>())?;
     m.add("HardwareError", m.py().get_type::<HardwareError>())?;

@@ -934,7 +934,9 @@ class InferRequest:
     during ``wait()`` so other Python threads can run concurrently.
 
     The underlying request is freed automatically when the object is
-    garbage-collected or when ``wait()`` returns.
+    garbage-collected or when ``wait()`` returns. Dropping or
+    garbage-collecting a request that was never waited on blocks while it
+    finishes, for up to about 4 s.
 
     Example::
 

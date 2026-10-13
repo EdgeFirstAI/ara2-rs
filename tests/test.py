@@ -29,6 +29,8 @@ class TestPublicSurface(unittest.TestCase):
             "ModelTiming",
             "DvmMetadata",
             "Ara2Info",
+            "ComponentVersion",
+            "proxy_endpoint",
         ]:
             self.assertTrue(hasattr(ara2, name), f"missing {name}")
 
@@ -41,6 +43,12 @@ class TestSessionErrors(unittest.TestCase):
     def test_invalid_tcp_ip_raises(self):
         with self.assertRaises(Exception):
             ara2.Session.create_via_tcp_ipv4_socket("not.an.ip", 1234)
+
+    def test_direct_errors_have_status_attributes(self):
+        with self.assertRaises(ara2.Ara2Error) as ctx:
+            ara2.Session.create_via_tcp_ipv4_socket("not.an.ip", 1234)
+        for attr in ("code", "name", "sub_code", "component", "severity"):
+            self.assertIsNone(getattr(ctx.exception, attr), attr)
 
 
 class TestVersionsAndTransport(unittest.TestCase):
