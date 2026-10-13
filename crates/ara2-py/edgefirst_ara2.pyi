@@ -115,10 +115,10 @@ class Abi:
 class State:
     """Endpoint operational state returned by ``Endpoint.check_status()``.
 
-    The members are the union of both DVAPI generations. DVAPI 1.3 reuses
-    values 4 and 5 for names 1.1 does not have, so ``ActiveBoosted`` and
-    ``ThermalInactive`` are only reported under 1.1, and
-    ``ThermalActiveSlow`` and ``FailSafe`` only under 1.3.
+    The members are the union of all three DVAPI generations. DVAPI 1.3 and
+    3.0 reuse values 4 and 5 for names 1.1 does not have, so ``ActiveBoosted``
+    and ``ThermalInactive`` are only reported under 1.1, and
+    ``ThermalActiveSlow`` and ``FailSafe`` only under 1.3 and 3.0.
     ``Session.abi`` reports which library is loaded.
     """
 

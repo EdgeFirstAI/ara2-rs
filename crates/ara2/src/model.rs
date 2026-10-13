@@ -412,6 +412,7 @@ impl Model {
     /// Allocate more sets than pipeline slots so a decoder can hold some sets
     /// while the model keeps inferring into others.
     pub fn allocate_output_set(&self, memory: Option<TensorMemory>) -> Result<OutputSet, Error> {
+        let memory = self.resolve_memory(memory);
         let tensors = (0..self.n_outputs())
             .map(|i| {
                 let size = self.output_size(i);
@@ -438,6 +439,7 @@ impl Model {
     /// an arbitrary pool tensor instead of the model's own input, decoupling
     /// the input DMA-BUF from the model slot.
     pub fn allocate_input_set(&self, memory: Option<TensorMemory>) -> Result<InputSet, Error> {
+        let memory = self.resolve_memory(memory);
         let tensors = (0..self.n_inputs())
             .map(|i| {
                 // Use CHW shape so the tensor is compatible with HAL's TensorImageRef,
@@ -728,13 +730,18 @@ impl Model {
     ///
     /// # Arguments
     /// * `memory` - The memory type to use for tensors. Use `TensorMemory::DmaBuf`
-    ///   or `TensorMemory::Shm` for zero-copy inference.
+    ///   or `TensorMemory::Shm` for zero-copy inference. `None` picks the
+    ///   best memory the platform offers, except on a TCP session, which
+    ///   cannot pass file descriptors: there `None` allocates heap
+    ///   (`TensorMemory::Mem`), and an explicit `Shm` or `DmaBuf` fails with
+    ///   [`Error::FdPassingUnavailable`].
     ///
     /// Input tensors are allocated with CHW shape `[channels, height, width]`
     /// to enable zero-copy preprocessing with HAL's `TensorImageRef`.
     /// Output tensors use flat shape since they may have padding or
     /// different element sizes.
     pub fn allocate_tensors(&mut self, memory: Option<TensorMemory>) -> Result<(), Error> {
+        let memory = self.resolve_memory(memory);
         self.inputs = (0..self.n_inputs())
             .map(|i| {
                 // Allocate with CHW shape for compatibility with HAL TensorImageRef
@@ -765,6 +772,17 @@ impl Model {
             .collect::<Result<Vec<_>, Error>>()?;
 
         Ok(())
+    }
+
+    /// Heap memory stands in for the platform default on a session that
+    /// cannot pass file descriptors; explicit choices are left alone.
+    fn resolve_memory(&self, memory: Option<TensorMemory>) -> Option<TensorMemory> {
+        match memory {
+            None if !matches!(self.session.socket_type, crate::SocketType::Unix) => {
+                Some(TensorMemory::Mem)
+            }
+            other => other,
+        }
     }
 
     /// Register a tensor's file descriptor with the proxy for zero-copy
@@ -1352,42 +1370,41 @@ impl Drop for InferRequest {
     fn drop(&mut self) {
         // The proxy may still be using the registered buffers of a request
         // that has not finished, and unregistering them mid-flight crashes
-        // the proxy. Give such a request a bounded chance to finish; if it
-        // does not, leak the registrations rather than release them. The
-        // heap `_map_guards` are handled as before: they drop with the
-        // request after dv_infer_free.
-        if !self._shm_guards.is_empty() {
-            let mut list = [self.ptr];
-            let mut completed: *mut dv_infer_request = std::ptr::null_mut();
-            for _ in 0..MAX_DROP_WAITS {
-                if !self.is_pending() {
-                    break;
-                }
-                // SAFETY: `ptr` is valid until dv_infer_free below and `list`
-                // holds only that request.
-                let err = unsafe {
-                    self.session.lib.dv_infer_wait_for_completion(
-                        self.session.ptr,
-                        list.as_mut_ptr(),
-                        1,
-                        DEFAULT_TIMEOUT_MS,
-                        &mut completed,
-                    )
-                };
-                if err != 0 {
-                    break;
-                }
+        // the proxy. A request with heap buffers must finish too: freeing
+        // it while queued leaves the model busy for the next submit. Give
+        // the request a bounded chance to finish; if it does not, leak any
+        // registrations rather than release them. The heap `_map_guards`
+        // drop with the request after dv_infer_free.
+        let mut list = [self.ptr];
+        let mut completed: *mut dv_infer_request = std::ptr::null_mut();
+        for _ in 0..MAX_DROP_WAITS {
+            if !self.is_pending() {
+                break;
             }
-            if self.is_pending() {
-                let guards = std::mem::take(&mut self._shm_guards);
-                log::warn!(
-                    "request did not finish within the drop timeout; leaking {} \
-                     shared-memory registrations so the proxy is not left using \
-                     unmapped buffers",
-                    guards.len()
-                );
-                std::mem::forget(guards);
+            // SAFETY: `ptr` is valid until dv_infer_free below and `list`
+            // holds only that request.
+            let err = unsafe {
+                self.session.lib.dv_infer_wait_for_completion(
+                    self.session.ptr,
+                    list.as_mut_ptr(),
+                    1,
+                    DEFAULT_TIMEOUT_MS,
+                    &mut completed,
+                )
+            };
+            if err != 0 {
+                break;
             }
+        }
+        if !self._shm_guards.is_empty() && self.is_pending() {
+            let guards = std::mem::take(&mut self._shm_guards);
+            log::warn!(
+                "request did not finish within the drop timeout; leaking {} \
+                 shared-memory registrations so the proxy is not left using \
+                 unmapped buffers",
+                guards.len()
+            );
+            std::mem::forget(guards);
         }
         // SAFETY: `ptr` came from dv_infer_async and is freed exactly once.
         unsafe {

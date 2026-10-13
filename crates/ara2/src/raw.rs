@@ -224,11 +224,16 @@ mod offline_tests {
                 use ara2_sys::$m::dv_endpoint_statistics;
                 // SAFETY: all-zero is a valid bit pattern for this
                 // plain-data struct.
-                let mut s: dv_endpoint_statistics = unsafe { std::mem::zeroed() };
-                s.ep_sys_clk = 1234;
-                s.ep_dram_stats.ep_total_dram_size = 0x1_2345_6789;
-                s.ep_dram_stats.ep_total_free_size = 77;
-                let ptr: *const dv_endpoint_statistics = &s;
+                let mut s: [dv_endpoint_statistics; 2] = unsafe { std::mem::zeroed() };
+                s[0].ep_sys_clk = 1;
+                s[0].ep_dram_stats.ep_total_dram_size = 2;
+                s[0].ep_dram_stats.ep_total_free_size = 3;
+                s[1].ep_sys_clk = 1234;
+                s[1].ep_dram_stats.ep_total_dram_size = 0x1_2345_6789;
+                s[1].ep_dram_stats.ep_total_free_size = 77;
+                // Element 1 sits one version-specific stride in, so an arm
+                // wired to another version's layout reads the wrong bytes.
+                let ptr: *const dv_endpoint_statistics = &s[1];
                 let f = unsafe { endpoint_stats_fields($abi, ptr.cast()) };
                 assert_eq!(f.sys_clk_mhz, 1234);
                 assert_eq!(f.dram.total, 0x1_2345_6789);

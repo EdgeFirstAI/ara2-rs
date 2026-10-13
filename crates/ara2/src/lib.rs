@@ -76,12 +76,13 @@
 //!
 //! `libaraclient` ships in three interface generations (DVAPI 1.1, 1.3 and
 //! 3.0) whose struct layouts differ, and all are supported. 3.0 moves
-//! fields within `dv_model`, so layouts are selected per version. [`open_library`](crate) probes the
-//! loaded library with `dv_get_client_lib_version` and records the result
-//! as an [`Abi`], which [`Session::abi`] reports. This matters to callers
-//! mainly through [`State`]: DVAPI 1.3 reuses two endpoint state values
-//! for different names, so which of them can be reported depends on the
-//! library loaded.
+//! fields within `dv_model`, so layouts are selected per version.
+//! [`open_library`](crate) probes the loaded library with
+//! `dv_get_client_lib_version` and records the result as an [`Abi`], which
+//! [`Session::abi`] reports. This matters to callers mainly through
+//! [`State`]: DVAPI 1.3 and 3.0 reuse two endpoint state values for
+//! different names than 1.1, so which of them can be reported depends on
+//! the library loaded.
 
 use ara2_sys::{araclient, dv_version};
 
@@ -197,7 +198,7 @@ impl std::fmt::Display for DvapiVersion {
 ///
 /// Structs whose layout differs between generations are read through the
 /// loaded generation's own declarations. Endpoint states 4 and 5 also
-/// differ: 1.3 reuses them for different names.
+/// differ: 1.3 and 3.0 reuse them for different names than 1.1.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[non_exhaustive]
 pub enum Abi {
@@ -244,9 +245,13 @@ impl Abi {
 
 /// Environment variable that forces an [`Abi`] rather than probing for one.
 ///
-/// Accepts `1.1`, `1.3` or `3.0`. It exists so a target carrying a DVAPI version
-/// this build does not recognise can still be brought up without waiting on
-/// a new release.
+/// Accepts `1.1`, `1.3` or `3.0`. It exists so a target carrying a DVAPI
+/// version this build does not recognise can still be brought up without
+/// waiting on a new release.
+///
+/// An override that contradicts a library that loaded is reported as
+/// [`Error::AbiOverrideRejected`] rather than skipped: the search for another
+/// candidate library stops there.
 pub const ABI_OVERRIDE_ENV: &str = "ARA2_ABI";
 
 fn abi_override() -> Result<Option<Abi>, error::Error> {

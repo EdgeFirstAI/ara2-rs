@@ -36,8 +36,8 @@ use crate::{
 
 /// The operational state of an NPU endpoint.
 ///
-/// The variant set is the union of both DVAPI generations, because 1.3
-/// reuses values 4 and 5 for names 1.1 does not have. Decoding therefore
+/// The variant set is the union of all three DVAPI generations, because 1.3
+/// and 3.0 reuse values 4 and 5 for names 1.1 does not have. Decoding therefore
 /// takes the [`Abi`] of the library that produced the value, and a variant
 /// documented as belonging to one generation is only ever produced under
 /// it.

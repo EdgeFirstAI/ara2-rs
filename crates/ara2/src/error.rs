@@ -231,8 +231,8 @@ impl std::fmt::Display for Error {
             }
             Error::FdPassingUnavailable => f.write_str(
                 "this session is connected over TCP, which cannot pass file descriptors; \
-                 use heap tensors (memory None), or configure the proxy with \
-                 interface_type: SOCKET for zero-copy tensors",
+                 pass None (heap on TCP) or Some(TensorMemory::Mem), or configure \
+                 the proxy with interface_type: SOCKET for zero-copy tensors",
             ),
             Error::ProcUnavailable { path, source } => write!(
                 f,
