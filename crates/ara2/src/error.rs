@@ -1,5 +1,5 @@
 use crate::DvapiVersion;
-use ara2_sys::{DV_LAYER_OUTPUT_TYPE, dv_status_code};
+use ara2_sys::{DV_LAYER_OUTPUT_TYPE, dv_status_code_t};
 
 /// `#[non_exhaustive]` because the variant set is not fixed: `Error::Codec`
 /// exists only with the `codec` feature, and Cargo unifies features across the
@@ -66,7 +66,7 @@ pub enum Error {
     /// The client library returned a `dv_status_code_t` indicating failure.
     /// Codes are grouped by range: 100s hardware, 200s proxy, 300s client
     /// library, 400s proxy transport, 500s device.
-    Ara2(dv_status_code),
+    Ara2(dv_status_code_t),
     /// A `dv_product_type_t` outside the set this build recognises.
     UnknownProductType(i32),
     /// A `dv_layer_output_type_t` outside the set this build recognises.
@@ -123,8 +123,8 @@ impl From<libloading::Error> for Error {
     }
 }
 
-impl From<dv_status_code> for Error {
-    fn from(e: dv_status_code) -> Self {
+impl From<dv_status_code_t> for Error {
+    fn from(e: dv_status_code_t) -> Self {
         Error::Ara2(e)
     }
 }

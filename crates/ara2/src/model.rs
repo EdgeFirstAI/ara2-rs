@@ -3,7 +3,7 @@ use ara2_sys::{
     DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_COMPLETED,
     DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_FAILED, DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_QUEUED,
     DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_RUNNING, DV_LAYER_OUTPUT_TYPE, dv_blob, dv_endpoint,
-    dv_infer_request, dv_model, dv_model_output_param, dv_shm_descriptor,
+    dv_infer_request, dv_model, dv_shm_descriptor,
 };
 use edgefirst_tensor::{HostView, Tensor, TensorMapTrait as _, TensorMemory, TensorTrait};
 use log::debug;
@@ -814,14 +814,19 @@ impl Model {
         })
     }
 
+    fn fields(&self) -> crate::raw::ModelFields {
+        // SAFETY: `self.ptr` is a live model handle from `self.session`'s library.
+        unsafe { crate::raw::model_fields(self.session.abi, self.ptr) }
+    }
+
     /// Get the number of input tensors for this model.
     pub fn n_inputs(&self) -> usize {
-        unsafe { (*self.ptr).num_inputs as usize }
+        self.fields().num_inputs
     }
 
     /// Get the shape of an input tensor.
     pub fn input_shape(&self, idx: usize) -> [usize; 3] {
-        let input = unsafe { (*self.ptr).input_param.add(idx) };
+        let input = unsafe { self.fields().input_param.add(idx) };
         unsafe {
             [
                 (*input).nch as usize,
@@ -843,7 +848,7 @@ impl Model {
 
     /// Get detailed information about an input tensor.
     pub fn input_info(&self, idx: usize) -> InputTensor {
-        let input = unsafe { (*self.ptr).input_param.add(idx) };
+        let input = unsafe { self.fields().input_param.add(idx) };
 
         let params = unsafe { (*input).preprocess_param };
 
@@ -915,54 +920,36 @@ impl Model {
 
     /// Get the number of output tensors for this model.
     pub fn n_outputs(&self) -> usize {
-        unsafe { (*self.ptr).num_outputs as usize }
+        self.fields().num_outputs
     }
 
-    /// Pointer to output parameter `idx`.
-    ///
-    /// The array belongs to `libaraclient`, so the stride is that
-    /// library's `dv_model_output_param` size, which differs between DVAPI
-    /// generations. `<*mut T>::add` would use the size of whichever type
-    /// the bindings name and land at the wrong address on the other
-    /// generation, so the arithmetic is done in bytes against the probed
-    /// [`crate::Abi`].
-    ///
-    /// This is the only place the ABI is allowed to matter: every field
-    /// read through the returned pointer sits at the same offset in both
-    /// generations.
-    fn output_param(&self, idx: usize) -> *mut dv_model_output_param {
+    /// The fields of output parameter `idx`, read at the loaded library's
+    /// layout.
+    fn output_param(&self, idx: usize) -> crate::raw::OutputFields {
         // SAFETY: `self.ptr` is a live model handle, and callers index
         // within `num_outputs`, which the library sized the array to.
-        unsafe {
-            (*self.ptr)
-                .output_param
-                .cast::<u8>()
-                .add(idx * self.session.abi.output_param_stride())
-                .cast()
-        }
+        unsafe { crate::raw::output_fields(self.session.abi, self.ptr, idx) }
     }
 
     /// Get the shape of an output tensor.
     pub fn output_shape(&self, idx: usize) -> [usize; 3] {
         let output = self.output_param(idx);
-        unsafe {
-            [
-                (*output).nch as usize,
-                (*output).height as usize,
-                (*output).width as usize,
-            ]
-        }
+        [
+            output.nch as usize,
+            output.height as usize,
+            output.width as usize,
+        ]
     }
 
     /// Get the size in bytes of an output tensor (as specified by the model).
     pub fn output_size(&self, idx: usize) -> usize {
         let output = self.output_param(idx);
-        unsafe { (*output).size as usize }
+        output.size as usize
     }
 
     /// Get the size in bytes of an input tensor (as specified by the model).
     pub fn input_size(&self, idx: usize) -> usize {
-        let input = unsafe { (*self.ptr).input_param.add(idx) };
+        let input = unsafe { self.fields().input_param.add(idx) };
         unsafe { (*input).size as usize }
     }
 
@@ -970,12 +957,12 @@ impl Model {
     /// Returns 1 for int8/uint8, 2 for int16/uint16, 4 for float32, etc.
     pub fn output_bpp(&self, idx: usize) -> usize {
         let output = self.output_param(idx);
-        unsafe { (*output).bpp as usize }
+        output.bpp as usize
     }
 
     /// Get the bytes per pixel (element size) for an input tensor.
     pub fn input_bpp(&self, idx: usize) -> usize {
-        let input = unsafe { (*self.ptr).input_param.add(idx) };
+        let input = unsafe { self.fields().input_param.add(idx) };
         unsafe { (*input).bpp as usize }
     }
 
@@ -1066,7 +1053,7 @@ impl Model {
     pub fn output_info(&self, idx: usize) -> Result<OutputTensor, Error> {
         let output = self.output_param(idx);
 
-        let params = unsafe { (*output).postprocess_param };
+        let params = output.postprocess_param;
         unsafe {
             debug!(
                 "output_{} qn: {:?} scale: {:?} offset: {:?} is_signed: {:?}",
@@ -1080,34 +1067,32 @@ impl Model {
 
         unsafe {
             Ok(OutputTensor {
-                layer_id: (*output).layer_id,
-                blob_id: (*output).blob_id,
-                fused_parent_id: (*output).fused_parent_id,
-                layer_name: std::ffi::CStr::from_ptr((*output).layer_name)
+                layer_id: output.layer_id,
+                blob_id: output.blob_id,
+                fused_parent_id: output.fused_parent_id,
+                layer_name: std::ffi::CStr::from_ptr(output.layer_name)
                     .to_string_lossy()
                     .into_owned(),
-                blob_name: std::ffi::CStr::from_ptr((*output).blob_name)
+                blob_name: std::ffi::CStr::from_ptr(output.blob_name)
                     .to_string_lossy()
                     .into_owned(),
-                layer_fused_parent_name: std::ffi::CStr::from_ptr(
-                    (*output).layer_fused_parent_name,
-                )
-                .to_string_lossy()
-                .into_owned(),
-                layer_type: std::ffi::CStr::from_ptr((*output).layer_type)
+                layer_fused_parent_name: std::ffi::CStr::from_ptr(output.layer_fused_parent_name)
                     .to_string_lossy()
                     .into_owned(),
-                layout: std::ffi::CStr::from_ptr((*output).layout)
+                layer_type: std::ffi::CStr::from_ptr(output.layer_type)
                     .to_string_lossy()
                     .into_owned(),
-                size: (*output).size as usize,
-                width: (*output).width as usize,
-                height: (*output).height as usize,
-                nch: (*output).nch as usize,
-                bpp: (*output).bpp as usize,
-                num_classes: (*output).num_classes as usize,
-                layer_output_type: (*output).layer_output_type.try_into()?,
-                max_dynamic_id: (*output).max_dynamic_id,
+                layout: std::ffi::CStr::from_ptr(output.layout)
+                    .to_string_lossy()
+                    .into_owned(),
+                size: output.size as usize,
+                width: output.width as usize,
+                height: output.height as usize,
+                nch: output.nch as usize,
+                bpp: output.bpp as usize,
+                num_classes: output.num_classes as usize,
+                layer_output_type: output.layer_output_type.try_into()?,
+                max_dynamic_id: output.max_dynamic_id,
                 quant: OutputQuantization {
                     qn: (*params).qn,
                     offset: (*params).offset,

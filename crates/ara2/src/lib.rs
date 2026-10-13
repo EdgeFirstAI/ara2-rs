@@ -82,7 +82,9 @@
 //! for different names, so which of them can be reported depends on the
 //! library loaded.
 
-use ara2_sys::{araclient, dv_model_output_param, dv_model_output_param_1_3, dv_version};
+use ara2_sys::{araclient, dv_version};
+
+mod raw;
 
 mod discover;
 pub mod dvm_metadata;
@@ -209,11 +211,9 @@ impl std::fmt::Display for DvapiVersion {
 
 /// The `dvapi.h` generation a loaded `libaraclient` implements.
 ///
-/// Every layout difference between the generations is a field appended to
-/// the end of a struct, so the older layout stays valid for reading fields
-/// both share. Two things do not survive that way and are selected here:
-/// the stride of an array the client indexes, and the meaning of endpoint
-/// states 4 and 5, which 1.3 reuses for different names.
+/// Structs whose layout differs between generations are read through the
+/// loaded generation's own declarations. Endpoint states 4 and 5 also
+/// differ: 1.3 reuses them for different names.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[non_exhaustive]
 pub enum Abi {
@@ -234,18 +234,6 @@ impl std::fmt::Display for Abi {
 }
 
 impl Abi {
-    /// Byte stride between elements of a `dv_model_output_param` array.
-    ///
-    /// The array belongs to the library, so its stride is the library's
-    /// struct size rather than whichever one the bindings happen to name.
-    /// 1.3 appended `has_nms_parent`, taking it from 112 to 120 bytes.
-    pub(crate) const fn output_param_stride(self) -> usize {
-        match self {
-            Abi::V1_1 => size_of::<dv_model_output_param>(),
-            Abi::V1_3 => size_of::<dv_model_output_param_1_3>(),
-        }
-    }
-
     /// Keyed on major and minor only. The one layout change seen so far
     /// landed on a minor bump, and a patch release that moved a field would
     /// be a packaging fault rather than something to accommodate here.

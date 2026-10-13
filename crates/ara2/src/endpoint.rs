@@ -5,26 +5,23 @@ use std::{
 };
 
 use ara2_sys::{
-    DV_ENDPOINT_STATE, DV_ENDPOINT_STATE_1_3_DV_ENDPOINT_STATE_1_3_ACTIVE as V13_ACTIVE,
-    DV_ENDPOINT_STATE_1_3_DV_ENDPOINT_STATE_1_3_ACTIVE_SLOW as V13_ACTIVE_SLOW,
-    DV_ENDPOINT_STATE_1_3_DV_ENDPOINT_STATE_1_3_FAIL_SAFE as V13_FAIL_SAFE,
-    DV_ENDPOINT_STATE_1_3_DV_ENDPOINT_STATE_1_3_FAULT as V13_FAULT,
-    DV_ENDPOINT_STATE_1_3_DV_ENDPOINT_STATE_1_3_IDLE as V13_IDLE,
-    DV_ENDPOINT_STATE_1_3_DV_ENDPOINT_STATE_1_3_INACTIVE as V13_INACTIVE,
-    DV_ENDPOINT_STATE_1_3_DV_ENDPOINT_STATE_1_3_INIT as V13_INIT,
-    DV_ENDPOINT_STATE_1_3_DV_ENDPOINT_STATE_1_3_THERMAL_ACTIVE_SLOW as V13_THERMAL_ACTIVE_SLOW,
-    DV_ENDPOINT_STATE_1_3_DV_ENDPOINT_STATE_1_3_THERMAL_UNKNOWN as V13_THERMAL_UNKNOWN,
-    DV_ENDPOINT_STATE_DV_ENDPOINT_STATE_ACTIVE as V11_ACTIVE,
-    DV_ENDPOINT_STATE_DV_ENDPOINT_STATE_ACTIVE_BOOSTED as V11_ACTIVE_BOOSTED,
-    DV_ENDPOINT_STATE_DV_ENDPOINT_STATE_ACTIVE_SLOW as V11_ACTIVE_SLOW,
-    DV_ENDPOINT_STATE_DV_ENDPOINT_STATE_FAULT as V11_FAULT,
-    DV_ENDPOINT_STATE_DV_ENDPOINT_STATE_IDLE as V11_IDLE,
-    DV_ENDPOINT_STATE_DV_ENDPOINT_STATE_INACTIVE as V11_INACTIVE,
-    DV_ENDPOINT_STATE_DV_ENDPOINT_STATE_INIT as V11_INIT,
-    DV_ENDPOINT_STATE_DV_ENDPOINT_STATE_THERMAL_INACTIVE as V11_THERMAL_INACTIVE,
-    DV_ENDPOINT_STATE_DV_ENDPOINT_STATE_THERMAL_UNKNOWN as V11_THERMAL_UNKNOWN,
+    DV_ENDPOINT_STATE, DV_ENDPOINT_STATE_DV_ENDPOINT_STATE_ACTIVE as ACTIVE,
+    DV_ENDPOINT_STATE_DV_ENDPOINT_STATE_ACTIVE_SLOW as ACTIVE_SLOW,
+    DV_ENDPOINT_STATE_DV_ENDPOINT_STATE_FAULT as FAULT,
+    DV_ENDPOINT_STATE_DV_ENDPOINT_STATE_IDLE as IDLE,
+    DV_ENDPOINT_STATE_DV_ENDPOINT_STATE_INACTIVE as INACTIVE,
+    DV_ENDPOINT_STATE_DV_ENDPOINT_STATE_INIT as INIT,
+    DV_ENDPOINT_STATE_DV_ENDPOINT_STATE_THERMAL_UNKNOWN as THERMAL_UNKNOWN,
     DV_MODEL_PRIORITY_LEVEL_DV_MODEL_PRIORITY_LEVEL_DEFAULT, dv_endpoint,
-    dv_endpoint_dram_statistics, dv_endpoint_stats, dv_model,
+    dv_endpoint_dram_statistics, dv_endpoint_statistics, dv_model,
+    v1_1::{
+        dv_endpoint_state_1_1_DV_ENDPOINT_STATE_ACTIVE_BOOSTED as V11_ACTIVE_BOOSTED,
+        dv_endpoint_state_1_1_DV_ENDPOINT_STATE_THERMAL_INACTIVE as V11_THERMAL_INACTIVE,
+    },
+    v1_3::{
+        dv_endpoint_state_1_3_DV_ENDPOINT_STATE_FAIL_SAFE as V13_FAIL_SAFE,
+        dv_endpoint_state_1_3_DV_ENDPOINT_STATE_THERMAL_ACTIVE_SLOW as V13_THERMAL_ACTIVE_SLOW,
+    },
 };
 
 use crate::{
@@ -86,31 +83,19 @@ impl State {
     /// and runs unchanged while reporting the wrong state; going through
     /// the constants makes a future reassignment a build error.
     pub fn from_raw(value: DV_ENDPOINT_STATE, abi: Abi) -> Self {
-        match abi {
-            Abi::V1_1 => match value {
-                V11_INIT => State::Init,
-                V11_IDLE => State::Idle,
-                V11_ACTIVE => State::Active,
-                V11_ACTIVE_SLOW => State::ActiveSlow,
-                V11_ACTIVE_BOOSTED => State::ActiveBoosted,
-                V11_THERMAL_INACTIVE => State::ThermalInactive,
-                V11_THERMAL_UNKNOWN => State::ThermalUnknown,
-                V11_INACTIVE => State::Inactive,
-                V11_FAULT => State::Fault,
-                _ => State::Unknown(value, abi),
-            },
-            Abi::V1_3 => match value {
-                V13_INIT => State::Init,
-                V13_IDLE => State::Idle,
-                V13_ACTIVE => State::Active,
-                V13_ACTIVE_SLOW => State::ActiveSlow,
-                V13_THERMAL_ACTIVE_SLOW => State::ThermalActiveSlow,
-                V13_FAIL_SAFE => State::FailSafe,
-                V13_THERMAL_UNKNOWN => State::ThermalUnknown,
-                V13_INACTIVE => State::Inactive,
-                V13_FAULT => State::Fault,
-                _ => State::Unknown(value, abi),
-            },
+        match (value, abi) {
+            (INIT, _) => State::Init,
+            (IDLE, _) => State::Idle,
+            (ACTIVE, _) => State::Active,
+            (ACTIVE_SLOW, _) => State::ActiveSlow,
+            (THERMAL_UNKNOWN, _) => State::ThermalUnknown,
+            (INACTIVE, _) => State::Inactive,
+            (FAULT, _) => State::Fault,
+            (V11_ACTIVE_BOOSTED, Abi::V1_1) => State::ActiveBoosted,
+            (V11_THERMAL_INACTIVE, Abi::V1_1) => State::ThermalInactive,
+            (V13_THERMAL_ACTIVE_SLOW, Abi::V1_3) => State::ThermalActiveSlow,
+            (V13_FAIL_SAFE, Abi::V1_3) => State::FailSafe,
+            _ => State::Unknown(value, abi),
         }
     }
 }
@@ -214,13 +199,16 @@ impl Endpoint {
             return Err(err.into());
         }
 
+        // SAFETY: the call succeeded, so `dram_stats` points at the library's
+        // statistics for this endpoint.
+        let d = unsafe { crate::raw::dram_fields(self.session.abi, dram_stats) };
         let stats = DramStatistics {
-            dram_size: unsafe { (*dram_stats).ep_total_dram_size },
-            dram_occupancy_size: unsafe { (*dram_stats).ep_total_dram_occupancy_size },
-            free_size: unsafe { (*dram_stats).ep_total_free_size },
-            reserved_occupancy_size: unsafe { (*dram_stats).ep_total_reserved_occupancy_size },
-            model_occupancy_size: unsafe { (*dram_stats).ep_total_model_occupancy_size },
-            tensor_occupancy_size: unsafe { (*dram_stats).ep_total_tensor_occupancy_size },
+            dram_size: d.total,
+            dram_occupancy_size: d.occupied,
+            free_size: d.free,
+            reserved_occupancy_size: d.reserved,
+            model_occupancy_size: d.models,
+            tensor_occupancy_size: d.tensors,
         };
 
         unsafe {
@@ -240,7 +228,7 @@ impl Endpoint {
     /// surfaces the temperature and core voltage instead.
     pub fn statistics(&self) -> Result<EndpointStatistics, Error> {
         let mut ep_count = 1;
-        let mut stats: *mut dv_endpoint_stats = std::ptr::null_mut();
+        let mut stats: *mut dv_endpoint_statistics = std::ptr::null_mut();
         let err = unsafe {
             self.session.lib.dv_endpoint_get_statistics(
                 self.session.ptr,
@@ -264,19 +252,14 @@ impl Endpoint {
         // Copy out the primitive fields before freeing the SDK buffer, so
         // a fallible `State` conversion can never leak the allocation.
         // SAFETY: checked above that `stats` is non-null and `ep_count` >= 1.
-        let raw = unsafe { &*stats };
-        let state_raw = raw.state;
-        let sys_clk_mhz = raw.ep_sys_clk;
-        let dram_clk_mhz = raw.ep_dram_clk;
-        let core_voltage_v = raw.ep_core_voltage;
-        let temp_c = raw.ep_temp;
+        let raw = unsafe { crate::raw::endpoint_stats_fields(self.session.abi, stats) };
         let dram = DramStatistics {
-            dram_size: raw.ep_dram_stats.ep_total_dram_size,
-            dram_occupancy_size: raw.ep_dram_stats.ep_total_dram_occupancy_size,
-            free_size: raw.ep_dram_stats.ep_total_free_size,
-            reserved_occupancy_size: raw.ep_dram_stats.ep_total_reserved_occupancy_size,
-            model_occupancy_size: raw.ep_dram_stats.ep_total_model_occupancy_size,
-            tensor_occupancy_size: raw.ep_dram_stats.ep_total_tensor_occupancy_size,
+            dram_size: raw.dram.total,
+            dram_occupancy_size: raw.dram.occupied,
+            free_size: raw.dram.free,
+            reserved_occupancy_size: raw.dram.reserved,
+            model_occupancy_size: raw.dram.models,
+            tensor_occupancy_size: raw.dram.tensors,
         };
 
         unsafe {
@@ -286,11 +269,11 @@ impl Endpoint {
         }
 
         Ok(EndpointStatistics {
-            state: State::from_raw(state_raw, self.session.abi),
-            sys_clk_mhz,
-            dram_clk_mhz,
-            core_voltage_v,
-            temp_c,
+            state: State::from_raw(raw.state, self.session.abi),
+            sys_clk_mhz: raw.sys_clk_mhz,
+            dram_clk_mhz: raw.dram_clk_mhz,
+            core_voltage_v: raw.core_voltage_v,
+            temp_c: raw.temp_c,
             dram,
         })
     }
