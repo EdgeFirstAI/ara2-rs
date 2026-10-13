@@ -82,7 +82,7 @@ for endpoint in endpoints:
 
 Over TCP (`create_via_tcp_ipv4_socket`, or a proxy configured for `IPV4`)
 file descriptors cannot be passed, so `session.supports_fd_passing` is
-`False` and tensors use heap memory instead of shared-memory or DMA-BUF.
+`False` and tensors use heap memory instead of shared-memory or DMA-BUF. Explicitly requesting `"shm"` or `"dma"` from `allocate_tensors()` over TCP raises.
 
 ## Inference with numpy
 
@@ -274,7 +274,7 @@ print(f"In-flight: {session.inflight_count()}")
 Connection to the ARA-2 proxy service.
 
 **Static Methods:**
-- `connect() -> Session` - Connect over the UNIX socket named by `ARA2_SOCKET`, falling back to `DEFAULT_SOCKET`
+- `connect() -> Session` - Connect to the endpoint `proxy_endpoint()` resolves: `ARA2_SOCKET` (a path, `unix:` or `tcp:`), then the known socket paths, then running proxies, preferring UNIX
 - `create_via_unix_socket(socket_path: str) -> Session`
 - `create_via_tcp_ipv4_socket(ip: str, port: int) -> Session`
 

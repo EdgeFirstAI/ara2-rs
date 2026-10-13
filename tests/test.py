@@ -17,10 +17,18 @@ class TestPublicSurface(unittest.TestCase):
 
     def test_classes_present(self):
         for name in [
-            "Session", "Endpoint", "Model", "InferRequest",
-            "InputQuantization", "InputPreprocess", "OutputQuantization",
-            "InputTensorInfo", "OutputTensorInfo", "ModelTiming",
-            "DvmMetadata", "Ara2Info",
+            "Session",
+            "Endpoint",
+            "Model",
+            "InferRequest",
+            "InputQuantization",
+            "InputPreprocess",
+            "OutputQuantization",
+            "InputTensorInfo",
+            "OutputTensorInfo",
+            "ModelTiming",
+            "DvmMetadata",
+            "Ara2Info",
         ]:
             self.assertTrue(hasattr(ara2, name), f"missing {name}")
 
@@ -41,9 +49,10 @@ class TestVersionsAndTransport(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         try:
-            cls.session = ara2.Session.connect()
-        except ara2.Ara2Error as e:
-            raise unittest.SkipTest(f"no proxy: {e}")
+            ara2.proxy_endpoint()
+        except ara2.ProxyError as e:
+            raise unittest.SkipTest(f"no proxy endpoint: {e}")
+        cls.session = ara2.Session.connect()
 
     def test_versions_and_transport(self):
         running = self.session.versions()
@@ -55,14 +64,16 @@ class TestVersionsAndTransport(unittest.TestCase):
             len(self.session.supported_versions()), len(running) - 1
         )
         self.assertIsInstance(self.session.supports_fd_passing, bool)
-        self.assertIn(
-            self.session.abi, (ara2.Abi.V1_1, ara2.Abi.V1_3, ara2.Abi.V3_0)
-        )
+        self.assertIn(self.session.abi, (ara2.Abi.V1_1, ara2.Abi.V1_3, ara2.Abi.V3_0))
 
     def test_errors_carry_status_name(self):
-        endpoint = self.session.list_endpoints()[0]
+        endpoints = self.session.list_endpoints()
+        if not endpoints:
+            self.skipTest("no endpoints")
+        endpoint = endpoints[0]
         with self.assertRaises(ara2.Ara2Error) as ctx:
             endpoint.load_model("/nonexistent/model.dvm")
+        self.assertIsNotNone(ctx.exception.name)
         self.assertTrue(ctx.exception.name.startswith("DV_"), ctx.exception.name)
         self.assertIsInstance(ctx.exception.code, int)
 

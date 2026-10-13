@@ -466,12 +466,14 @@ class Session:
 
         Connects to the endpoint :func:`proxy_endpoint` resolves:
         ``ARA2_SOCKET`` if set, otherwise the first entry in
-        :data:`SOCKET_PATHS` that exists, otherwise a running proxy. This is the recommended way to connect; use
+        :data:`SOCKET_PATHS` that exists, otherwise a running proxy. This
+        is the recommended way to connect; use
         :meth:`create_via_unix_socket` when the path must be hardcoded or
         is chosen some other way.
 
         Raises:
-            ProxyError: If the socket does not exist or the proxy is not running.
+            ProxyError: If no proxy endpoint is found, or the connection
+                to the endpoint fails.
         """
         ...
 
