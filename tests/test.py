@@ -35,5 +35,37 @@ class TestSessionErrors(unittest.TestCase):
             ara2.Session.create_via_tcp_ipv4_socket("not.an.ip", 1234)
 
 
+class TestVersionsAndTransport(unittest.TestCase):
+    """Need a running proxy; skipped when none is reachable."""
+
+    @classmethod
+    def setUpClass(cls):
+        try:
+            cls.session = ara2.Session.connect()
+        except ara2.Ara2Error as e:
+            raise unittest.SkipTest(f"no proxy: {e}")
+
+    def test_versions_and_transport(self):
+        running = self.session.versions()
+        names = [v.component for v in running]
+        self.assertIn("proxy", names)
+        self.assertIn("client_lib", names)
+        self.assertLessEqual(names.count("firmware"), 1, names)
+        self.assertGreaterEqual(
+            len(self.session.supported_versions()), len(running) - 1
+        )
+        self.assertIsInstance(self.session.supports_fd_passing, bool)
+        self.assertIn(
+            self.session.abi, (ara2.Abi.V1_1, ara2.Abi.V1_3, ara2.Abi.V3_0)
+        )
+
+    def test_errors_carry_status_name(self):
+        endpoint = self.session.list_endpoints()[0]
+        with self.assertRaises(ara2.Ara2Error) as ctx:
+            endpoint.load_model("/nonexistent/model.dvm")
+        self.assertTrue(ctx.exception.name.startswith("DV_"), ctx.exception.name)
+        self.assertIsInstance(ctx.exception.code, int)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

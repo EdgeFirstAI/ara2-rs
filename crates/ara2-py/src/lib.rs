@@ -55,6 +55,7 @@ fn init(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Type classes
     m.add_class::<types::Abi>()?;
     m.add_class::<types::State>()?;
+    m.add_class::<types::ComponentVersion>()?;
     m.add_class::<types::DramStatistics>()?;
     m.add_class::<types::ModelTiming>()?;
     m.add_class::<types::InputQuantization>()?;

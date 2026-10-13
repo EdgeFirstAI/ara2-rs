@@ -66,8 +66,8 @@ import edgefirst_ara2
 session = edgefirst_ara2.Session.connect()
 
 # Get version information
-versions = session.versions()
-print(f"Proxy version: {versions['proxy']}")
+for v in session.versions():
+    print(f"{v.component}: {v.version}")
 
 # List endpoints
 endpoints = session.list_endpoints()
@@ -79,6 +79,10 @@ for endpoint in endpoints:
     stats = endpoint.dram_statistics()
     print(f"State: {state}, Free DRAM: {stats.free_size / stats.dram_size * 100:.1f}%")
 ```
+
+Over TCP (`create_via_tcp_ipv4_socket`, or a proxy configured for `IPV4`)
+file descriptors cannot be passed, so `session.supports_fd_passing` is
+`False` and tensors use heap memory instead of shared-memory or DMA-BUF.
 
 ## Inference with numpy
 
@@ -275,12 +279,14 @@ Connection to the ARA-2 proxy service.
 - `create_via_tcp_ipv4_socket(ip: str, port: int) -> Session`
 
 **Methods:**
-- `versions() -> dict[str, str]` - Get component versions
+- `versions() -> list[ComponentVersion]` - Versions of the running components
+- `supported_versions() -> list[ComponentVersion]` - Every component version the proxy supports
 - `list_endpoints() -> list[Endpoint]` - List available endpoints
 - `inflight_count() -> int` - Number of pending async inference requests
 
 **Properties:**
 - `socket_type: str` - "unix" or "tcp"
+- `supports_fd_passing: bool` - True over UNIX sockets (shared-memory and DMA-BUF tensors); False over TCP, where tensors are heap-backed
 
 ### Endpoint
 
@@ -332,7 +338,7 @@ Pending asynchronous inference request, created by `Model.submit()`.
 
 ### Module Functions
 
-- `socket_path() -> str` - Resolve the proxy socket path: `ARA2_SOCKET` if set, otherwise the first entry of `SOCKET_PATHS` that exists
+- `proxy_endpoint() -> ProxyEndpoint` - Resolve the endpoint `Session.connect()` opens: `ARA2_SOCKET` if set, otherwise the first entry of `SOCKET_PATHS` that exists, otherwise a running proxy (UNIX before TCP)
 - `discover() -> list[Proxy]` - Find every running ARA-2 proxy and where it listens
 
 ### Metadata Functions
@@ -345,7 +351,8 @@ Pending asynchronous inference request, created by `Model.submit()`.
 
 - **Proxy**: pid, endpoints, config, exe, `connect()` — a running proxy from `discover()`
 - **ProxyEndpoint**: kind (`"unix"`/`"tcp"`), path, host, port, `connect()`
-- **Abi** (enum): V1_1, V1_3 — the DVAPI generation of the loaded `libaraclient`
+- **ComponentVersion**: component, version — one entry of `Session.versions()`
+- **Abi** (enum): V1_1, V1_3, V3_0 — the DVAPI generation of the loaded `libaraclient`
 - **State** (enum): Init, Idle, Active, ActiveSlow, ThermalUnknown, Inactive, Fault, Unknown, plus ActiveBoosted and ThermalInactive under DVAPI 1.1 or ThermalActiveSlow and FailSafe under DVAPI 1.3
 - **ModelOutputType** (enum): Classification, Detection, SemanticSegmentation, Raw
 - **DramStatistics**: dram_size, free_size, model_occupancy_size, ...

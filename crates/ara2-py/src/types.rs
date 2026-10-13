@@ -12,6 +12,36 @@ pub enum Abi {
     V3_0,
 }
 
+/// A component and the version the proxy reports for it.
+#[pyclass(module = "edgefirst_ara2", frozen, get_all, from_py_object)]
+#[derive(Clone)]
+pub struct ComponentVersion {
+    /// Component name, e.g. "proxy", "firmware", "client_lib",
+    /// or "product_type_N" for one this build does not name.
+    pub component: String,
+    /// Version as "major.minor.patch.patch_minor".
+    pub version: String,
+}
+
+impl From<ara2::ComponentVersion> for ComponentVersion {
+    fn from(v: ara2::ComponentVersion) -> Self {
+        ComponentVersion {
+            component: v.component.to_string(),
+            version: v.version.to_string(),
+        }
+    }
+}
+
+#[pymethods]
+impl ComponentVersion {
+    fn __repr__(&self) -> String {
+        format!(
+            "ComponentVersion(component={:?}, version={:?})",
+            self.component, self.version
+        )
+    }
+}
+
 impl From<ara2::Abi> for Abi {
     fn from(abi: ara2::Abi) -> Self {
         match abi {

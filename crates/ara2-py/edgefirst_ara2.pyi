@@ -22,7 +22,7 @@ DEFAULT_SOCKET: str
 Matches ``interface_socket_file`` in NXP's rt-sdk-ara2
 ``proxy_config.yaml``, and is the first entry in :data:`SOCKET_PATHS`.
 Override at runtime with the ``ARA2_SOCKET`` environment variable -- see
-:func:`socket_path` and :meth:`Session.connect`.
+:func:`proxy_endpoint` and :meth:`Session.connect`.
 """
 
 SOCKET_PATHS: list[str]
@@ -33,15 +33,18 @@ NXP's rt-sdk-ara2 configures ``/var/run/proxy.sock``, and the Kinara
 runtime meta-kinara packages configures ``/var/run/ara2.sock``.
 """
 
-def socket_path() -> str:
-    """Resolve the ARA-2 proxy socket path.
+def proxy_endpoint() -> ProxyEndpoint:
+    """Resolve the endpoint :meth:`Session.connect` will open.
 
     Returns ``ARA2_SOCKET`` if it is set, otherwise the first entry in
-    :data:`SOCKET_PATHS` that exists, otherwise :data:`DEFAULT_SOCKET`.
-    :meth:`Session.connect` resolves through this function and then makes
-    a single connection attempt; this is exposed separately for callers
-    that need the path as a string, such as the default value of a CLI
-    flag.
+    :data:`SOCKET_PATHS` that exists, otherwise a running proxy (UNIX
+    before TCP). :meth:`Session.connect` resolves through this function and
+    then makes a single connection attempt; this is exposed separately for
+    callers that need to know where it will connect, such as the default
+    value of a CLI flag.
+
+    Raises:
+        ProxyError: If no proxy endpoint can be found.
     """
     ...
 
@@ -424,6 +427,22 @@ def discover() -> list[Proxy]:
     """
     ...
 
+class ComponentVersion:
+    """A component and the version the proxy reports for it."""
+
+    @property
+    def component(self) -> str:
+        """Component name, e.g. ``"proxy"``, ``"firmware"``, ``"client_lib"``.
+
+        ``"product_type_N"`` for a component this build does not name.
+        """
+        ...
+
+    @property
+    def version(self) -> str:
+        """Version as ``"major.minor.patch.patch_minor"``."""
+        ...
+
 class Session:
     """ARA-2 session for communicating with the proxy.
 
@@ -443,11 +462,11 @@ class Session:
 
     @staticmethod
     def connect() -> Session:
-        """Create a session connected to the proxy over its UNIX socket.
+        """Create a session connected to the proxy.
 
-        Connects at the path :func:`socket_path` resolves: ``ARA2_SOCKET``
-        if set, otherwise the first entry in :data:`SOCKET_PATHS` that
-        exists. This is the recommended way to connect; use
+        Connects to the endpoint :func:`proxy_endpoint` resolves:
+        ``ARA2_SOCKET`` if set, otherwise the first entry in
+        :data:`SOCKET_PATHS` that exists, otherwise a running proxy. This is the recommended way to connect; use
         :meth:`create_via_unix_socket` when the path must be hardcoded or
         is chosen some other way.
 
@@ -504,11 +523,27 @@ class Session:
         """
         ...
 
-    def versions(self) -> dict[str, str]:
-        """Get version information for all components.
+    def versions(self) -> list[ComponentVersion]:
+        """Versions of the components currently running.
 
         Returns:
-            Dictionary mapping component names to version strings.
+            One :class:`ComponentVersion` per running component.
+        """
+        ...
+
+    def supported_versions(self) -> list[ComponentVersion]:
+        """Every component version the proxy supports.
+
+        May list a component more than once.
+        """
+        ...
+
+    @property
+    def supports_fd_passing(self) -> bool:
+        """Whether the session can use shared-memory and DMA-BUF tensors.
+
+        True for UNIX-socket sessions; False over TCP, where tensors live
+        in heap memory.
         """
         ...
 
@@ -1198,7 +1233,7 @@ __all__ = [
     "DEFAULT_SOCKET",
     "SOCKET_PATHS",
     # Functions
-    "socket_path",
+    "proxy_endpoint",
     "discover",
     # Exceptions
     "Ara2Error",
@@ -1213,6 +1248,7 @@ __all__ = [
     "State",
     "ModelOutputType",
     # Data classes
+    "ComponentVersion",
     "DramStatistics",
     "ModelTiming",
     "InputQuantization",

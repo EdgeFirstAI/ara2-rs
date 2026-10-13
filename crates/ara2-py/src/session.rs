@@ -3,9 +3,9 @@
 
 use crate::endpoint::Endpoint;
 use crate::error::to_py_err;
-use crate::types::Abi;
+use crate::types::{Abi, ComponentVersion};
 use pyo3::prelude::*;
-use std::{collections::HashMap, net::Ipv4Addr, path::PathBuf, str::FromStr};
+use std::{net::Ipv4Addr, path::PathBuf, str::FromStr};
 
 /// ARA-2 session for communicating with the proxy.
 ///
@@ -109,16 +109,40 @@ impl Session {
         )))
     }
 
-    /// Get the versions of the components currently running.
+    /// Versions of the components currently running.
     ///
     /// Returns:
-    ///     dict: Dictionary mapping component names to version strings
-    fn versions(&self) -> PyResult<HashMap<String, String>> {
-        let versions = self.inner()?.versions().map_err(to_py_err)?;
-        Ok(versions
+    ///     list[ComponentVersion]: one entry per running component
+    fn versions(&self) -> PyResult<Vec<ComponentVersion>> {
+        Ok(self
+            .inner()?
+            .versions()
+            .map_err(to_py_err)?
             .into_iter()
-            .map(|v| (v.component.to_string(), v.version.to_string()))
+            .map(Into::into)
             .collect())
+    }
+
+    /// Every component version the proxy supports; may list a component
+    /// more than once.
+    ///
+    /// Returns:
+    ///     list[ComponentVersion]: supported component versions
+    fn supported_versions(&self) -> PyResult<Vec<ComponentVersion>> {
+        Ok(self
+            .inner()?
+            .supported_versions()
+            .map_err(to_py_err)?
+            .into_iter()
+            .map(Into::into)
+            .collect())
+    }
+
+    /// True for UNIX-socket sessions, which can use shared-memory and
+    /// DMA-BUF tensors; False over TCP.
+    #[getter]
+    fn supports_fd_passing(&self) -> PyResult<bool> {
+        Ok(self.inner()?.supports_fd_passing())
     }
 
     /// List all available endpoints.
