@@ -49,11 +49,13 @@ pyo3::create_exception!(
 
 /// Convert an `ara2::Error` into the appropriate Python exception.
 ///
-/// A status error carries `code` and `name` attributes, plus `sub_code`,
-/// `component` and `severity` when the library gave a detailed status.
+/// Every exception carries `code`, `name`, `sub_code`, `component` and
+/// `severity` attributes. `code` and `name` are set for a status error, the
+/// other three when the library also gave a detailed status; the rest are
+/// `None`.
 pub fn to_py_err(err: ara2::Error) -> PyErr {
     let msg = err.to_string();
-    match &err {
+    let py_err = match &err {
         ara2::Error::Library(_)
         | ara2::Error::LibraryNotFound { .. }
         | ara2::Error::UnsupportedDvapi { .. }
@@ -64,9 +66,9 @@ pub fn to_py_err(err: ara2::Error) -> PyErr {
         | ara2::Error::ProxyConfigInvalid { .. }
         | ara2::Error::NoProxyEndpoint { .. }
         | ara2::Error::ProcUnavailable { .. } => ProxyError::new_err(msg),
-        ara2::Error::Ara2 { code, name, detail } => {
+        ara2::Error::Ara2 { code, .. } => {
             let code = *code;
-            let py_err = if code >= 500 {
+            if code >= 500 {
                 HardwareError::new_err(msg)
             } else if code >= 400 {
                 ProxyError::new_err(msg)
@@ -80,21 +82,7 @@ pub fn to_py_err(err: ara2::Error) -> PyErr {
                 HardwareError::new_err(msg)
             } else {
                 Ara2Error::new_err(msg)
-            };
-            Python::attach(|py| {
-                let value = py_err.value(py);
-                // Setting an attribute on a fresh exception instance cannot
-                // fail short of memory exhaustion; the message carries the
-                // same information either way.
-                let _ = value.setattr("code", code);
-                let _ = value.setattr("name", name.as_str());
-                if let Some(d) = detail {
-                    let _ = value.setattr("sub_code", d.sub_code);
-                    let _ = value.setattr("component", d.component.to_string());
-                    let _ = value.setattr("severity", d.severity.to_string());
-                }
-            });
-            py_err
+            }
         }
         ara2::Error::Unsupported { .. } => Ara2Error::new_err(msg),
         ara2::Error::UnknownLayerOutputType(_)
@@ -108,7 +96,23 @@ pub fn to_py_err(err: ara2::Error) -> PyErr {
         ara2::Error::UnsupportedQmode(_) => Ara2Error::new_err(msg),
         #[allow(unreachable_patterns)]
         _ => Ara2Error::new_err(msg),
-    }
+    };
+    let (code, name, detail) = match &err {
+        ara2::Error::Ara2 { code, name, detail } => (Some(*code), Some(name.as_str()), *detail),
+        _ => (None, None, None),
+    };
+    Python::attach(|py| {
+        let value = py_err.value(py);
+        // Setting an attribute on a fresh exception instance cannot fail
+        // short of memory exhaustion; the message carries the same
+        // information either way.
+        let _ = value.setattr("code", code);
+        let _ = value.setattr("name", name);
+        let _ = value.setattr("sub_code", detail.map(|d| d.sub_code));
+        let _ = value.setattr("component", detail.map(|d| d.component.to_string()));
+        let _ = value.setattr("severity", detail.map(|d| d.severity.to_string()));
+    });
+    py_err
 }
 
 /// Register all exception types on the Python module.

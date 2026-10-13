@@ -319,7 +319,36 @@ impl Endpoint {
         // SAFETY: the session and endpoint handles are live, the strings
         // outlive the call, and `model` is a local out-pointer.
         let result = match &session.vlib {
-            VersionLib::V1_1(_) => {
+            VersionLib::V1_3(v) if v.dv_model_load_from_file_s.is_ok() => status_result(
+                session,
+                unsafe {
+                    v.dv_model_load_from_file_s(
+                        session.ptr,
+                        self.ptr,
+                        path_ptr,
+                        name_ptr,
+                        priority,
+                        &mut model,
+                    )
+                }
+                .into(),
+            ),
+            VersionLib::V3_0(v) if v.dv_model_load_from_file_e.is_ok() => status_result(
+                session,
+                unsafe {
+                    v.dv_model_load_from_file_e(
+                        session.ptr,
+                        self.ptr,
+                        path_ptr,
+                        name_ptr,
+                        priority,
+                        &mut model,
+                    )
+                }
+                .into(),
+            ),
+            // A forced ARA2_ABI can load a library lacking the detailed symbols.
+            _ => {
                 let code = unsafe {
                     session.lib.dv_model_load_from_file(
                         session.ptr,
@@ -336,34 +365,6 @@ impl Endpoint {
                     Err(session.status_error(code))
                 }
             }
-            VersionLib::V1_3(v) => status_result(
-                session,
-                unsafe {
-                    v.dv_model_load_from_file_s(
-                        session.ptr,
-                        self.ptr,
-                        path_ptr,
-                        name_ptr,
-                        priority,
-                        &mut model,
-                    )
-                }
-                .into(),
-            ),
-            VersionLib::V3_0(v) => status_result(
-                session,
-                unsafe {
-                    v.dv_model_load_from_file_e(
-                        session.ptr,
-                        self.ptr,
-                        path_ptr,
-                        name_ptr,
-                        priority,
-                        &mut model,
-                    )
-                }
-                .into(),
-            ),
         };
 
         if let Err(err) = result {

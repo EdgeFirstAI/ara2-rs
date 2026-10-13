@@ -52,19 +52,19 @@ def socket_path() -> str:
 class Ara2Error(RuntimeError):
     """Base exception for all ARA-2 errors.
 
-    When the client library returned a failing status, the exception
-    carries ``code`` (the ``dv_status_code_t`` value) and ``name`` (the
-    library's name for it). On DVAPI 1.3 and later, calls with a
-    detailed-status variant also set ``sub_code`` (int), ``component``
-    (e.g. ``"proxy"``) and ``severity`` (e.g. ``"retryable"``). Other
-    errors carry none of these.
+    Every instance has the attributes below. When the client library
+    returned a failing status, ``code`` (the ``dv_status_code_t`` value) and
+    ``name`` (the library's name for it) are set. On DVAPI 1.3 and later,
+    calls with a detailed-status variant also set ``sub_code``,
+    ``component`` (e.g. ``"proxy"``) and ``severity`` (e.g.
+    ``"retryable"``). Attributes that do not apply are ``None``.
     """
 
-    code: int
-    name: str
-    sub_code: int
-    component: str
-    severity: str
+    code: int | None
+    name: str | None
+    sub_code: int | None
+    component: str | None
+    severity: str | None
 
 class LibraryError(Ara2Error):
     """Failed to load the ARA-2 client library.

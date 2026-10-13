@@ -202,7 +202,18 @@ impl Model {
         let (ep, model) = (self.endpoint_ptr, self.ptr);
         unsafe {
             match &session.vlib {
-                VersionLib::V1_1(_) => {
+                VersionLib::V1_3(v) if v.dv_infer_async_s.is_ok() => status_result(
+                    session,
+                    v.dv_infer_async_s(session.ptr, ep, model, ip, op, true, request)
+                        .into(),
+                ),
+                VersionLib::V3_0(v) if v.dv_infer_async_e.is_ok() => status_result(
+                    session,
+                    v.dv_infer_async_e(session.ptr, ep, model, ip, op, true, request)
+                        .into(),
+                ),
+                // A forced ARA2_ABI can load a library lacking the detailed symbols.
+                _ => {
                     let code =
                         session
                             .lib
@@ -213,16 +224,6 @@ impl Model {
                         Err(session.status_error(code))
                     }
                 }
-                VersionLib::V1_3(v) => status_result(
-                    session,
-                    v.dv_infer_async_s(session.ptr, ep, model, ip, op, true, request)
-                        .into(),
-                ),
-                VersionLib::V3_0(v) => status_result(
-                    session,
-                    v.dv_infer_async_e(session.ptr, ep, model, ip, op, true, request)
-                        .into(),
-                ),
             }
         }
     }
@@ -1299,7 +1300,22 @@ impl InferRequest {
             // holds only that request.
             unsafe {
                 match &session.vlib {
-                    VersionLib::V1_1(_) => {
+                    VersionLib::V1_3(v) if v.dv_infer_wait_for_completion_s.is_ok() => {
+                        status_result(
+                            session,
+                            v.dv_infer_wait_for_completion_s(sp, lp, 1, timeout_ms, &mut completed)
+                                .into(),
+                        )?
+                    }
+                    VersionLib::V3_0(v) if v.dv_infer_wait_for_completion_e.is_ok() => {
+                        status_result(
+                            session,
+                            v.dv_infer_wait_for_completion_e(sp, lp, 1, timeout_ms, &mut completed)
+                                .into(),
+                        )?
+                    }
+                    // A forced ARA2_ABI can load a library lacking the detailed symbols.
+                    _ => {
                         let code = session.lib.dv_infer_wait_for_completion(
                             sp,
                             lp,
@@ -1311,16 +1327,6 @@ impl InferRequest {
                             return Err(session.status_error(code));
                         }
                     }
-                    VersionLib::V1_3(v) => status_result(
-                        session,
-                        v.dv_infer_wait_for_completion_s(sp, lp, 1, timeout_ms, &mut completed)
-                            .into(),
-                    )?,
-                    VersionLib::V3_0(v) => status_result(
-                        session,
-                        v.dv_infer_wait_for_completion_e(sp, lp, 1, timeout_ms, &mut completed)
-                            .into(),
-                    )?,
                 }
             }
 
