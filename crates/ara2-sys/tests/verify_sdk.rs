@@ -7,7 +7,8 @@
 //! declares, checks each enum typedef's size and signedness, and then
 //! redeclares every function prototype ara2-sys binds, so a mismatched
 //! signature is a "conflicting types" compile error. Versions with no
-//! variable set are skipped, which is the normal case in CI.
+//! variable set are skipped, which is the normal case in CI, unless
+//! `ARA2_SDK_REQUIRE` lists them (comma-separated versions, or `all`).
 
 use std::{
     fmt::Write as _,
@@ -52,23 +53,32 @@ fn crate_file(rel: &str) -> String {
 }
 
 /// `(label, value)` from bindgen's layout assertions, e.g.
-/// `("Offset of field: dv_model::num_inputs", 56)`.
+/// `("Offset of field: dv_model::num_inputs", 56)`. Panics on anything it
+/// cannot parse so a changed bindgen format cannot shrink the checked set.
 fn layout_facts(bindings: &str) -> Vec<(String, u64)> {
     let mut facts = Vec::new();
     let mut rest = bindings;
     while let Some(start) = rest.find("[\"") {
         rest = &rest[start + 2..];
-        let Some(end) = rest.find("\"]") else { break };
+        let end = rest.find("\"]").expect("unterminated layout label");
         let label = rest[..end].to_owned();
         rest = &rest[end + 2..];
-        let (Some(minus), Some(close)) = (rest.find(" - "), rest.find("usize]")) else {
-            break;
-        };
-        if minus > close {
-            continue;
-        }
-        let value = rest[minus + 3..close].trim().parse().expect("layout value");
+        let minus = rest
+            .find(" - ")
+            .unwrap_or_else(|| panic!("no ' - ' after layout label {label:?}"));
+        let close = rest
+            .find("usize]")
+            .unwrap_or_else(|| panic!("no 'usize]' after layout label {label:?}"));
+        assert!(
+            minus < close,
+            "layout label {label:?} is followed by another layout fact before its value"
+        );
+        let text = rest[minus + 3..close].trim();
+        let value = text
+            .parse()
+            .unwrap_or_else(|_| panic!("layout value {text:?} for {label:?}"));
         facts.push((label, value));
+        rest = &rest[close + 6..];
     }
     facts
 }
@@ -102,24 +112,59 @@ fn layout_assert(label: &str, value: u64) -> Option<String> {
     Some(format!("_Static_assert({expr} == {value}, \"{label}\");"))
 }
 
-/// `(name, value)` for every enumerator in one of our headers.
+fn is_enumerator_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+}
+
+fn code_part(line: &str) -> &str {
+    line.split("/*")
+        .next()
+        .unwrap_or("")
+        .split("//")
+        .next()
+        .unwrap_or("")
+        .trim()
+}
+
+/// `(name, value)` for every enumerator in one of our headers. Panics on an
+/// `UPPER_NAME = ...` line whose value is not a plain integer.
 fn enumerators(header: &str) -> Vec<(String, i64)> {
     header
         .lines()
         .filter_map(|line| {
-            let line = line.split("/*").next()?.trim().trim_end_matches(',');
-            let (name, value) = line.split_once('=')?;
+            let code = code_part(line).trim_end_matches(',');
+            let (name, value) = code.split_once('=')?;
             let name = name.trim();
-            let is_ident = !name.is_empty()
-                && name
-                    .chars()
-                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
-            if !is_ident {
+            if !is_enumerator_name(name) {
                 return None;
             }
-            Some((name.to_owned(), value.trim().parse().ok()?))
+            let parsed = value
+                .trim()
+                .parse()
+                .unwrap_or_else(|_| panic!("enumerator value is not a plain integer: {line:?}"));
+            Some((name.to_owned(), parsed))
         })
         .collect()
+}
+
+/// Lines holding an `=` inside an `enum { ... }` block, counted
+/// independently of `enumerators`.
+fn enum_assignment_lines(header: &str) -> usize {
+    let mut inside = false;
+    let mut count = 0;
+    for line in header.lines().map(code_part) {
+        if line.contains("enum ") && line.ends_with('{') {
+            inside = true;
+        } else if inside && line.starts_with('}') {
+            inside = false;
+        } else if inside && line.contains('=') {
+            count += 1;
+        }
+    }
+    count
 }
 
 /// `(typedef name, any negative enumerator)` for each `typedef enum`.
@@ -141,16 +186,46 @@ fn enum_typedefs(header: &str) -> Vec<(String, bool)> {
     out
 }
 
-/// Every one-line function prototype in one of our headers.
+/// Whether `line` mentions `dv_<ident>(`.
+fn has_dv_call_syntax(line: &str) -> bool {
+    line.match_indices("dv_").any(|(i, _)| {
+        let tail = &line[i + 3..];
+        let ident = tail
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .count();
+        ident > 0 && tail[ident..].starts_with('(')
+    })
+}
+
+/// Every one-line function prototype in one of our headers. Panics on a
+/// declaration that spans lines, which the verifier cannot redeclare.
 fn prototypes(header: &str) -> Vec<String> {
     header
         .lines()
         .map(str::trim)
-        .filter(|l| {
-            l.ends_with(");") && l.contains("dv_") && !l.starts_with('*') && !l.starts_with("/*")
+        .filter(|l| !l.starts_with('*') && !l.starts_with("/*") && !l.starts_with("//"))
+        .map(code_part)
+        .filter(|l| has_dv_call_syntax(l))
+        .map(|l| {
+            assert!(
+                l.ends_with(");"),
+                "function prototypes must be complete on one line: {l:?}"
+            );
+            l.to_owned()
         })
-        .map(str::to_owned)
         .collect()
+}
+
+/// Prototype-looking lines counted without `has_dv_call_syntax`.
+fn prototype_lines(header: &str) -> usize {
+    header
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.starts_with('*') && !l.starts_with("/*") && !l.starts_with("//"))
+        .filter(|l| l.starts_with("dv_") || l.contains(" dv_") || l.contains("*dv_"))
+        .filter(|l| l.contains('(') && l.ends_with(");"))
+        .count()
 }
 
 fn check_source(version: &Version) -> String {
@@ -188,6 +263,13 @@ fn check_source(version: &Version) -> String {
 
 fn verify(version: &Version) {
     let Ok(sdk) = std::env::var(version.env) else {
+        let required = std::env::var("ARA2_SDK_REQUIRE").unwrap_or_default();
+        assert!(
+            !required.split(',').any(|r| r == "all" || r == version.name),
+            "{} is not set but ARA2_SDK_REQUIRE names DVAPI {}",
+            version.env,
+            version.name
+        );
         eprintln!(
             "skipping DVAPI {}: {} is not set",
             version.name, version.env
@@ -239,4 +321,41 @@ fn parsers_see_the_declarations() {
     );
     let facts = layout_facts(&crate_file("src/v3_0.rs"));
     assert!(facts.contains(&("Offset of field: dv_model::hw_cycles".to_owned(), 40)));
+}
+
+#[test]
+fn parsers_account_for_everything() {
+    let mut layout_total = 0;
+    for bindings in std::iter::once(COMMON_BINDINGS).chain(VERSIONS.iter().map(|v| v.bindings)) {
+        let text = crate_file(bindings);
+        let parsed = layout_facts(&text).len();
+        assert_eq!(
+            parsed,
+            text.matches("usize]").count(),
+            "layout facts in {bindings}"
+        );
+        if bindings == COMMON_BINDINGS || bindings == "src/v3_0.rs" {
+            layout_total += parsed;
+        }
+    }
+    assert!(
+        layout_total > 200,
+        "only {layout_total} layout facts in common + 3.0"
+    );
+
+    for header in std::iter::once(COMMON_HEADER).chain(VERSIONS.iter().map(|v| v.header)) {
+        let text = crate_file(header);
+        assert_eq!(
+            enumerators(&text).len(),
+            enum_assignment_lines(&text),
+            "enumerators in {header}"
+        );
+        assert_eq!(
+            prototypes(&text).len(),
+            prototype_lines(&text),
+            "prototypes in {header}"
+        );
+    }
+    let common = crate_file(COMMON_HEADER);
+    assert!(enumerators(&common).len() > 20 && prototypes(&common).len() > 20);
 }

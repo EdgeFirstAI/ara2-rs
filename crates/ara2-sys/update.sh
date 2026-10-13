@@ -23,7 +23,7 @@ if [ "$1" = "--verify" ]; then
     esac
     [ -n "$sdk" ] || { echo "$0: SDK include directory not found: $3" >&2; exit 2; }
     var="ARA2_SDK_V$(echo "$version" | tr . _)"
-    env "$var=$sdk" cargo test -p ara2-sys --test verify_sdk -- --nocapture
+    env "$var=$sdk" ARA2_SDK_REQUIRE="$version" cargo test -p ara2-sys --test verify_sdk -- --nocapture
 
     # Informational: what the SDK has that ara2-sys does not declare.
     out="../../target/dvapi-inventory-$version"
