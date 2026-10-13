@@ -67,22 +67,36 @@ impl std::fmt::Debug for Session {
 }
 
 impl Session {
-    /// Connect to the ARA-2 proxy over its UNIX socket, at the path
-    /// [`crate::socket_path`] resolves.
+    /// Connect to the ARA-2 proxy, choosing the endpoint by inspection.
     ///
-    /// This is the recommended way to connect: it lets a deployment
-    /// override the socket path (e.g. a proxy configured to listen
-    /// somewhere other than NXP's default) without a recompile. Use
-    /// [`Session::create_via_unix_socket`] directly when the path must be
-    /// hardcoded or is chosen some other way.
+    /// The endpoint is the first of: `ARA2_SOCKET` (a socket path,
+    /// `unix:/path` or `tcp:IPV4:PORT`), the first existing entry of
+    /// [`crate::SOCKET_PATHS`], or a running proxy found by
+    /// [`crate::discover`], preferring UNIX endpoints over TCP. Exactly one
+    /// connection attempt is made: a failed attempt is not free, as the
+    /// DVAPI 1.1 client keeps state across one and a later create on the
+    /// same handle can come back `DV_SESSION_INVALID_HANDLE`.
+    ///
+    /// This is the recommended way to connect: it lets a deployment pick
+    /// the proxy without a recompile. A TCP session cannot pass file
+    /// descriptors; see [`Session::supports_fd_passing`].
     pub fn connect() -> Result<Self, Error> {
-        // Exactly one connection attempt, against a path chosen by testing
-        // for the socket's existence. Choosing it by connecting instead
-        // would mean a failed attempt whenever the first candidate is not
-        // the right one, and a failed attempt is not free: the DVAPI 1.1
-        // client keeps state across it and a later create on the same
-        // handle can come back DV_SESSION_INVALID_HANDLE.
-        Self::create_via_unix_socket(&crate::socket_path())
+        let endpoint = crate::proxy_endpoint()?;
+        if let crate::ProxyEndpoint::Tcp(ip, port) = &endpoint {
+            log::warn!(
+                "connecting to the ARA-2 proxy over TCP at {ip}:{port}; shared-memory and \
+                 DMA-BUF tensors are unavailable on TCP (set interface_type: SOCKET in the \
+                 proxy configuration to enable them)"
+            );
+        }
+        endpoint.connect()
+    }
+
+    /// Whether this session can pass file descriptors to the proxy, which
+    /// `TensorMemory::Shm` and `TensorMemory::DmaBuf` tensors require. True
+    /// for UNIX-socket sessions, false for TCP.
+    pub fn supports_fd_passing(&self) -> bool {
+        matches!(self.inner.socket_type, SocketType::Unix)
     }
 
     /// Connect to the proxy described by a proxy configuration file.

@@ -258,7 +258,7 @@ Three rules are not negotiable, because the shared workflows assume them:
   so `ara2-py` reaches it, and pyo3 refuses to configure a cross build without
   an interpreter for the target. Nothing is executed; naming the version is
   enough.
-- **`nextest-args` carries `-E 'test(dvm_metadata)'`.** Every other test needs
+- **`nextest-args` carries `-E 'test(dvm_metadata) | test(offline)'`.** Every other test needs
   an ARA-2 NPU and a running proxy. They are deliberately not
   `#[ignore]`d, because on a target they are the point of the suite.
 - **No `clippy-args` override.** `codec` and `decoder` are off by default, so

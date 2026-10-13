@@ -501,9 +501,10 @@ struct Args {
     #[arg(long)]
     camera_name: Option<String>,
 
-    /// UNIX socket path for the ARA-2 proxy service.
-    #[arg(long, default_value_t = ara2::socket_path())]
-    socket: String,
+    /// UNIX socket path for the ARA-2 proxy service. When omitted, the proxy
+    /// is located as `Session::connect` does.
+    #[arg(long)]
+    socket: Option<String>,
 
     /// Camera pixel format.
     #[arg(long, value_enum, default_value_t = FormatArg::Nv12)]
@@ -834,7 +835,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Establish a session with the ARA-2 proxy over a Unix socket, load the
     // DVM model onto the first available NPU endpoint, and allocate
     // DMA-BUF-backed input/output tensors.
-    let session = Session::create_via_unix_socket(&args.socket)?;
+    let session = match &args.socket {
+        Some(path) => Session::create_via_unix_socket(path)?,
+        None => Session::connect()?,
+    };
     let endpoints = session.list_endpoints()?;
     if endpoints.is_empty() {
         eprintln!("No ARA-2 endpoints found.  Is rt-sdk-ara2.service running?");

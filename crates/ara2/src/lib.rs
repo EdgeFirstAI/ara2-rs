@@ -13,8 +13,8 @@
 //! use edgefirst_tensor::{TensorMemory, TensorTrait as _};
 //!
 //! // Connect to the ARA-2 proxy service. Honors the `ARA2_SOCKET`
-//! // environment variable, falling back to the first of `SOCKET_PATHS`
-//! // that exists.
+//! // environment variable, then the known socket paths, then running
+//! // proxies.
 //! let session = Session::connect()?;
 //! let endpoints = session.list_endpoints()?;
 //!
@@ -86,6 +86,7 @@ use ara2_sys::{araclient, dv_version};
 
 mod raw;
 
+mod connect;
 mod discover;
 pub mod dvm_metadata;
 mod endpoint;
@@ -93,6 +94,7 @@ mod error;
 mod model;
 mod session;
 
+pub use connect::proxy_endpoint;
 pub use discover::{PROXY_COMM, Proxy, ProxyConfig, ProxyEndpoint, discover};
 pub use dvm_metadata::{
     Ara2Info, CompilationInfo, DatasetInfo, DeploymentInfo, DvmMetadata, InputSpec, ModelInfo,
@@ -126,29 +128,10 @@ pub const DEFAULT_SOCKET: &str = "/var/run/proxy.sock";
 /// serve both without a deployment having to supply the path.
 pub const SOCKET_PATHS: &[&str] = &[DEFAULT_SOCKET, "/var/run/ara2.sock"];
 
-/// The `ARA2_SOCKET` environment variable, which pins the proxy socket
-/// path instead of searching [`SOCKET_PATHS`].
+/// The `ARA2_SOCKET` environment variable, which pins the proxy endpoint
+/// instead of searching. Accepts a UNIX socket path, `unix:/path`, or
+/// `tcp:IPV4:PORT`.
 pub const SOCKET_OVERRIDE_ENV: &str = "ARA2_SOCKET";
-
-/// Resolves the ARA-2 proxy socket path: `ARA2_SOCKET` if set, otherwise
-/// the first entry in [`SOCKET_PATHS`] that exists, otherwise
-/// [`DEFAULT_SOCKET`].
-///
-/// [`Session::connect`] resolves through this function and then makes a
-/// single connection attempt. Selecting by existence rather than by
-/// connecting is deliberate: a failed attempt is not free, as the DVAPI
-/// 1.1 client keeps state across one and a later create on the same
-/// handle can come back `DV_SESSION_INVALID_HANDLE`.
-pub fn socket_path() -> String {
-    if let Ok(path) = std::env::var(SOCKET_OVERRIDE_ENV) {
-        return path;
-    }
-    SOCKET_PATHS
-        .iter()
-        .find(|path| std::path::Path::new(path).exists())
-        .unwrap_or(&DEFAULT_SOCKET)
-        .to_string()
-}
 
 /// The architecture-suffixed `libaraclient` name NXP's `imx-nxp-ara2`
 /// package ships for this target, tried first in [`LIBRARY_NAMES`].

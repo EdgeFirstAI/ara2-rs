@@ -770,6 +770,9 @@ impl Model {
     /// Register a tensor's file descriptor with the proxy for zero-copy
     /// transfers.
     fn shmfd_register(&self, tensor: &Tensor<u8>) -> Result<ShmRegistration, Error> {
+        if !matches!(self.session.socket_type, crate::SocketType::Unix) {
+            return Err(Error::FdPassingUnavailable);
+        }
         let mut desc: *mut dv_shm_descriptor = std::ptr::null_mut();
         match tensor.memory() {
             TensorMemory::Shm | TensorMemory::DmaBuf => {}

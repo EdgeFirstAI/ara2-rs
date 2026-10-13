@@ -32,8 +32,8 @@ impl Session {
 
 #[pymethods]
 impl Session {
-    /// Create a session connected to the ARA-2 proxy over its UNIX socket,
-    /// at the path `socket_path()` resolves.
+    /// Create a session connected to the ARA-2 proxy at the endpoint
+    /// `proxy_endpoint()` resolves (UNIX socket or TCP).
     ///
     /// This is the recommended way to connect. Use
     /// `create_via_unix_socket` directly when the path must be hardcoded

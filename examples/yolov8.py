@@ -412,7 +412,10 @@ def main() -> None:
         choices=["class", "instance", "track"],
         help="Segmentation mask color assignment (default: class)",
     )
-    parser.add_argument("--socket", default=ara2.socket_path())
+    parser.add_argument(
+        "--socket",
+        help="UNIX socket path (default: locate the proxy as Session.connect does)",
+    )
     args = parser.parse_args()
 
     # Map --color-mode to the edgefirst-image ColorMode enum
@@ -443,7 +446,10 @@ def main() -> None:
             )
 
     # ── 2. Connect to ARA-2 and load model ───────────────────────────────
-    session = ara2.Session.create_via_unix_socket(args.socket)
+    if args.socket:
+        session = ara2.Session.create_via_unix_socket(args.socket)
+    else:
+        session = ara2.Session.connect()
     endpoints = session.list_endpoints()
     if not endpoints:
         print("No ARA-2 endpoints found. Is the proxy running?")

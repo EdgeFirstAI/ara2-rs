@@ -116,7 +116,7 @@ jobs:
       clippy-extra-args: >-
         --workspace --all-targets --locked
         --features ara2/codec,ara2/decoder -- -D warnings
-      nextest-args: --workspace --locked -E 'test(dvm_metadata)'
+      nextest-args: --workspace --locked -E 'test(dvm_metadata) | test(offline)'
       cache-key: quick-x86_64
 
   full:
@@ -139,7 +139,7 @@ jobs:
       # review cadence. Quick, which does run per push, stays free.
       runner-class-linux: larger
       runner-class-linux-arm: larger
-      nextest-args: --workspace --locked -E 'test(dvm_metadata)'
+      nextest-args: --workspace --locked -E 'test(dvm_metadata) | test(offline)'
       env: PYO3_CROSS_PYTHON_VERSION=3.11
       # No `hack-args` here. rust-full gates the feature-combination lane on
       # `nightly`, so passing it to a pull-request Full run configures a job

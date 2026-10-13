@@ -798,7 +798,10 @@ def main() -> None:
         choices=["class", "instance", "track"],
         help="Segmentation mask color assignment (default: class)",
     )
-    ap.add_argument("--socket", default=ara2.socket_path())
+    ap.add_argument(
+        "--socket",
+        help="UNIX socket path (default: locate the proxy as Session.connect does)",
+    )
     args = ap.parse_args()
 
     cam_w, cam_h = args.width, args.height
@@ -831,7 +834,10 @@ def main() -> None:
             )
 
     # ── 3. Connect to ARA-2 and load model ───────────────────────────────
-    session = ara2.Session.create_via_unix_socket(args.socket)
+    if args.socket:
+        session = ara2.Session.create_via_unix_socket(args.socket)
+    else:
+        session = ara2.Session.connect()
     endpoints = session.list_endpoints()
     if not endpoints:
         sys.exit("No ARA-2 endpoints found.  Is rt-sdk-ara2.service running?")

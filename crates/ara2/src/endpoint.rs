@@ -347,6 +347,38 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_dram_statistics_nonzero() {
+        let session = crate::tests::test_session();
+        let endpoints = session.list_endpoints().unwrap();
+        let endpoint = &endpoints[0];
+        let stats = endpoint
+            .dram_statistics()
+            .expect("should get DRAM statistics");
+        assert!(stats.dram_size > 0, "DRAM size should be non-zero");
+    }
+
+    #[test]
+    fn test_statistics_nonzero() {
+        let session = crate::tests::test_session();
+        let endpoints = session.list_endpoints().unwrap();
+        let endpoint = &endpoints[0];
+        let stats = endpoint.statistics().expect("should get statistics");
+        assert!(stats.sys_clk_mhz > 0, "system clock should be non-zero");
+        assert!(stats.dram_clk_mhz > 0, "DRAM clock should be non-zero");
+        assert!(stats.temp_c.is_finite(), "temperature should be finite");
+        assert!(
+            stats.core_voltage_v.is_finite(),
+            "core voltage should be finite"
+        );
+        assert!(stats.dram.dram_size > 0, "DRAM size should be non-zero");
+    }
+}
+
+#[cfg(test)]
+mod offline_tests {
+    use super::*;
+
     /// The two values DVAPI 1.3 reuses. A single mapping cannot serve both
     /// generations, and getting it wrong is silent: the integers are the
     /// same, so only the reported name differs.
@@ -384,32 +416,5 @@ mod tests {
             State::from_raw(1007, Abi::V1_1),
             State::Unknown(1007, Abi::V1_1)
         );
-    }
-
-    #[test]
-    fn test_dram_statistics_nonzero() {
-        let session = crate::tests::test_session();
-        let endpoints = session.list_endpoints().unwrap();
-        let endpoint = &endpoints[0];
-        let stats = endpoint
-            .dram_statistics()
-            .expect("should get DRAM statistics");
-        assert!(stats.dram_size > 0, "DRAM size should be non-zero");
-    }
-
-    #[test]
-    fn test_statistics_nonzero() {
-        let session = crate::tests::test_session();
-        let endpoints = session.list_endpoints().unwrap();
-        let endpoint = &endpoints[0];
-        let stats = endpoint.statistics().expect("should get statistics");
-        assert!(stats.sys_clk_mhz > 0, "system clock should be non-zero");
-        assert!(stats.dram_clk_mhz > 0, "DRAM clock should be non-zero");
-        assert!(stats.temp_c.is_finite(), "temperature should be finite");
-        assert!(
-            stats.core_voltage_v.is_finite(),
-            "core voltage should be finite"
-        );
-        assert!(stats.dram.dram_size > 0, "DRAM size should be non-zero");
     }
 }

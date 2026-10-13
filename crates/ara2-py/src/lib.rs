@@ -11,12 +11,14 @@ pub mod types;
 
 use pyo3::prelude::*;
 
-/// Resolves the ARA-2 proxy socket path: `ARA2_SOCKET` if set, otherwise
-/// the first entry in `SOCKET_PATHS` that exists, otherwise
-/// `DEFAULT_SOCKET`.
+/// Resolves the endpoint `Session.connect()` will open: `ARA2_SOCKET` if
+/// set, otherwise the first entry in `SOCKET_PATHS` that exists, otherwise
+/// a running proxy (UNIX before TCP).
 #[pyfunction]
-fn socket_path() -> String {
-    ara2::socket_path()
+fn proxy_endpoint() -> PyResult<discover::ProxyEndpoint> {
+    ara2::proxy_endpoint()
+        .map(discover::ProxyEndpoint)
+        .map_err(error::to_py_err)
 }
 
 /// EdgeFirst ARA-2 Python Library
@@ -79,7 +81,7 @@ fn init(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(metadata::has_metadata, m)?)?;
 
     // Session helpers
-    m.add_function(wrap_pyfunction!(socket_path, m)?)?;
+    m.add_function(wrap_pyfunction!(proxy_endpoint, m)?)?;
     m.add_function(wrap_pyfunction!(discover::discover, m)?)?;
 
     Ok(())

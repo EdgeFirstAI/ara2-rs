@@ -115,9 +115,10 @@ struct Args {
     #[arg(long, value_enum, default_value_t = ColorModeArg::Class)]
     color_mode: ColorModeArg,
 
-    /// UNIX socket path for the ARA-2 proxy service.
-    #[arg(long, default_value_t = ara2::socket_path())]
-    socket: String,
+    /// UNIX socket path for the ARA-2 proxy service. When omitted, the proxy
+    /// is located as `Session::connect` does.
+    #[arg(long)]
+    socket: Option<String>,
 }
 
 /// How segmentation mask colors are assigned.
@@ -452,7 +453,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Task: {task:?}, classes: {}", labels.len());
 
     // ── 2. Connect to ARA-2 and load model ───────────────────────────────
-    let session = Session::create_via_unix_socket(&args.socket)?;
+    let session = match &args.socket {
+        Some(path) => Session::create_via_unix_socket(path)?,
+        None => Session::connect()?,
+    };
     let endpoint = &session.list_endpoints()?[0];
     println!(
         "Endpoint: {:?}, DRAM free: {:.1} MB",

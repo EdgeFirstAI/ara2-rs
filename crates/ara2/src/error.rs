@@ -56,6 +56,16 @@ pub enum Error {
         /// The process it came from, when it came from [`crate::discover`].
         pid: Option<u32>,
     },
+    /// `ARA2_SOCKET` is not a usable endpoint. Carries the value.
+    InvalidSocketOverride(String),
+    /// No proxy endpoint could be found. Lists every candidate checked.
+    NoProxyFound {
+        /// Each candidate, in the order checked.
+        checked: Vec<String>,
+    },
+    /// Shared-memory or DMA-BUF tensors were requested on a TCP session,
+    /// which cannot pass file descriptors to the proxy.
+    FdPassingUnavailable,
     /// `/proc` could not be read, so running proxies cannot be found.
     ProcUnavailable {
         /// The path under `/proc` that could not be read.
@@ -202,6 +212,19 @@ impl std::fmt::Display for Error {
                 ),
                 None => f.write_str("no endpoint this client can reach was declared"),
             },
+            Error::InvalidSocketOverride(v) => write!(
+                f,
+                "{} is set to {v:?}; expected a socket path, unix:/path, or tcp:IPV4:PORT",
+                crate::SOCKET_OVERRIDE_ENV
+            ),
+            Error::NoProxyFound { checked } => {
+                write!(f, "no ARA-2 proxy found; checked {}", checked.join(", "))
+            }
+            Error::FdPassingUnavailable => f.write_str(
+                "this session is connected over TCP, which cannot pass file descriptors; \
+                 use heap tensors (memory None), or configure the proxy with \
+                 interface_type: SOCKET for zero-copy tensors",
+            ),
             Error::ProcUnavailable { path, source } => write!(
                 f,
                 "could not read {} to look for a running proxy: {source}",
