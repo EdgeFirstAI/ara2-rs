@@ -235,7 +235,7 @@ The `Error` enum in `crates/ara2/src/error.rs` covers all error types. Follow th
 - Add a variant to `Error`
 - Add a `From<T>` impl
 - Add a `Display` match arm
-- FFI errors use `From<dv_status_code>` converting non-zero return codes
+- A non-zero DVAPI status becomes `Error::Ara2` through `SessionInner::status_error` (or `status::status_error_from` before a session exists), which names it with the library's `dv_stringify_status_code`. There is no `From<dv_status_code>` conversion.
 
 ### Unsafe Code
 
@@ -285,7 +285,7 @@ Three rules are not negotiable, because the shared workflows assume them:
   so `ara2-py` reaches it, and pyo3 refuses to configure a cross build without
   an interpreter for the target. Nothing is executed; naming the version is
   enough.
-- **`nextest-args` carries `-E 'test(dvm_metadata) | test(offline)'`.** Every other test needs
+- **`nextest-args` carries `-E 'test(dvm_metadata) | test(offline) | binary(verify_sdk)'`.** `verify_sdk` skips each SDK check when no SDK is set, so only its parser tests run. Every other test needs
   an ARA-2 NPU and a running proxy. They are deliberately not
   `#[ignore]`d, because on a target they are the point of the suite.
 - **No `clippy-args` override.** `codec` and `decoder` are off by default, so

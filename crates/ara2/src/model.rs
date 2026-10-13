@@ -2114,7 +2114,7 @@ mod tests {
 }
 
 #[cfg(test)]
-mod quant_tests {
+mod offline_quant_tests {
     use super::*;
 
     #[test]

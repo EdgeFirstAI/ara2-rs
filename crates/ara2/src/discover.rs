@@ -357,7 +357,7 @@ fn tcp_listeners(inodes: &[u64]) -> Vec<ProxyEndpoint> {
 }
 
 #[cfg(test)]
-mod tests {
+mod offline_tests {
     use super::*;
 
     #[test]

@@ -322,7 +322,7 @@ The GitHub Actions workflows run the following checks:
 
 | Workflow | What runs |
 |----------|-----------|
-| `ci.yml` | `cargo fmt`, clippy with and without `ara2/codec,ara2/decoder`, `cargo nextest run --workspace -E 'test(dvm_metadata) \| test(offline)'`, builds and Python wheels |
+| `ci.yml` | `cargo fmt`, clippy with and without `ara2/codec,ara2/decoder`, `cargo nextest run --workspace -E 'test(dvm_metadata) \| test(offline) \| binary(verify_sdk)'`, builds and Python wheels |
 | `nightly.yml` | The same test selection on a schedule |
 
 Hardware-dependent tests (`session`, `endpoint`, `model`) do not run in CI — they require ARA-2 hardware. The SDK verifier does not run either, as no SDK is available there; run it by hand when an SDK changes.
