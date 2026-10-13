@@ -22,6 +22,10 @@ use ara2_sys::{
         dv_endpoint_state_1_3_DV_ENDPOINT_STATE_FAIL_SAFE as V13_FAIL_SAFE,
         dv_endpoint_state_1_3_DV_ENDPOINT_STATE_THERMAL_ACTIVE_SLOW as V13_THERMAL_ACTIVE_SLOW,
     },
+    v3_0::{
+        dv_endpoint_state_3_0_DV_ENDPOINT_STATE_FAIL_SAFE as V30_FAIL_SAFE,
+        dv_endpoint_state_3_0_DV_ENDPOINT_STATE_THERMAL_ACTIVE_SLOW as V30_THERMAL_ACTIVE_SLOW,
+    },
 };
 
 use crate::{
@@ -95,6 +99,8 @@ impl State {
             (V11_THERMAL_INACTIVE, Abi::V1_1) => State::ThermalInactive,
             (V13_THERMAL_ACTIVE_SLOW, Abi::V1_3) => State::ThermalActiveSlow,
             (V13_FAIL_SAFE, Abi::V1_3) => State::FailSafe,
+            (V30_THERMAL_ACTIVE_SLOW, Abi::V3_0) => State::ThermalActiveSlow,
+            (V30_FAIL_SAFE, Abi::V3_0) => State::FailSafe,
             _ => State::Unknown(value, abi),
         }
     }
@@ -199,7 +205,15 @@ impl Endpoint {
             return Err(err.into());
         }
 
-        // SAFETY: the call succeeded, so `dram_stats` points at the library's
+        if dram_stats.is_null() || ep_count <= 0 {
+            return Err(Error::NullPointer(
+                "dv_endpoint_get_dram_statistics returned success with a null or empty buffer"
+                    .to_owned(),
+            ));
+        }
+
+        // SAFETY: checked above that `dram_stats` is non-null and `ep_count`
+        // >= 1, and the call succeeded, so it points at the library's
         // statistics for this endpoint.
         let d = unsafe { crate::raw::dram_fields(self.session.abi, dram_stats) };
         let stats = DramStatistics {
@@ -391,6 +405,12 @@ mod offline_tests {
     }
 
     #[test]
+    fn state_4_and_5_decode_like_1_3_under_3_0() {
+        assert_eq!(State::from_raw(4, Abi::V3_0), State::ThermalActiveSlow);
+        assert_eq!(State::from_raw(5, Abi::V3_0), State::FailSafe);
+    }
+
+    #[test]
     fn state_shared_values_decode_alike() {
         for (raw, expected) in [
             (0, State::Init),
@@ -403,6 +423,7 @@ mod offline_tests {
         ] {
             assert_eq!(State::from_raw(raw, Abi::V1_1), expected);
             assert_eq!(State::from_raw(raw, Abi::V1_3), expected);
+            assert_eq!(State::from_raw(raw, Abi::V3_0), expected);
         }
     }
 

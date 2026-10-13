@@ -54,7 +54,8 @@ pub fn to_py_err(err: ara2::Error) -> PyErr {
         ara2::Error::Library(_)
         | ara2::Error::LibraryNotFound { .. }
         | ara2::Error::UnsupportedDvapi { .. }
-        | ara2::Error::AbiOverrideInvalid(_) => LibraryError::new_err(msg),
+        | ara2::Error::AbiOverrideInvalid(_)
+        | ara2::Error::AbiOverrideRejected { .. } => LibraryError::new_err(msg),
         ara2::Error::Io(_) => ProxyError::new_err(msg),
         ara2::Error::ProxyConfigUnreadable { .. }
         | ara2::Error::ProxyConfigInvalid { .. }

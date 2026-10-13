@@ -9,6 +9,7 @@ use pyo3::prelude::*;
 pub enum Abi {
     V1_1,
     V1_3,
+    V3_0,
 }
 
 impl From<ara2::Abi> for Abi {
@@ -16,9 +17,10 @@ impl From<ara2::Abi> for Abi {
         match abi {
             ara2::Abi::V1_1 => Abi::V1_1,
             ara2::Abi::V1_3 => Abi::V1_3,
+            ara2::Abi::V3_0 => Abi::V3_0,
             // ara2::Abi is #[non_exhaustive]; a generation added upstream
             // reaches Python as the newest one this build knows.
-            _ => Abi::V1_3,
+            _ => Abi::V3_0,
         }
     }
 }
@@ -29,6 +31,7 @@ impl Abi {
         match self {
             Abi::V1_1 => "1.1",
             Abi::V1_3 => "1.3",
+            Abi::V3_0 => "3.0",
         }
     }
 

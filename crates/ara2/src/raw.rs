@@ -22,7 +22,8 @@ use crate::Abi;
 /// `$body` for the version `$abi` selects. Must be used in an `unsafe`
 /// context; `$ptr` must point at a live struct the loaded library produced.
 macro_rules! with_layout {
-    ($abi:expr, $ptr:expr => $ty:ident, |$v:ident| $body:expr) => {
+    ($abi:expr, $ptr:expr => $ty:ident, |$v:ident| $body:expr) => {{
+        let _: *const ::ara2_sys::$ty = $ptr;
         match $abi {
             $crate::Abi::V1_1 => {
                 let $v = &*($ptr as *const ::ara2_sys::v1_1::$ty);
@@ -32,8 +33,12 @@ macro_rules! with_layout {
                 let $v = &*($ptr as *const ::ara2_sys::v1_3::$ty);
                 $body
             }
+            $crate::Abi::V3_0 => {
+                let $v = &*($ptr as *const ::ara2_sys::v3_0::$ty);
+                $body
+            }
         }
-    };
+    }};
 }
 
 /// The `dv_model` fields ara2 reads.
@@ -173,4 +178,66 @@ pub(crate) unsafe fn endpoint_stats_fields(
             },
         })
     }
+}
+
+#[cfg(test)]
+mod offline_tests {
+    use super::*;
+
+    /// Builds a version's `dv_model` over a two-element output array and
+    /// checks `model_fields` and `output_fields` read element 1 back.
+    macro_rules! model_roundtrip {
+        ($name:ident, $abi:expr, $m:ident) => {
+            #[test]
+            fn $name() {
+                use ara2_sys::$m::{dv_model, dv_model_output_param};
+                // SAFETY: all-zero is a valid bit pattern for these
+                // plain-data structs (null pointers, zero integers).
+                let mut outs: [dv_model_output_param; 2] = unsafe { std::mem::zeroed() };
+                outs[0].layer_id = 10;
+                outs[0].width = 100;
+                outs[1].layer_id = 11;
+                outs[1].width = 111;
+                outs[1].height = 7;
+                let mut model: dv_model = unsafe { std::mem::zeroed() };
+                model.num_inputs = 3;
+                model.num_outputs = 2;
+                model.output_param = outs.as_mut_ptr();
+                let ptr: *const dv_model = &model;
+
+                let m = unsafe { model_fields($abi, ptr.cast()) };
+                assert_eq!((m.num_inputs, m.num_outputs), (3, 2));
+                let o = unsafe { output_fields($abi, ptr.cast(), 1) };
+                assert_eq!((o.layer_id, o.width, o.height), (11, 111, 7));
+            }
+        };
+    }
+
+    model_roundtrip!(model_reads_v1_1, Abi::V1_1, v1_1);
+    model_roundtrip!(model_reads_v1_3, Abi::V1_3, v1_3);
+    model_roundtrip!(model_reads_v3_0, Abi::V3_0, v3_0);
+
+    macro_rules! stats_roundtrip {
+        ($name:ident, $abi:expr, $m:ident) => {
+            #[test]
+            fn $name() {
+                use ara2_sys::$m::dv_endpoint_statistics;
+                // SAFETY: all-zero is a valid bit pattern for this
+                // plain-data struct.
+                let mut s: dv_endpoint_statistics = unsafe { std::mem::zeroed() };
+                s.ep_sys_clk = 1234;
+                s.ep_dram_stats.ep_total_dram_size = 0x1_2345_6789;
+                s.ep_dram_stats.ep_total_free_size = 77;
+                let ptr: *const dv_endpoint_statistics = &s;
+                let f = unsafe { endpoint_stats_fields($abi, ptr.cast()) };
+                assert_eq!(f.sys_clk_mhz, 1234);
+                assert_eq!(f.dram.total, 0x1_2345_6789);
+                assert_eq!(f.dram.free, 77);
+            }
+        };
+    }
+
+    stats_roundtrip!(endpoint_stats_read_v1_1, Abi::V1_1, v1_1);
+    stats_roundtrip!(endpoint_stats_read_v1_3, Abi::V1_3, v1_3);
+    stats_roundtrip!(endpoint_stats_read_v3_0, Abi::V3_0, v3_0);
 }

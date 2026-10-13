@@ -104,6 +104,8 @@ class Abi:
     """DVAPI 1.1.x, shipped by the Kinara ARA-2 runtime meta-kinara packages."""
     V1_3: Abi
     """DVAPI 1.3.x, shipped by NXP's rt-sdk-ara2 as ``imx-nxp-ara2``."""
+    V3_0: Abi
+    """DVAPI 3.0.x, shipped by the arart r3.0 runtime."""
 
     def __eq__(self, other: object) -> bool: ...
     def __int__(self) -> int: ...

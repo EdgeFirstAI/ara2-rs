@@ -36,6 +36,13 @@ pub enum Error {
     /// [`crate::ABI_OVERRIDE_ENV`] was set to something other than a
     /// recognised [`crate::Abi`]. Carries the offending value.
     AbiOverrideInvalid(String),
+    /// `ARA2_ABI` asked for a layout that contradicts the version the library reported.
+    AbiOverrideRejected {
+        /// The layout the override asked for.
+        forced: crate::Abi,
+        /// The version the library reported.
+        reported: DvapiVersion,
+    },
     /// A proxy configuration file could not be read.
     ProxyConfigUnreadable {
         /// The file that could not be read.
@@ -185,13 +192,15 @@ impl std::fmt::Display for Error {
                 Some(version) => write!(
                     f,
                     "{name} implements DVAPI {version}, which this build of ara2 has no \
-                     struct layout for; set {} to 1.1 or 1.3 to force one",
+                     struct layout for; add one by running crates/ara2-sys/update.sh \
+                     --verify against that SDK's headers, or set {} to a layout of the \
+                     same major version to bring it up",
                     crate::ABI_OVERRIDE_ENV
                 ),
                 None => write!(
                     f,
                     "{name} would not report a DVAPI version (no usable \
-                     dv_get_client_lib_version); set {} to 1.1 or 1.3 to force one",
+                     dv_get_client_lib_version); set {} to 1.1, 1.3 or 3.0 to force one",
                     crate::ABI_OVERRIDE_ENV
                 ),
             },
@@ -232,7 +241,13 @@ impl std::fmt::Display for Error {
             ),
             Error::AbiOverrideInvalid(value) => write!(
                 f,
-                "{} is set to {value:?}; expected 1.1 or 1.3",
+                "{} is set to {value:?}; expected 1.1, 1.3 or 3.0",
+                crate::ABI_OVERRIDE_ENV
+            ),
+            Error::AbiOverrideRejected { forced, reported } => write!(
+                f,
+                "{} forces DVAPI {forced}, but the library reports {reported}; forcing a \
+                 layout is only allowed for an unrecognised version of the same major release",
                 crate::ABI_OVERRIDE_ENV
             ),
             Error::Ara2(e) => write!(f, "Ara2 error: {e:?}"),

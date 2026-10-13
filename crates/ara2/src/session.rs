@@ -250,6 +250,10 @@ impl Session {
                         "sysapi".to_owned(),
                         version_to_string((*product).product_version),
                     ),
+                    MCS_LLM_MODEL => versions.insert(
+                        "mcs_llm_model".to_owned(),
+                        version_to_string((*product).product_version),
+                    ),
                     t => {
                         return Err(Error::UnknownProductType(t));
                     }
@@ -365,6 +369,10 @@ fn version_to_string(version: dv_version) -> String {
         version.major, version.minor, version.patch, version.patch_minor
     )
 }
+
+/// `DV_PRODUCT_TYPE` value DVAPI 3.0 added. It is not in the common
+/// bindings because the 1.x headers do not declare it.
+const MCS_LLM_MODEL: i32 = 7;
 
 #[cfg(test)]
 mod tests {

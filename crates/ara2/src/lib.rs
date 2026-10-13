@@ -74,8 +74,9 @@
 //!
 //! # DVAPI generations
 //!
-//! `libaraclient` ships in two interface generations whose struct layouts
-//! differ, and both are supported. [`open_library`](crate) probes the
+//! `libaraclient` ships in three interface generations (DVAPI 1.1, 1.3 and
+//! 3.0) whose struct layouts differ, and all are supported. 3.0 moves
+//! fields within `dv_model`, so layouts are selected per version. [`open_library`](crate) probes the
 //! loaded library with `dv_get_client_lib_version` and records the result
 //! as an [`Abi`], which [`Session::abi`] reports. This matters to callers
 //! mainly through [`State`]: DVAPI 1.3 reuses two endpoint state values
@@ -205,6 +206,8 @@ pub enum Abi {
     V1_1,
     /// DVAPI 1.3.x, shipped by NXP's rt-sdk-ara2 as `imx-nxp-ara2`.
     V1_3,
+    /// DVAPI 3.0.x, shipped by the arart r3.0 runtime.
+    V3_0,
 }
 
 impl std::fmt::Display for Abi {
@@ -212,11 +215,20 @@ impl std::fmt::Display for Abi {
         match self {
             Abi::V1_1 => f.write_str("1.1"),
             Abi::V1_3 => f.write_str("1.3"),
+            Abi::V3_0 => f.write_str("3.0"),
         }
     }
 }
 
 impl Abi {
+    /// The DVAPI major version this ABI belongs to.
+    pub const fn major(self) -> u8 {
+        match self {
+            Abi::V1_1 | Abi::V1_3 => 1,
+            Abi::V3_0 => 3,
+        }
+    }
+
     /// Keyed on major and minor only. The one layout change seen so far
     /// landed on a minor bump, and a patch release that moved a field would
     /// be a packaging fault rather than something to accommodate here.
@@ -224,6 +236,7 @@ impl Abi {
         match (version.major, version.minor) {
             (1, 1) => Some(Abi::V1_1),
             (1, 3) => Some(Abi::V1_3),
+            (3, 0) => Some(Abi::V3_0),
             _ => None,
         }
     }
@@ -231,7 +244,7 @@ impl Abi {
 
 /// Environment variable that forces an [`Abi`] rather than probing for one.
 ///
-/// Accepts `1.1` or `1.3`. It exists so a target carrying a DVAPI version
+/// Accepts `1.1`, `1.3` or `3.0`. It exists so a target carrying a DVAPI version
 /// this build does not recognise can still be brought up without waiting on
 /// a new release.
 pub const ABI_OVERRIDE_ENV: &str = "ARA2_ABI";
@@ -243,6 +256,7 @@ fn abi_override() -> Result<Option<Abi>, error::Error> {
     match raw.trim() {
         "1.1" => Ok(Some(Abi::V1_1)),
         "1.3" => Ok(Some(Abi::V1_3)),
+        "3.0" => Ok(Some(Abi::V3_0)),
         other => Err(error::Error::AbiOverrideInvalid(other.to_owned())),
     }
 }
@@ -273,6 +287,35 @@ fn probe_version(lib: &araclient) -> Option<DvapiVersion> {
     })
 }
 
+/// Decides the ABI from an `ARA2_ABI` override and the probed version.
+///
+/// `Ok(None)` means the library is unsupported. An override is only
+/// honoured where it cannot contradict the library: when the probe failed,
+/// or when the reported version is unrecognised but shares the forced
+/// ABI's major version. Forcing another layout over a recognised version is
+/// an error, since every read through it would be at the wrong offsets.
+pub(crate) fn resolve_abi(
+    forced: Option<Abi>,
+    probed: Option<DvapiVersion>,
+) -> Result<Option<Abi>, error::Error> {
+    let known = probed.and_then(Abi::from_version);
+    match (forced, probed, known) {
+        (None, _, known) => Ok(known),
+        (Some(f), _, Some(k)) if f == k => Ok(Some(f)),
+        (Some(f), Some(reported), Some(_)) => Err(error::Error::AbiOverrideRejected {
+            forced: f,
+            reported,
+        }),
+        (Some(f), None, None) => Ok(Some(f)),
+        (Some(f), Some(reported), None) if reported.major == f.major() => Ok(Some(f)),
+        (Some(f), Some(reported), None) => Err(error::Error::AbiOverrideRejected {
+            forced: f,
+            reported,
+        }),
+        (Some(_), None, Some(_)) => unreachable!("a known ABI needs a probed version"),
+    }
+}
+
 pub(crate) fn open_library() -> Result<(araclient, Abi, Option<DvapiVersion>), error::Error> {
     let forced = abi_override()?;
     let mut last_err = None;
@@ -288,10 +331,7 @@ pub(crate) fn open_library() -> Result<(araclient, Abi, Option<DvapiVersion>), e
         };
 
         let version = probe_version(&lib);
-        if let Some(abi) = forced {
-            return Ok((lib, abi, version));
-        }
-        match version.and_then(Abi::from_version) {
+        match resolve_abi(forced, version)? {
             Some(abi) => return Ok((lib, abi, version)),
             // Keep going rather than failing here: an image can carry more
             // than one libaraclient, and a later candidate may well be a
@@ -315,6 +355,65 @@ pub(crate) fn open_library() -> Result<(araclient, Abi, Option<DvapiVersion>), e
         tried: LIBRARY_NAMES,
         source: last_err.expect("LIBRARY_NAMES is non-empty"),
     })
+}
+
+#[cfg(test)]
+mod offline_tests {
+    use super::*;
+
+    fn v(major: u8, minor: u8) -> Option<DvapiVersion> {
+        Some(DvapiVersion {
+            major,
+            minor,
+            patch: 0,
+            patch_minor: 0,
+        })
+    }
+
+    #[test]
+    fn probed_versions_map_to_their_abi() {
+        assert_eq!(resolve_abi(None, v(1, 1)).unwrap(), Some(Abi::V1_1));
+        assert_eq!(resolve_abi(None, v(1, 3)).unwrap(), Some(Abi::V1_3));
+        assert_eq!(resolve_abi(None, v(3, 0)).unwrap(), Some(Abi::V3_0));
+        assert_eq!(resolve_abi(None, v(3, 1)).unwrap(), None);
+        assert_eq!(resolve_abi(None, None).unwrap(), None);
+    }
+
+    #[test]
+    fn forcing_a_different_layout_over_a_known_version_is_rejected() {
+        assert!(matches!(
+            resolve_abi(Some(Abi::V1_3), v(3, 0)),
+            Err(Error::AbiOverrideRejected {
+                forced: Abi::V1_3,
+                ..
+            })
+        ));
+        assert!(matches!(
+            resolve_abi(Some(Abi::V1_1), v(1, 3)),
+            Err(Error::AbiOverrideRejected { .. })
+        ));
+        assert_eq!(
+            resolve_abi(Some(Abi::V3_0), v(3, 0)).unwrap(),
+            Some(Abi::V3_0)
+        );
+    }
+
+    #[test]
+    fn forcing_within_the_same_major_brings_up_an_unknown_minor() {
+        assert_eq!(
+            resolve_abi(Some(Abi::V3_0), v(3, 1)).unwrap(),
+            Some(Abi::V3_0)
+        );
+        assert!(matches!(
+            resolve_abi(Some(Abi::V1_3), v(3, 1)),
+            Err(Error::AbiOverrideRejected { .. })
+        ));
+    }
+
+    #[test]
+    fn forcing_applies_when_the_probe_failed() {
+        assert_eq!(resolve_abi(Some(Abi::V1_1), None).unwrap(), Some(Abi::V1_1));
+    }
 }
 
 #[cfg(test)]
