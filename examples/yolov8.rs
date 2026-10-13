@@ -465,8 +465,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let t0 = Instant::now();
+    // DMA-BUF tensors need a session that can pass file descriptors (UNIX);
+    // over TCP fall back to heap tensors.
+    let memory = if session.supports_fd_passing() {
+        Some(TensorMemory::DmaBuf)
+    } else {
+        None
+    };
     let mut model = endpoint.load_model_from_file(&args.model)?;
-    model.allocate_tensors(Some(TensorMemory::DmaBuf))?;
+    model.allocate_tensors(memory)?;
     println!("Model loaded in {:?}", t0.elapsed());
 
     let input_shape = model.input_shape(0);

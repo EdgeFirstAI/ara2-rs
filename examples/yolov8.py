@@ -463,7 +463,8 @@ def main() -> None:
     )
 
     with endpoint.load_model(args.model) as model:
-        model.allocate_tensors("dma")
+        # DMA-BUF needs a session that can pass file descriptors (UNIX).
+        model.allocate_tensors("dma" if session.supports_fd_passing else None)
         c, h, w = model.input_shape(0)
         input_dim = float(max(w, h))
         iq = model.input_quants(0)

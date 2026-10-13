@@ -10,7 +10,7 @@
 //!
 //! ```no_run
 //! use ara2::{Session, DEFAULT_TIMEOUT_MS};
-//! use edgefirst_tensor::{TensorMemory, TensorTrait as _};
+//! use edgefirst_tensor::TensorTrait as _;
 //!
 //! // Connect to the ARA-2 proxy service. Honors the `ARA2_SOCKET`
 //! // environment variable, then the known socket paths, then running
@@ -18,9 +18,10 @@
 //! let session = Session::connect()?;
 //! let endpoints = session.list_endpoints()?;
 //!
-//! // Load model and allocate DMA-backed tensors
+//! // Load model and allocate tensors. `None` picks the best memory the
+//! // platform offers (DMA-BUF where available), or heap over TCP.
 //! let mut model = endpoints[0].load_model_from_file("model.dvm".as_ref())?;
-//! model.allocate_tensors(Some(TensorMemory::DmaBuf))?;
+//! model.allocate_tensors(None)?;
 //!
 //! // Synchronous inference
 //! let timing = model.run()?;

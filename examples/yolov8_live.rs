@@ -832,9 +832,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // ── 2. Connect to ARA-2 and load model ──────────────────────────────
-    // Establish a session with the ARA-2 proxy over a Unix socket, load the
-    // DVM model onto the first available NPU endpoint, and allocate
-    // DMA-BUF-backed input/output tensors.
+    // Establish a session with the ARA-2 proxy, load the DVM model onto the
+    // first available NPU endpoint, and allocate its input/output tensors:
+    // DMA-BUF where the session can pass file descriptors, heap otherwise.
     let session = match &args.socket {
         Some(path) => Session::create_via_unix_socket(path)?,
         None => Session::connect()?,
@@ -853,8 +853,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         stats.dram_size as f64 / 1048576.0,
     );
 
+    // DMA-BUF tensors need a session that can pass file descriptors (UNIX);
+    // over TCP fall back to heap tensors.
+    let memory = if session.supports_fd_passing() {
+        Some(TensorMemory::DmaBuf)
+    } else {
+        None
+    };
     let mut model = endpoint.load_model_from_file(&args.model)?;
-    model.allocate_tensors(Some(TensorMemory::DmaBuf))?;
+    model.allocate_tensors(memory)?;
 
     let input_shape = model.input_shape(0);
     let (in_c, in_h, in_w) = (input_shape[0], input_shape[1], input_shape[2]);

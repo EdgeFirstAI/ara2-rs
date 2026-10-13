@@ -63,7 +63,7 @@ See [`crates/ara2-py/README.md`](crates/ara2-py/README.md) for the Python API re
 
 ```rust
 use ara2::Session;
-use edgefirst_tensor::{TensorMemory, TensorTrait as _};
+use edgefirst_tensor::TensorTrait as _;
 
 // Connect to the ARA-2 proxy service
 let session = Session::connect()?;
@@ -73,9 +73,10 @@ let endpoints = session.list_endpoints()?;
 let endpoint = &endpoints[0];
 println!("Endpoint state: {:?}", endpoint.check_status()?);
 
-// Load a compiled model (.dvm) and allocate DMA tensors
+// Load a compiled model (.dvm) and allocate tensors. `None` picks the best
+// memory the platform offers (DMA-BUF where available), or heap over TCP.
 let mut model = endpoint.load_model_from_file("model.dvm".as_ref())?;
-model.allocate_tensors(Some(TensorMemory::DmaBuf))?;
+model.allocate_tensors(None)?;
 
 // Run inference
 let timing = model.run()?;
