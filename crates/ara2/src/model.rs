@@ -91,8 +91,8 @@ pub struct Model {
     session: Arc<SessionInner>,
     endpoint_ptr: *mut dv_endpoint,
     ptr: *mut dv_model,
-    inputs: Vec<(Tensor<u8>, *mut dv_shm_descriptor)>,
-    outputs: Vec<(Tensor<u8>, *mut dv_shm_descriptor)>,
+    inputs: Vec<BoundTensor>,
+    outputs: Vec<BoundTensor>,
     timeout_ms: i32,
 }
 
@@ -111,6 +111,61 @@ impl std::fmt::Debug for Model {
 // Model should be Send to allow moving between threads, but not Sync
 // as inference operations are not thread-safe.
 unsafe impl Send for Model {}
+
+/// One shared-memory registration with the proxy, released on drop.
+///
+/// The proxy maps the buffer from its own copy of the file descriptor and
+/// holds it until unregistered. Held through an `Arc` so a pending
+/// [`InferRequest`] can keep it alive after the tensor set that created it
+/// is dropped.
+pub(crate) struct ShmRegistration {
+    session: Arc<SessionInner>,
+    desc: std::ptr::NonNull<dv_shm_descriptor>,
+}
+
+// Safety: the descriptor is only passed back to the library through the
+// session's handle, which is internally synchronized.
+unsafe impl Send for ShmRegistration {}
+unsafe impl Sync for ShmRegistration {}
+
+impl ShmRegistration {
+    fn as_ptr(&self) -> *mut dv_shm_descriptor {
+        self.desc.as_ptr()
+    }
+}
+
+impl Drop for ShmRegistration {
+    fn drop(&mut self) {
+        // SAFETY: `desc` came from dv_shmfd_register on this session and is
+        // unregistered exactly once, here.
+        let err = unsafe { self.session.lib.dv_shmfd_unregister(self.desc.as_ptr()) };
+        if err != 0 {
+            log::warn!("dv_shmfd_unregister failed with status {err}");
+        }
+    }
+}
+
+/// A tensor and, for shared-memory or DMA-BUF memory, its registration.
+///
+/// `shm` is declared first so it drops first: the proxy releases its
+/// mapping before the tensor's buffer is freed.
+pub(crate) struct BoundTensor {
+    shm: Option<Arc<ShmRegistration>>,
+    tensor: Tensor<u8>,
+}
+
+impl BoundTensor {
+    fn desc_ptr(&self) -> *mut dv_shm_descriptor {
+        self.shm
+            .as_ref()
+            .map_or(std::ptr::null_mut(), |r| r.as_ptr())
+    }
+}
+
+/// Registrations of every bound tensor that has one.
+fn shm_guards<'a>(tensors: impl Iterator<Item = &'a BoundTensor>) -> Vec<Arc<ShmRegistration>> {
+    tensors.filter_map(|t| t.shm.clone()).collect()
+}
 
 /// Blob descriptors paired with map guards that keep memory mappings alive.
 type BlobsWithGuards = (Vec<dv_blob>, Vec<dv_blob>, Vec<HostView<'static, u8>>);
@@ -154,14 +209,14 @@ impl Model {
             .inputs
             .iter()
             .map(|tensor| {
-                let blob = if tensor.1.is_null() {
-                    let map = tensor.0.map()?;
+                let blob = if tensor.shm.is_none() {
+                    let map = tensor.tensor.map()?;
                     let ptr = map.as_ptr() as *mut std::ffi::c_void;
                     map_guards.push(map);
                     (ptr, ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_RAW_POINTER)
                 } else {
                     (
-                        tensor.1 as *mut std::ffi::c_void,
+                        tensor.desc_ptr() as *mut std::ffi::c_void,
                         ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_SHM_DESCRIPTOR,
                     )
                 };
@@ -169,7 +224,7 @@ impl Model {
                 Ok(dv_blob {
                     handle: blob.0,
                     offset: 0,
-                    size: tensor.0.size() as u64,
+                    size: tensor.tensor.size() as u64,
                     blob_type: blob.1,
                 })
             })
@@ -179,14 +234,14 @@ impl Model {
             .outputs
             .iter()
             .map(|tensor| {
-                let blob = if tensor.1.is_null() {
-                    let map = tensor.0.map()?;
+                let blob = if tensor.shm.is_none() {
+                    let map = tensor.tensor.map()?;
                     let ptr = map.as_ptr() as *mut std::ffi::c_void;
                     map_guards.push(map);
                     (ptr, ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_RAW_POINTER)
                 } else {
                     (
-                        tensor.1 as *mut std::ffi::c_void,
+                        tensor.desc_ptr() as *mut std::ffi::c_void,
                         ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_SHM_DESCRIPTOR,
                     )
                 };
@@ -194,7 +249,7 @@ impl Model {
                 Ok(dv_blob {
                     handle: blob.0,
                     offset: 0,
-                    size: tensor.0.size() as u64,
+                    size: tensor.tensor.size() as u64,
                     blob_type: blob.1,
                 })
             })
@@ -334,6 +389,7 @@ impl Model {
         Ok(InferRequest {
             session: Arc::clone(&self.session),
             ptr: request,
+            _shm_guards: shm_guards(self.inputs.iter().chain(self.outputs.iter())),
             _map_guards: map_guards,
         })
     }
@@ -353,13 +409,13 @@ impl Model {
             .map(|i| {
                 let size = self.output_size(i);
                 let tensor = Tensor::<u8>::new(&[size], memory, None)?;
-                match tensor.memory() {
+                let shm = match tensor.memory() {
                     TensorMemory::Shm | TensorMemory::DmaBuf => {
-                        let desc = self.shmfd_register(&tensor)?;
-                        Ok((tensor, desc))
+                        Some(Arc::new(self.shmfd_register(&tensor)?))
                     }
-                    _ => Ok((tensor, std::ptr::null_mut())),
-                }
+                    _ => None,
+                };
+                Ok(BoundTensor { shm, tensor })
             })
             .collect::<Result<Vec<_>, Error>>()?;
         Ok(OutputSet {
@@ -381,13 +437,13 @@ impl Model {
                 // matching the layout that allocate_tensors produces for model inputs.
                 let shape = self.input_shape(i);
                 let tensor = Tensor::<u8>::new(&shape, memory, None)?;
-                match tensor.memory() {
+                let shm = match tensor.memory() {
                     TensorMemory::Shm | TensorMemory::DmaBuf => {
-                        let desc = self.shmfd_register(&tensor)?;
-                        Ok((tensor, desc))
+                        Some(Arc::new(self.shmfd_register(&tensor)?))
                     }
-                    _ => Ok((tensor, std::ptr::null_mut())),
-                }
+                    _ => None,
+                };
+                Ok(BoundTensor { shm, tensor })
             })
             .collect::<Result<Vec<_>, Error>>()?;
         Ok(InputSet {
@@ -426,7 +482,7 @@ impl Model {
         }
         for i in 0..n_out {
             let expected = self.output_size(i);
-            let got = output_set.tensors[i].0.size();
+            let got = output_set.tensors[i].tensor.size();
             if got != expected {
                 return Err(Error::TensorSizeMismatch { expected, got });
             }
@@ -437,21 +493,21 @@ impl Model {
             .inputs
             .iter()
             .map(|tensor| {
-                let blob = if tensor.1.is_null() {
-                    let map = tensor.0.map()?;
+                let blob = if tensor.shm.is_none() {
+                    let map = tensor.tensor.map()?;
                     let ptr = map.as_ptr() as *mut std::ffi::c_void;
                     map_guards.push(map);
                     (ptr, ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_RAW_POINTER)
                 } else {
                     (
-                        tensor.1 as *mut std::ffi::c_void,
+                        tensor.desc_ptr() as *mut std::ffi::c_void,
                         ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_SHM_DESCRIPTOR,
                     )
                 };
                 Ok(dv_blob {
                     handle: blob.0,
                     offset: 0,
-                    size: tensor.0.size() as u64,
+                    size: tensor.tensor.size() as u64,
                     blob_type: blob.1,
                 })
             })
@@ -461,21 +517,21 @@ impl Model {
             .tensors
             .iter()
             .map(|tensor| {
-                let blob = if tensor.1.is_null() {
-                    let map = tensor.0.map()?;
+                let blob = if tensor.shm.is_none() {
+                    let map = tensor.tensor.map()?;
                     let ptr = map.as_ptr() as *mut std::ffi::c_void;
                     map_guards.push(map);
                     (ptr, ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_RAW_POINTER)
                 } else {
                     (
-                        tensor.1 as *mut std::ffi::c_void,
+                        tensor.desc_ptr() as *mut std::ffi::c_void,
                         ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_SHM_DESCRIPTOR,
                     )
                 };
                 Ok(dv_blob {
                     handle: blob.0,
                     offset: 0,
-                    size: tensor.0.size() as u64,
+                    size: tensor.tensor.size() as u64,
                     blob_type: blob.1,
                 })
             })
@@ -508,6 +564,7 @@ impl Model {
         Ok(InferRequest {
             session: Arc::clone(&self.session),
             ptr: request,
+            _shm_guards: shm_guards(self.inputs.iter().chain(output_set.tensors.iter())),
             _map_guards: map_guards,
         })
     }
@@ -556,14 +613,14 @@ impl Model {
         }
         for i in 0..n_in {
             let expected = self.input_size(i);
-            let got = input_set.tensors[i].0.size();
+            let got = input_set.tensors[i].tensor.size();
             if got != expected {
                 return Err(Error::TensorSizeMismatch { expected, got });
             }
         }
         for i in 0..n_out {
             let expected = self.output_size(i);
-            let got = output_set.tensors[i].0.size();
+            let got = output_set.tensors[i].tensor.size();
             if got != expected {
                 return Err(Error::TensorSizeMismatch { expected, got });
             }
@@ -574,21 +631,21 @@ impl Model {
             .tensors
             .iter()
             .map(|tensor| {
-                let blob = if tensor.1.is_null() {
-                    let map = tensor.0.map()?;
+                let blob = if tensor.shm.is_none() {
+                    let map = tensor.tensor.map()?;
                     let ptr = map.as_ptr() as *mut std::ffi::c_void;
                     map_guards.push(map);
                     (ptr, ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_RAW_POINTER)
                 } else {
                     (
-                        tensor.1 as *mut std::ffi::c_void,
+                        tensor.desc_ptr() as *mut std::ffi::c_void,
                         ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_SHM_DESCRIPTOR,
                     )
                 };
                 Ok(dv_blob {
                     handle: blob.0,
                     offset: 0,
-                    size: tensor.0.size() as u64,
+                    size: tensor.tensor.size() as u64,
                     blob_type: blob.1,
                 })
             })
@@ -598,21 +655,21 @@ impl Model {
             .tensors
             .iter()
             .map(|tensor| {
-                let blob = if tensor.1.is_null() {
-                    let map = tensor.0.map()?;
+                let blob = if tensor.shm.is_none() {
+                    let map = tensor.tensor.map()?;
                     let ptr = map.as_ptr() as *mut std::ffi::c_void;
                     map_guards.push(map);
                     (ptr, ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_RAW_POINTER)
                 } else {
                     (
-                        tensor.1 as *mut std::ffi::c_void,
+                        tensor.desc_ptr() as *mut std::ffi::c_void,
                         ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_SHM_DESCRIPTOR,
                     )
                 };
                 Ok(dv_blob {
                     handle: blob.0,
                     offset: 0,
-                    size: tensor.0.size() as u64,
+                    size: tensor.tensor.size() as u64,
                     blob_type: blob.1,
                 })
             })
@@ -645,18 +702,19 @@ impl Model {
         Ok(InferRequest {
             session: Arc::clone(&self.session),
             ptr: request,
+            _shm_guards: shm_guards(input_set.tensors.iter().chain(output_set.tensors.iter())),
             _map_guards: map_guards,
         })
     }
 
     /// Get a mutable reference to an input tensor.
     pub fn input_tensor(&mut self, idx: usize) -> &mut Tensor<u8> {
-        &mut self.inputs[idx].0
+        &mut self.inputs[idx].tensor
     }
 
     /// Get a reference to an output tensor.
     pub fn output_tensor(&self, idx: usize) -> &Tensor<u8> {
-        &self.outputs[idx].0
+        &self.outputs[idx].tensor
     }
 
     /// Allocate input and output tensors for this model.
@@ -675,13 +733,13 @@ impl Model {
                 // Allocate with CHW shape for compatibility with HAL TensorImageRef
                 let shape = self.input_shape(i);
                 let tensor = Tensor::<u8>::new(&shape, memory, None)?;
-                match tensor.memory() {
+                let shm = match tensor.memory() {
                     TensorMemory::Shm | TensorMemory::DmaBuf => {
-                        let desc = self.shmfd_register(&tensor)?;
-                        Ok((tensor, desc))
+                        Some(Arc::new(self.shmfd_register(&tensor)?))
                     }
-                    _ => Ok((tensor, std::ptr::null_mut())),
-                }
+                    _ => None,
+                };
+                Ok(BoundTensor { shm, tensor })
             })
             .collect::<Result<Vec<_>, Error>>()?;
         self.outputs = (0..self.n_outputs())
@@ -689,13 +747,13 @@ impl Model {
                 // Use the actual size from the model, not computed from shape
                 let size = self.output_size(i);
                 let tensor = Tensor::<u8>::new(&[size], memory, None)?;
-                match tensor.memory() {
+                let shm = match tensor.memory() {
                     TensorMemory::Shm | TensorMemory::DmaBuf => {
-                        let desc = self.shmfd_register(&tensor)?;
-                        Ok((tensor, desc))
+                        Some(Arc::new(self.shmfd_register(&tensor)?))
                     }
-                    _ => Ok((tensor, std::ptr::null_mut())),
-                }
+                    _ => None,
+                };
+                Ok(BoundTensor { shm, tensor })
             })
             .collect::<Result<Vec<_>, Error>>()?;
 
@@ -704,7 +762,7 @@ impl Model {
 
     /// Register a tensor's file descriptor with the proxy for zero-copy
     /// transfers.
-    fn shmfd_register(&self, tensor: &Tensor<u8>) -> Result<*mut dv_shm_descriptor, Error> {
+    fn shmfd_register(&self, tensor: &Tensor<u8>) -> Result<ShmRegistration, Error> {
         let mut desc: *mut dv_shm_descriptor = std::ptr::null_mut();
         match tensor.memory() {
             TensorMemory::Shm | TensorMemory::DmaBuf => {}
@@ -733,20 +791,20 @@ impl Model {
             return Err(result.into());
         }
 
-        if desc.is_null() {
-            return Err(Error::NullPointer(
-                "shmfd_register returned null".to_string(),
-            ));
-        }
+        let desc = std::ptr::NonNull::new(desc)
+            .ok_or_else(|| Error::NullPointer("shmfd_register returned null".to_string()))?;
 
         debug!(
             "shmfd_register {:?} fd {:?} => {:?}",
             tensor.memory(),
             fd,
-            unsafe { *desc }
+            unsafe { *desc.as_ptr() }
         );
 
-        Ok(desc)
+        Ok(ShmRegistration {
+            session: Arc::clone(&self.session),
+            desc,
+        })
     }
 
     /// Get the number of input tensors for this model.
@@ -1123,6 +1181,9 @@ fn extract_timing(request: *mut dv_infer_request) -> Result<ModelTiming, Error> 
 pub struct InferRequest {
     session: Arc<SessionInner>,
     ptr: *mut dv_infer_request,
+    /// Registrations of every tensor this request reads or writes; held so
+    /// dropping their owners cannot unregister them mid-inference.
+    _shm_guards: Vec<Arc<ShmRegistration>>,
     /// Keeps raw-pointer memory mappings alive until the request completes.
     /// For `RAW_POINTER` blobs the NPU references the mapped pointers
     /// throughout execution, so these guards must not be dropped until
@@ -1296,9 +1357,8 @@ impl Drop for Model {
 /// from the model slot. Allocate more sets than pipeline slots so a decoder can
 /// hold some sets while the model keeps inferring into others.
 pub struct OutputSet {
-    #[allow(dead_code)] // keep-alive: holds the session so registered descriptors stay valid
     session: Arc<SessionInner>,
-    tensors: Vec<(Tensor<u8>, *mut dv_shm_descriptor)>,
+    tensors: Vec<BoundTensor>,
 }
 
 // Safety: Arc is Send+Sync; raw pointers are FFI-registered descriptors used
@@ -1308,7 +1368,7 @@ unsafe impl Send for OutputSet {}
 impl OutputSet {
     /// Reference to the output tensor at `idx`.
     pub fn output_tensor(&self, idx: usize) -> &Tensor<u8> {
-        &self.tensors[idx].0
+        &self.tensors[idx].tensor
     }
 
     /// Number of output tensors in this set.
@@ -1331,9 +1391,8 @@ impl OutputSet {
 /// DMA-BUF from the model slot so any slot can read from any pool tensor,
 /// enabling full GPU zero-copy preprocessing alongside output rebinding.
 pub struct InputSet {
-    #[allow(dead_code)] // keep-alive: holds the session so registered descriptors stay valid
     session: Arc<SessionInner>,
-    tensors: Vec<(Tensor<u8>, *mut dv_shm_descriptor)>,
+    tensors: Vec<BoundTensor>,
 }
 
 // Safety: Arc is Send+Sync; raw pointers are FFI-registered descriptors used
@@ -1343,7 +1402,7 @@ unsafe impl Send for InputSet {}
 impl InputSet {
     /// Reference to the input tensor at `idx`.
     pub fn input_tensor(&self, idx: usize) -> &Tensor<u8> {
-        &self.tensors[idx].0
+        &self.tensors[idx].tensor
     }
 
     /// Number of input tensors in this set.
@@ -1564,6 +1623,73 @@ impl TryFrom<DV_LAYER_OUTPUT_TYPE> for ModelOutputType {
 
 #[cfg(test)]
 mod tests {
+    use super::DEFAULT_TIMEOUT_MS;
+    use edgefirst_tensor::TensorMemory;
+
+    /// Number of file descriptors the running proxy holds. The proxy keeps
+    /// one per registered buffer, so a leak shows up here.
+    fn proxy_fd_count() -> usize {
+        let proxy = crate::discover()
+            .expect("discover")
+            .into_iter()
+            .next()
+            .expect("a running proxy");
+        std::fs::read_dir(format!("/proc/{}/fd", proxy.pid))
+            .expect("reading the proxy's fds needs root")
+            .count()
+    }
+
+    #[test]
+    fn shm_registrations_are_released() {
+        let session = crate::tests::test_session();
+        let endpoint = session.list_endpoints().unwrap().remove(0);
+        let mut model = endpoint
+            .load_model_from_file(&crate::tests::test_model_path())
+            .unwrap();
+        model.allocate_tensors(Some(TensorMemory::DmaBuf)).unwrap();
+        model.run().unwrap();
+        let before = proxy_fd_count();
+
+        for _ in 0..50 {
+            model.allocate_tensors(Some(TensorMemory::DmaBuf)).unwrap();
+            model.run().unwrap();
+            drop(
+                model
+                    .allocate_output_set(Some(TensorMemory::DmaBuf))
+                    .unwrap(),
+            );
+            drop(model.allocate_input_set(Some(TensorMemory::Shm)).unwrap());
+        }
+        let after = proxy_fd_count();
+        eprintln!("proxy fds: before={before} after={after}");
+        assert!(
+            after <= before + 4,
+            "proxy fds grew from {before} to {after}"
+        );
+
+        // Heap tensors register nothing.
+        model.allocate_tensors(None).unwrap();
+        model.run().unwrap();
+        assert!(proxy_fd_count() <= after);
+    }
+
+    #[test]
+    fn registration_outlives_dropped_set_while_pending() {
+        let session = crate::tests::test_session();
+        let endpoint = session.list_endpoints().unwrap().remove(0);
+        let mut model = endpoint
+            .load_model_from_file(&crate::tests::test_model_path())
+            .unwrap();
+        model.allocate_tensors(Some(TensorMemory::DmaBuf)).unwrap();
+        let outputs = model
+            .allocate_output_set(Some(TensorMemory::DmaBuf))
+            .unwrap();
+        let request = model.submit_with_output_set(&outputs).unwrap();
+        drop(outputs);
+        request
+            .wait(DEFAULT_TIMEOUT_MS)
+            .expect("inference completes after its output set is dropped");
+    }
 
     #[test]
     fn test_load_model_from_file() {
