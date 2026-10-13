@@ -138,7 +138,7 @@ All tests require an NXP i.MX + ARA-2 PCIe system with:
 | i.MX 95 board with NXP rt-sdk-ara2 2.1.1 | 1.3 | `/usr/lib/libaraclient_aarch64.so` | UNIX `/run/proxy.sock` |
 | i.MX 95 FRDM with arart r3.0 | 3.0 | `LD_LIBRARY_PATH=/opt/ara2/art/linux/aarch64/lib` | TCP `127.0.0.1:5000` by default |
 
-Ask the user before using a shared test board, and before changing a board's proxy service or configuration; restore any such change afterwards. On an r3.0 install whose unit runs chip bring-up before the proxy, restarting the unit fails on a warm chip, so apply proxy configuration changes with a reboot. Run the hardware suite with `--test-threads=1`. Install Python wheels on boards into a virtual environment, never the system Python.
+Ask the user before using a shared test board, and before changing a board's proxy service or configuration; restore any such change afterwards. On an r3.0 install whose unit runs chip bring-up before the proxy, restarting the unit or warm-rebooting the board fails on an already-initialised chip; a proxy configuration change needs a power cycle. Run the hardware suite with `--test-threads=1`. Install Python wheels on boards into a virtual environment, never the system Python.
 
 ### Running Tests
 

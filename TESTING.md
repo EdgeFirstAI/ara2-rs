@@ -33,7 +33,7 @@ A new test that needs no hardware must be named `offline` (or sit in an `offline
 |-------------------|-------|---------|-----------------|----------|
 | i.MX 8M Plus FRDM with Kinara runtime 1.2.1 | 1.1 | system | UNIX `/run/ara2.sock` | SDK verifier and offline layout tests only for this release |
 | i.MX 95 board with NXP rt-sdk-ara2 2.1.1 | 1.3 | `/usr/lib/libaraclient_aarch64.so` | UNIX `/run/proxy.sock` | Full suite and Python tests |
-| i.MX 95 FRDM with arart r3.0 | 3.0 | `LD_LIBRARY_PATH=/opt/ara2/art/linux/aarch64/lib` | TCP `127.0.0.1:5000` by default, UNIX with `interface_type: "SOCKET"` | Full suite and Python tests over both transports |
+| i.MX 95 FRDM with arart r3.0 | 3.0 | `LD_LIBRARY_PATH=/opt/ara2/art/linux/aarch64/lib` | TCP `127.0.0.1:5000` by default, UNIX with `interface_type: "SOCKET"` | Full suite and Python tests over TCP |
 
 Run the hardware suite single-threaded, since the tests share one NPU.
 
@@ -89,7 +89,7 @@ systemctl restart <proxy unit>
 grep ':1388' /proc/net/tcp   # port 5000 listening again
 ```
 
-The restart reruns the unit's chip bring-up. On an r3.0 install whose unit runs chip bring-up before the proxy, that bring-up is written for a cold chip, and its `active_enable` step fails when the chip is already up, leaving the unit failed until the board is rebooted. Plan the switch around a reboot on such a board.
+The restart reruns the unit's chip bring-up. On an r3.0 install whose unit runs chip bring-up before the proxy, that bring-up is written for a cold chip, and its `active_enable` step fails when the chip is already up, leaving the unit failed. A warm reboot does not reset the PCIe card either, so on such a board plan the switch around a power cycle.
 
 ### SDK verifier
 
