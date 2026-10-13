@@ -132,13 +132,13 @@ All tests require an NXP i.MX + ARA-2 PCIe system with:
 
 ### Board matrix
 
-| Board | DVAPI | Library | Proxy | Access |
-|-------|-------|---------|-------|--------|
-| imx8mp-frdm | 1.1 | system | UNIX `/run/ara2.sock` | **Occupied: ask the user before any ssh, scp or test run.** Without approval, 1.1 is covered only by the SDK verifier and offline layout tests. |
-| imx95-pro | 1.3 | `/usr/lib/libaraclient_aarch64.so` | UNIX `/run/proxy.sock` | Free to use |
-| imx95-frdm | 3.0 | `LD_LIBRARY_PATH=/opt/ara2/art/linux/aarch64/lib` | TCP `127.0.0.1:5000` | Free to use; changing `ara2-r3.service` or its config needs the user's confirmation and must be restored. A restart of that unit reruns a cold-chip bring-up that fails on a warm chip until the board reboots. |
+| Board and runtime | DVAPI | Library | Proxy |
+|-------------------|-------|---------|-------|
+| i.MX 8M Plus FRDM with Kinara runtime 1.2.1 | 1.1 | system | UNIX `/run/ara2.sock` |
+| i.MX 95 board with NXP rt-sdk-ara2 2.1.1 | 1.3 | `/usr/lib/libaraclient_aarch64.so` | UNIX `/run/proxy.sock` |
+| i.MX 95 FRDM with arart r3.0 | 3.0 | `LD_LIBRARY_PATH=/opt/ara2/art/linux/aarch64/lib` | TCP `127.0.0.1:5000` by default |
 
-Run the hardware suite with `--test-threads=1`. Install Python wheels on boards into `~/ara2-rs-test/venv`, never the system Python.
+Ask the user before using a shared test board, and before changing a board's proxy service or configuration; restore any such change afterwards. On an r3.0 install whose unit runs chip bring-up before the proxy, restarting the unit fails on a warm chip, so apply proxy configuration changes with a reboot. Run the hardware suite with `--test-threads=1`. Install Python wheels on boards into a virtual environment, never the system Python.
 
 ### Running Tests
 

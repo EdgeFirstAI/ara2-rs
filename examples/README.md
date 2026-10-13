@@ -144,7 +144,7 @@ export BINDGEN_EXTRA_CLANG_ARGS="--target=aarch64-poky-linux --sysroot=$SYSROOT 
 cargo build --release --target aarch64-unknown-linux-gnu --example yolov8_live
 ```
 
-### Run (imx95-frdm with on-board `os08a20` MIPI-CSI sensor)
+### Run (FRDM i.MX 95 with on-board `os08a20` MIPI-CSI sensor)
 
 ```bash
 export XDG_RUNTIME_DIR=/run/user/0
@@ -201,7 +201,7 @@ pip install edgefirst-ara2 'edgefirst-decoder>=0.31' 'edgefirst-image>=0.31' \
 The `--system-site-packages` flag is required to pick up the libcamera
 Python bindings from system packages.
 
-### Run (imx95-frdm with on-board `os08a20` MIPI-CSI sensor)
+### Run (FRDM i.MX 95 with on-board `os08a20` MIPI-CSI sensor)
 
 ```bash
 export XDG_RUNTIME_DIR=/run/user/0
@@ -234,7 +234,7 @@ See the Rust `yolov8_live` section above for why
 
 ---
 
-## Performance (measured on imx95-frdm)
+## Performance (measured on FRDM i.MX 95)
 
 ### yolov8n-seg (nano) at 1920x1080
 
