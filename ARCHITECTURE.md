@@ -228,7 +228,7 @@ ara2-sys                                   ara2
 
 `Session::connect()` makes a single connection attempt, against an endpoint chosen by inspection (`connect.rs`): `ARA2_SOCKET` (`/path`, `unix:/path` or `tcp:IPV4:PORT`), then the first existing path in `SOCKET_PATHS`, then a running proxy found by `discover()`, preferring a UNIX endpoint over a TCP one. One attempt only, because a failed create leaves the DVAPI 1.1 client in a state that can break a later one. The choice is a pure function over (override, existing paths, discovered proxies), unit-tested offline.
 
-Only UNIX sessions pass file descriptors. On TCP, `None` memory resolves to heap and an explicit `Shm` or `DmaBuf` returns `Error::FdPassingUnavailable` before any DVAPI call.
+Only UNIX sessions pass file descriptors. On TCP, `None` memory resolves to heap and an explicit `Shm` or `DmaBuf` returns `Error::FdPassingUnavailable` before any DVAPI call. The resulting heap tensors have no fd, so `clone_fd()` on them fails and callers copy through `map()` rather than sharing by fd.
 
 ## Error Handling
 

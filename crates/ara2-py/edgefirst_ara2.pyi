@@ -545,7 +545,8 @@ class Session:
         """Whether the session can use shared-memory and DMA-BUF tensors.
 
         True for UNIX-socket sessions; False over TCP, where tensors live
-        in heap memory.
+        in heap memory with no file descriptor, so the tensor fd accessors
+        raise ``TensorError`` and data is copied instead.
         """
         ...
 
@@ -678,6 +679,11 @@ class Model:
                     ``None`` (auto-select, tries DMA first; heap on a TCP
                     session, which cannot pass file descriptors). Use
                     ``"dma"`` for zero-copy workflows with edgefirst-image.
+
+        Over TCP the tensors are heap memory without a file descriptor, so
+        ``input_tensor_fd()`` and ``output_tensor_fd()`` raise
+        ``TensorError``. Check ``Session.supports_fd_passing`` and copy
+        data with ``set_input_tensor()`` and ``get_output_tensor()`` instead.
         """
         ...
 
@@ -824,7 +830,8 @@ class Model:
 
         Raises:
             IndexError: If index is out of range.
-            TensorError: If tensors are not allocated or use system memory.
+            TensorError: If tensors are not allocated or use system memory
+                (always the case over TCP).
         """
         ...
 
@@ -841,7 +848,8 @@ class Model:
 
         Raises:
             IndexError: If index is out of range.
-            TensorError: If tensors are not allocated or use system memory.
+            TensorError: If tensors are not allocated or use system memory
+                (always the case over TCP).
         """
         ...
 

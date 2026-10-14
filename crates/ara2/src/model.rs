@@ -450,7 +450,8 @@ impl Model {
     /// from the model slot.
     ///
     /// `memory: None` allocates heap (`TensorMemory::Mem`) when the session
-    /// cannot pass file descriptors (TCP); see [`Self::allocate_tensors`].
+    /// cannot pass file descriptors (TCP). Heap tensors have no fd and must be
+    /// accessed through `map()`; see [`Self::allocate_tensors`].
     ///
     /// Allocate more sets than pipeline slots so a decoder can hold some sets
     /// while the model keeps inferring into others.
@@ -483,7 +484,8 @@ impl Model {
     /// the input DMA-BUF from the model slot.
     ///
     /// `memory: None` allocates heap (`TensorMemory::Mem`) when the session
-    /// cannot pass file descriptors (TCP); see [`Self::allocate_tensors`].
+    /// cannot pass file descriptors (TCP). Heap tensors have no fd and must be
+    /// accessed through `map()`; see [`Self::allocate_tensors`].
     pub fn allocate_input_set(&self, memory: Option<TensorMemory>) -> Result<InputSet, Error> {
         let memory = self.resolve_memory(memory)?;
         let tensors = (0..self.n_inputs())
@@ -739,11 +741,17 @@ impl Model {
     }
 
     /// Get a mutable reference to an input tensor.
+    ///
+    /// On a TCP session this is a heap tensor without an fd; use `map()`
+    /// rather than `clone_fd()` (see [`Self::allocate_tensors`]).
     pub fn input_tensor(&mut self, idx: usize) -> &mut Tensor<u8> {
         &mut self.inputs[idx].tensor
     }
 
     /// Get a reference to an output tensor.
+    ///
+    /// On a TCP session this is a heap tensor without an fd; use `map()`
+    /// rather than `clone_fd()` (see [`Self::allocate_tensors`]).
     pub fn output_tensor(&self, idx: usize) -> &Tensor<u8> {
         &self.outputs[idx].tensor
     }
@@ -762,6 +770,16 @@ impl Model {
     /// to enable zero-copy preprocessing with HAL's `TensorImageRef`.
     /// Output tensors use flat shape since they may have padding or
     /// different element sizes.
+    ///
+    /// # Tensors on TCP sessions
+    ///
+    /// Tensors allocated by this client on a session without fd passing
+    /// (`Session::supports_fd_passing()` is false, i.e. TCP) are heap memory,
+    /// not DMA-BUF. They have no file descriptor, so `clone_fd()` on them
+    /// fails and they cannot be handed to the HAL by fd (zero-copy
+    /// preprocessing, `TensorDyn::from_fd`). Check `tensor.memory()`, and read
+    /// and write such tensors through `map()`. Zero-copy fd sharing needs a
+    /// UNIX-socket session.
     pub fn allocate_tensors(&mut self, memory: Option<TensorMemory>) -> Result<(), Error> {
         let memory = self.resolve_memory(memory)?;
         self.inputs = (0..self.n_inputs())
@@ -1492,6 +1510,9 @@ pub struct OutputSet {
 
 impl OutputSet {
     /// Reference to the output tensor at `idx`.
+    ///
+    /// A heap tensor without an fd when the set came from a TCP session; see
+    /// [`Model::allocate_tensors`].
     pub fn output_tensor(&self, idx: usize) -> &Tensor<u8> {
         &self.tensors[idx].tensor
     }
@@ -1522,6 +1543,9 @@ pub struct InputSet {
 
 impl InputSet {
     /// Reference to the input tensor at `idx`.
+    ///
+    /// A heap tensor without an fd when the set came from a TCP session; see
+    /// [`Model::allocate_tensors`].
     pub fn input_tensor(&self, idx: usize) -> &Tensor<u8> {
         &self.tensors[idx].tensor
     }

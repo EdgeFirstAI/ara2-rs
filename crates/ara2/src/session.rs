@@ -155,6 +155,10 @@ impl Session {
     /// Whether this session can pass file descriptors to the proxy, which
     /// `TensorMemory::Shm` and `TensorMemory::DmaBuf` tensors require. True
     /// for UNIX-socket sessions, false for TCP.
+    ///
+    /// When false, tensors the client allocates are heap memory with no file
+    /// descriptor: `clone_fd()` fails on them and they must be accessed
+    /// through `map()`.
     pub fn supports_fd_passing(&self) -> bool {
         matches!(self.inner.socket_type, SocketType::Unix)
     }
