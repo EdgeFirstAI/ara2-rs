@@ -70,7 +70,8 @@ use edgefirst_image::{
     ColorMode, Crop, Flip, ImageProcessor, ImageProcessorTrait as _, MaskOverlay, Rotation,
 };
 use edgefirst_tensor::{
-    CpuAccess, DType, PixelFormat, PlaneDescriptor, TensorDyn, TensorMemory, TensorTrait as _,
+    CpuAccess, DType, PixelFormat, PlaneDescriptor, TensorDyn, TensorMapTrait as _, TensorMemory,
+    TensorTrait as _,
 };
 use libcamera::{
     camera::CameraConfigurationStatus,
@@ -784,6 +785,34 @@ fn capture_format(fmt: FormatArg) -> (libcamera::pixel_format::PixelFormat, Pixe
 
 // ── Main ────────────────────────────────────────────────────────────────────
 
+/// Copies a preprocessed image into the model's heap input tensor.
+fn copy_to_input(
+    model: &mut ara2::Model,
+    image: &TensorDyn,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let src = image.map_bytes(CpuAccess::Read)?;
+    let mut input = model.input_tensor(0).map()?;
+    let dst = input.as_mut_slice();
+    let n = dst.len().min(src.len());
+    dst[..n].copy_from_slice(&src[..n]);
+    Ok(())
+}
+
+/// Copies the model's heap output tensors into the tensors the decoder reads.
+fn copy_from_outputs(
+    model: &ara2::Model,
+    outputs: &[TensorDyn],
+) -> Result<(), Box<dyn std::error::Error>> {
+    for (i, out) in outputs.iter().enumerate() {
+        let src = model.output_tensor(i).map()?;
+        let src = src.as_slice();
+        let mut dst = out.map_bytes(CpuAccess::Write)?;
+        let n = dst.len().min(src.len());
+        dst[..n].copy_from_slice(&src[..n]);
+    }
+    Ok(())
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let cam_w = args.width;
@@ -958,7 +987,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ── 4. Setup HAL processor and model I/O tensors ────────────────────
     // Create the HAL image processor and import the model's DMA-BUF
     // input tensor as a PlanarRGB image. Also compute the letterbox crop
-    // and wrap each output tensor fd for later decoder use.
+    // and wrap each output tensor fd for later decoder use. Heap model
+    // tensors (a TCP session) cannot be imported, so then preprocessing goes
+    // to a HAL image and both directions are copied around each inference.
     let mut processor = ImageProcessor::new()?;
 
     let input_quant = model.input_quants(0);
@@ -967,17 +998,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         DType::U8
     };
-    let input_fd = model.input_tensor(0).clone_fd()?;
-    let plane = PlaneDescriptor::new(input_fd.as_fd())?;
-    let mut model_input = processor.import_image(
-        plane,
-        None,
-        in_w,
-        in_h,
-        PixelFormat::PlanarRgb,
-        input_dtype,
-        None,
-    )?;
+    let fd_backed = matches!(
+        model.input_tensor(0).memory(),
+        TensorMemory::DmaBuf | TensorMemory::Shm
+    );
+    let mut model_input = if fd_backed {
+        let input_fd = model.input_tensor(0).clone_fd()?;
+        let plane = PlaneDescriptor::new(input_fd.as_fd())?;
+        processor.import_image(
+            plane,
+            None,
+            in_w,
+            in_h,
+            PixelFormat::PlanarRgb,
+            input_dtype,
+            None,
+        )?
+    } else {
+        println!("Model tensors are heap memory: copying input and outputs");
+        processor.create_image(
+            in_w,
+            in_h,
+            PixelFormat::PlanarRgb,
+            input_dtype,
+            None,
+            CpuAccess::Read,
+        )?
+    };
 
     let letterbox = Crop::letterbox([114, 114, 114, 255]);
 
@@ -990,8 +1037,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 (2, true) => DType::I16,
                 _ => panic!("unsupported bpp={} signed={}", quants[i].2, quants[i].3),
             };
-            let fd = model.output_tensor(i).clone_fd().expect("clone output fd");
-            TensorDyn::from_fd(fd, &shapes[i], dtype, None).expect("wrap output tensor")
+            if fd_backed {
+                let fd = model.output_tensor(i).clone_fd().expect("clone output fd");
+                TensorDyn::from_fd(fd, &shapes[i], dtype, None).expect("wrap output tensor")
+            } else {
+                TensorDyn::new(&shapes[i], dtype, Some(TensorMemory::Mem), None)
+                    .expect("allocate output tensor")
+            }
         })
         .collect();
     let output_refs: Vec<&TensorDyn> = output_tensors.iter().collect();
@@ -1123,7 +1175,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         cam.queue_request(req).map_err(|(_, e)| e)?;
 
         processor.convert(src, &mut model_input, Rotation::None, Flip::None, letterbox)?;
+        if !fd_backed {
+            copy_to_input(&mut model, &model_input)?;
+        }
         model.run()?;
+        if !fd_backed {
+            copy_from_outputs(&model, &output_tensors)?;
+        }
 
         let overlay = MaskOverlay::default()
             .with_background(src)
@@ -1189,9 +1247,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let t2 = Instant::now();
 
         processor.convert(src, &mut model_input, Rotation::None, Flip::None, letterbox)?;
+        if !fd_backed {
+            copy_to_input(&mut model, &model_input)?;
+        }
         let t3 = Instant::now();
 
         model.run()?;
+        if !fd_backed {
+            copy_from_outputs(&model, &output_tensors)?;
+        }
         let t4 = Instant::now();
 
         let overlay = MaskOverlay::default()

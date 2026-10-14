@@ -159,6 +159,27 @@ def output_dtype(bpp: int, signed: bool) -> str:
     return "int16" if signed else "uint16"
 
 
+def copy_to_input(model: ara2.Model, image: ef_tensor.Tensor) -> None:
+    """Copy a preprocessed image into the model's heap input tensor."""
+    size = model.input_size(0)
+    # The array views the mapping, so it must be consumed before the map is
+    # released at the end of the `with` block.
+    with image.map("read") as view:
+        data = np.asarray(view).reshape(-1).view(np.uint8)
+        if data.size < size:
+            data = np.concatenate([data, np.zeros(size - data.size, np.uint8)])
+        model.set_input_tensor(0, data[:size])
+
+
+def copy_from_outputs(
+    model: ara2.Model, outputs: list[ef_tensor.Tensor], shapes: list[list[int]]
+) -> None:
+    """Copy the model's heap output tensors into the tensors the decoder reads."""
+    for i, (out, shape) in enumerate(zip(outputs, shapes)):
+        raw = model.get_output_tensor(i).reshape(-1)
+        out.from_numpy(raw[: math.prod(shape)].reshape(shape))
+
+
 def strip_trailing_ones(raw) -> list[int]:
     """Strip trailing 1s from a metadata shape.
 
@@ -521,17 +542,29 @@ def main() -> None:
         # YOLO gray (114, 114, 114) padding. The same letterbox_norm is
         # later passed to materialize_masks and draw_decoded_masks so mask
         # coordinates are correctly mapped to output-image space.
-        input_fd = model.input_tensor_fd(0)
-        try:
-            dst = processor.import_image(
-                input_fd,
-                w,
-                h,
-                ef_image.PixelFormat.PlanarRgb,
-                dtype="int8" if iq.is_signed else "uint8",
+        # With fd-backed model tensors the GPU writes the model input and the
+        # decoder reads the model outputs in place. Heap tensors (a TCP
+        # session) cannot be imported, so preprocessing goes to a HAL image
+        # and both directions are copied around each inference.
+        fd_backed = model.input_tensor_memory(0) in ("dma", "shm")
+        in_dtype = "int8" if iq.is_signed else "uint8"
+        if fd_backed:
+            input_fd = model.input_tensor_fd(0)
+            try:
+                dst = processor.import_image(
+                    input_fd,
+                    w,
+                    h,
+                    ef_image.PixelFormat.PlanarRgb,
+                    dtype=in_dtype,
+                )
+            finally:
+                os.close(input_fd)
+        else:
+            print("  model tensors are heap memory: copying input and outputs")
+            dst = processor.create_image(
+                w, h, ef_image.PixelFormat.PlanarRgb, dtype=in_dtype, access="read"
             )
-        finally:
-            os.close(input_fd)
 
         letterbox_norm = compute_letterbox(img_w, img_h, w, h)
 
@@ -541,16 +574,26 @@ def main() -> None:
         # any CPU copy.
         output_tensors = []
         for i in range(model.n_outputs):
-            fd = model.output_tensor_fd(i)
-            # from_fd takes ownership of fd via OwnedFd (no dup) — do NOT close.
-            t = ef_tensor.Tensor.from_fd(
-                fd,
-                shapes[i],
-                output_dtype(
-                    model.output_info(i).bpp, model.output_quants(i).is_signed
-                ),
+            dtype = output_dtype(
+                model.output_info(i).bpp, model.output_quants(i).is_signed
             )
+            if fd_backed:
+                fd = model.output_tensor_fd(i)
+                # from_fd takes ownership of fd via OwnedFd (no dup) — do NOT close.
+                t = ef_tensor.Tensor.from_fd(fd, shapes[i], dtype)
+            else:
+                t = ef_tensor.Tensor(
+                    shapes[i], dtype=dtype, mem=ef_tensor.TensorMemory.MEM
+                )
             output_tensors.append(t)
+
+        def before_run() -> None:
+            if not fd_backed:
+                copy_to_input(model, dst)
+
+        def after_run() -> None:
+            if not fd_backed:
+                copy_from_outputs(model, output_tensors, shapes)
 
         # ── 7. Pre-allocate render canvas ────────────────────────────────
         # Blank DMA-BUF RGBA canvas at source-image resolution for the overlay.
@@ -558,7 +601,9 @@ def main() -> None:
 
         # ── 8. Warmup: prime GPU caches, JIT paths, EGL image bindings ───
         processor.convert(frame, dst, letterbox=(114, 114, 114, 255))
+        before_run()
         model.run()
+        after_run()
         _wb, _ws, _wc, _wp = decoder.decode_proto(output_tensors)
         _wm = (
             processor.materialize_masks(_wb, _ws, _wc, _wp, letterbox=letterbox_norm)
@@ -579,10 +624,12 @@ def main() -> None:
         # ── 9. Single-shot timed run ──────────────────────────────────────
         t0 = time.monotonic()
         processor.convert(frame, dst, letterbox=(114, 114, 114, 255))
+        before_run()
         pre_ms = (time.monotonic() - t0) * 1000
 
         t1 = time.monotonic()
         timing = model.run()
+        after_run()
         inf_ms = (time.monotonic() - t1) * 1000
 
         # Step 1 — Decode: NMS + dequant on raw NPU output tensors
@@ -668,6 +715,8 @@ def main() -> None:
                 letterbox_norm=letterbox_norm,
                 n_iter=args.benchmark,
                 color_mode=color_mode,
+                before_run=before_run,
+                after_run=after_run,
             )
 
 
@@ -684,6 +733,8 @@ def _benchmark(
     letterbox_norm: tuple,
     n_iter: int,
     color_mode: ef_image.ColorMode,
+    before_run=lambda: None,
+    after_run=lambda: None,
 ) -> None:
     """Run N timed iterations and print per-stage statistics.
 
@@ -703,6 +754,8 @@ def _benchmark(
         n_iter: Number of timed iterations to run.
         color_mode: Segmentation mask color assignment — matches the
             ``--color-mode`` flag (class, instance, or track).
+        before_run: Called after preprocessing, before each inference.
+        after_run: Called after each inference, before decoding.
     """
     pre_ms, inf_ms, npu_ms, din_ms, dout_ms = [], [], [], [], []
     dec_ms, mat_ms, draw_ms = [], [], []
@@ -711,10 +764,12 @@ def _benchmark(
         # Preprocess: GPU letterbox-resize frame → NPU input tensor (DMA-BUF)
         t0 = time.monotonic()
         processor.convert(frame, dst, letterbox=(114, 114, 114, 255))
+        before_run()
         t1 = time.monotonic()
 
         # Inference: NPU execution (includes DMA input upload + output download)
         timing = model.run()
+        after_run()
         t2 = time.monotonic()
 
         # Step 1 — Decode: NMS + dequant
