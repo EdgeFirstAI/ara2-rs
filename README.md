@@ -79,8 +79,8 @@ let mut model = endpoint.load_model_from_file("model.dvm".as_ref())?;
 model.allocate_tensors(None)?;
 
 // Run inference
-let timing = model.run()?;
-println!("NPU inference: {:?}", timing.run_time);
+let stats = model.run()?;
+println!("NPU inference: {:?}", stats.timing.run_time);
 # Ok::<(), ara2::Error>(())
 ```
 
@@ -125,14 +125,77 @@ model.allocate_tensors()
 request = model.submit()
 
 # CPU work here... the GIL is NOT held during wait()
-timing = request.wait()
-print(f"NPU inference: {timing.run_time_us} µs")
+stats = request.wait()
+print(f"NPU inference: {stats.timing.run_time * 1e3:.2f} ms")
 ```
 
 See the [`async_infer`](examples/async_infer.rs) example for a complete
 benchmark comparing synchronous vs. asynchronous inference, and
 [`async_pipeline`](examples/async_pipeline.rs) for pipelined inference
 with a circular buffer of DMA-BUF tensor sets (2x+ throughput improvement).
+
+## Telemetry
+
+`Model::run()` and `InferRequest::wait()` return an `InferenceStats`: the `timing` durations (sub-microsecond precision), the `clocks` the inference ran at, `hw_cycles` and `fp_cycles`, `retries`, and the `input_start`, `inference_start` and `output_start` timestamps.
+The timestamps are `MonotonicTime` values on `CLOCK_MONOTONIC`, comparable with `ara2::monotonic_now()` and with a Perfetto trace taken on the same host.
+Only the DVAPI 3.0 runtime stamps on `CLOCK_MONOTONIC`; DVAPI 1.x stamps the wall clock, so the timestamps are `None` there rather than a value on the wrong clock.
+
+```rust
+use ara2::Session;
+
+let session = Session::connect()?;
+let endpoint = &session.list_endpoints()?[0];
+
+let info = endpoint.info()?;                  // static: chip, DRAM vendor, host interface
+let stats = endpoint.statistics()?;           // sampled: clocks, voltage, temperature, DRAM
+let busy = endpoint.is_busy()?;               // an inference is running or queued
+
+let mut model = endpoint.load_model_from_file("model.dvm".as_ref())?;
+model.allocate_tensors(None)?;
+let run = model.run()?;
+println!("{} cycles at {} MHz", run.hw_cycles, run.clocks.sys_mhz);
+if let Some(start) = run.inference_start {
+    println!("queued at {:?}", start.as_duration());
+}
+# Ok::<(), ara2::Error>(())
+```
+
+`Endpoint::statistics()` reports the endpoint state, `Clocks` (system, DRAM, NNP and SBP), core voltage, temperature, soft-reset count and DRAM usage. The DVAPI 1.1 runtime reports the core voltage as 0.0; DVAPI 1.3 and later measure it.
+`Endpoint::info()` reports the device and vendor identifiers, the chip, the DRAM vendor name and the host interface.
+Each field a runtime does not populate is `None`, never zero.
+The inference timestamps (`input_start`, `inference_start`, `output_start`) are on `CLOCK_MONOTONIC`, and so line up with Perfetto, on DVAPI 3.0 only.
+
+Per-model statistics, inference queue statistics, the endpoint power state and power-state control are not exposed, because the runtime does not yet report or apply them reliably.
+
+### Availability by DVAPI version
+
+`None` means the field is absent on that version; an error means the call returns `Error::Unsupported`.
+The DVAPI 1.3 column was observed on an i.MX 95 board (runtime 1.3.2.0).
+DVAPI 1.1 follows the runtime's declared layout and has not been re-measured for this release.
+The DVAPI 3.0 column was observed on an i.MX 95 board (runtime 3.0.0.0, firmware 0.128.11).
+
+| Item | 1.1 | 1.3 | 3.0 |
+|------|-----|-----|-----|
+| `InferenceStats` timing, cycles, retries | yes | yes | yes |
+| `InferenceStats` `input_start`, `inference_start`, `output_start` | `None` | `None` | `CLOCK_MONOTONIC` |
+| `Clocks` `nnp_mhz`, `sbp_mhz` | `None` | yes | yes |
+| `DramStatistics::largest_contiguous_free` | `None` | `None` | yes |
+| `Endpoint::is_busy()` | yes | yes | yes |
+| `Session::set_log_level()` | error | yes | yes |
+
+## Control
+
+**Log level.**
+`Session::set_log_level(LogLevel)` sets the client library's own logging on DVAPI 1.3 and 3.0, and returns `Error::Unsupported` on 1.1.
+
+### Cost of sampling
+
+`Endpoint::statistics()` is a round trip to the proxy.
+The `telemetry` example measures its cost by timing the same inference loop alone and while a second thread samples every 100 ms.
+On the DVAPI 1.3 board (i.MX 95 with `yolov8n-det-int16`, 200 iterations, three runs) inference ran at 126.8, 126.3 and 125.8 fps alone and 125.7, 126.4 and 126.0 fps while sampling, so sampling every 100 ms made no measurable difference.
+A `statistics()` call took 1.05 to 1.11 ms on average and at most 1.5 ms.
+On the DVAPI 3.0 board (i.MX 95, proxy over TCP, a 3.0-compiled detection model, three runs) inference ran at 29.9, 29.9 and 29.8 fps alone and 30.0, 29.9 and 29.9 fps while sampling, again no measurable difference.
+A `statistics()` call took 7.4 to 10.0 ms on average and at most 40 ms there.
 
 ## Runtime Requirements
 
@@ -144,9 +207,9 @@ Requires a `libaraclient` implementing DVAPI 1.1, 1.3 or 3.0. The following must
   |-----------|-------|-------------------------|
   | Kinara ARA-2 runtime 1.2.1, packaged by [meta-kinara](https://github.com/EdgeFirstAI/meta-kinara) | 1.1 | UNIX `/var/run/ara2.sock` |
   | NXP `imx-nxp-ara2` (rt-sdk-ara2 2.1.1) | 1.3 | UNIX `/var/run/proxy.sock` |
-  | Kinara arart r3.0 | 3.0 | TCP `127.0.0.1:5000` (sample config); UNIX with `interface_type: "SOCKET"` is expected to work but is untested in this release |
+  | Kinara arart r3.0 | 3.0 | TCP `127.0.0.1:5000` (sample config); UNIX with `interface_type: "SOCKET"` |
 
-  [`open_library`](crates/ara2/src/lib.rs) probes the loaded library with `dv_get_client_lib_version` and reads every version-specific struct at that version's layout; 3.0 moves fields within `dv_model`, so no one layout serves all three. A proxy accepts only clients of its own DVAPI version, so a system carries one library. The library's name has also differed in every packaging so far and there is no soname to rely on, so the architecture-suffixed name for the target is tried first (`libaraclient_aarch64.so`, `libaraclient_x86_64.so`), then `libaraclient.so` and `libaraclient.so.1`.
+  [`open_library`](crates/ara2/src/lib.rs) probes the loaded library with `dv_get_client_lib_version` and reads every version-specific struct at that version's layout; 3.0 moves fields within `dv_model`, so no one layout serves all three. A proxy accepts only clients of its own DVAPI version, so a system carries one library. Models are compiled for one runtime generation too: a model compiled for DVAPI 1.3 fails to load on 3.0 with `DV_MODEL_LOAD_FAILURE`. The library's name has also differed in every packaging so far and there is no soname to rely on, so the architecture-suffixed name for the target is tried first (`libaraclient_aarch64.so`, `libaraclient_x86_64.so`), then `libaraclient.so` and `libaraclient.so.1`.
 - **The proxy service** — provides NPU access, must be running before connecting. It is `rt-sdk-ara2.service` under NXP's packaging and `ara2.service` under meta-kinara's.
 - **ARA-2 hardware** — PCIe accelerator card visible via `lspci`
 
@@ -160,7 +223,7 @@ Requires a `libaraclient` implementing DVAPI 1.1, 1.3 or 3.0. The following must
 
 `ara2::proxy_endpoint()` reports the endpoint `connect()` would open without opening it; when nothing is found the error lists what was checked.
 
-Only a UNIX socket can pass file descriptors. On a TCP session (`Session::supports_fd_passing()` is false), `allocate_tensors(None)` and the input/output set allocators default to heap memory, and an explicit `TensorMemory::Shm` or `TensorMemory::DmaBuf` fails with `Error::FdPassingUnavailable` before any call reaches the library. Inference works on both transports; zero-copy DMA-BUF needs UNIX. Tensors the client allocates over TCP are heap memory with no file descriptor, so `clone_fd()` on them fails and they cannot be passed to the HAL by fd: check `tensor.memory()` (or `session.supports_fd_passing()`) and copy through `map()` instead, as the `yolov8` examples do. `connect()` logs a warning when it selects a TCP endpoint. For r3.0, setting `interface_type: "SOCKET"` and `interface_socket_file` in the proxy configuration is expected to give a UNIX socket with fd passing; that configuration is untested on hardware in this release.
+Only a UNIX socket can pass file descriptors. On a TCP session (`Session::supports_fd_passing()` is false), `allocate_tensors(None)` and the input/output set allocators default to heap memory, and an explicit `TensorMemory::Shm` or `TensorMemory::DmaBuf` fails with `Error::FdPassingUnavailable` before any call reaches the library. Inference works on both transports; zero-copy DMA-BUF needs UNIX. Tensors the client allocates over TCP are heap memory with no file descriptor, so `clone_fd()` on them fails and they cannot be passed to the HAL by fd: check `tensor.memory()` (or `session.supports_fd_passing()`) and copy through `map()` instead, as the `yolov8` examples do. `connect()` logs a warning when it selects a TCP endpoint. For r3.0, setting `interface_type: "SOCKET"` and `interface_socket_file` in the proxy configuration gives a UNIX socket with fd passing.
 
 ### Versions
 
@@ -222,6 +285,8 @@ physical buffers with no CPU copies in the data path.
 | [`async_infer.py`](examples/async_infer.py) | Python — Same async benchmark via `edgefirst-ara2` |
 | [`async_pipeline.rs`](examples/async_pipeline.rs) | Rust — Pipelined inference with circular DMA-BUF buffer ring (2x+ speedup) |
 | [`async_pipeline.py`](examples/async_pipeline.py) | Python — Same pipeline demo via `edgefirst-ara2` |
+| [`telemetry.rs`](examples/telemetry.rs) | Rust — Print everything the runtime reports and measure the cost of sampling endpoint statistics |
+| [`telemetry.py`](examples/telemetry.py) | Python — The same report via `edgefirst-ara2` |
 | [`endpoints.py`](examples/endpoints.py) | Python — Connect, list endpoints, check status |
 | [`test_dvm_metadata.rs`](examples/test_dvm_metadata.rs) | Rust — Read and display DVM model metadata |
 

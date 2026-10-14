@@ -14,6 +14,7 @@ use std::ffi::c_char;
 use ara2_sys::{
     dv_endpoint_dram_statistics, dv_endpoint_state_t, dv_endpoint_statistics,
     dv_layer_output_type_t, dv_model, dv_model_input_param, dv_model_output_postprocess_param,
+    dv_version,
 };
 
 use crate::Abi;
@@ -47,6 +48,9 @@ pub(crate) struct ModelFields {
     pub num_inputs: usize,
     pub num_outputs: usize,
     pub input_param: *const dv_model_input_param,
+    pub version: dv_version,
+    pub name: *const c_char,
+    pub model_type: u32,
 }
 
 /// The `dv_model_output_param` fields ara2 reads.
@@ -80,6 +84,7 @@ pub(crate) struct DramFields {
     pub reserved: u64,
     pub models: u64,
     pub tensors: u64,
+    pub largest_free: Option<u64>,
 }
 
 /// The `dv_endpoint_statistics` fields ara2 reads.
@@ -91,6 +96,38 @@ pub(crate) struct EndpointStatsFields {
     pub core_voltage_v: f32,
     pub temp_c: f32,
     pub dram: DramFields,
+    pub soft_reset_count: u32,
+    pub sbp_clk_mhz: Option<i32>,
+    pub nnp_clk_mhz: Option<i32>,
+}
+
+/// Fields that exist only in some versions, read uniformly.
+pub(crate) trait VersionFields {
+    fn largest_free(&self) -> Option<u64> {
+        None
+    }
+    fn sbp_nnp(&self) -> (Option<i32>, Option<i32>) {
+        (None, None)
+    }
+}
+
+impl VersionFields for ara2_sys::v1_1::dv_endpoint_dram_statistics {}
+impl VersionFields for ara2_sys::v1_3::dv_endpoint_dram_statistics {}
+impl VersionFields for ara2_sys::v3_0::dv_endpoint_dram_statistics {
+    fn largest_free(&self) -> Option<u64> {
+        Some(self.ep_largest_contiguous_memory_size)
+    }
+}
+impl VersionFields for ara2_sys::v1_1::dv_endpoint_statistics {}
+impl VersionFields for ara2_sys::v1_3::dv_endpoint_statistics {
+    fn sbp_nnp(&self) -> (Option<i32>, Option<i32>) {
+        (Some(self.ep_sbp_clk), Some(self.ep_nnp_clk))
+    }
+}
+impl VersionFields for ara2_sys::v3_0::dv_endpoint_statistics {
+    fn sbp_nnp(&self) -> (Option<i32>, Option<i32>) {
+        (Some(self.ep_sbp_clk), Some(self.ep_nnp_clk))
+    }
 }
 
 /// # Safety
@@ -101,6 +138,9 @@ pub(crate) unsafe fn model_fields(abi: Abi, model: *const dv_model) -> ModelFiel
             num_inputs: m.num_inputs as usize,
             num_outputs: m.num_outputs as usize,
             input_param: m.input_param,
+            version: m.version,
+            name: m.name,
+            model_type: m.model_type,
         })
     }
 }
@@ -150,6 +190,7 @@ pub(crate) unsafe fn dram_fields(
             reserved: d.ep_total_reserved_occupancy_size,
             models: d.ep_total_model_occupancy_size,
             tensors: d.ep_total_tensor_occupancy_size,
+            largest_free: d.largest_free(),
         })
     }
 }
@@ -162,7 +203,9 @@ pub(crate) unsafe fn endpoint_stats_fields(
     stats: *const dv_endpoint_statistics,
 ) -> EndpointStatsFields {
     unsafe {
-        with_layout!(abi, stats => dv_endpoint_statistics, |s| EndpointStatsFields {
+        with_layout!(abi, stats => dv_endpoint_statistics, |s| {
+            let (sbp_clk_mhz, nnp_clk_mhz) = s.sbp_nnp();
+            EndpointStatsFields {
             state: s.state,
             sys_clk_mhz: s.ep_sys_clk,
             dram_clk_mhz: s.ep_dram_clk,
@@ -175,7 +218,12 @@ pub(crate) unsafe fn endpoint_stats_fields(
                 reserved: s.ep_dram_stats.ep_total_reserved_occupancy_size,
                 models: s.ep_dram_stats.ep_total_model_occupancy_size,
                 tensors: s.ep_dram_stats.ep_total_tensor_occupancy_size,
+                largest_free: s.ep_dram_stats.largest_free(),
             },
+            soft_reset_count: s.ep_soft_reset_count,
+            sbp_clk_mhz,
+            nnp_clk_mhz,
+            }
         })
     }
 }
@@ -217,8 +265,10 @@ mod offline_tests {
     model_roundtrip!(model_reads_v1_3, Abi::V1_3, v1_3);
     model_roundtrip!(model_reads_v3_0, Abi::V3_0, v3_0);
 
+    /// `$extra` sets the fields only some versions have: SBP 355 / NNP 450
+    /// where `$sbp`, largest free block 4096 where `$largest` is `Some`.
     macro_rules! stats_roundtrip {
-        ($name:ident, $abi:expr, $m:ident) => {
+        ($name:ident, $abi:expr, $m:ident, sbp: $sbp:expr, largest: $largest:expr, $extra:expr) => {
             #[test]
             fn $name() {
                 use ara2_sys::$m::dv_endpoint_statistics;
@@ -229,20 +279,40 @@ mod offline_tests {
                 s[0].ep_dram_stats.ep_total_dram_size = 2;
                 s[0].ep_dram_stats.ep_total_free_size = 3;
                 s[1].ep_sys_clk = 1234;
+                s[1].ep_dram_clk = 1066;
+                s[1].ep_soft_reset_count = 5;
                 s[1].ep_dram_stats.ep_total_dram_size = 0x1_2345_6789;
                 s[1].ep_dram_stats.ep_total_free_size = 77;
+                let extra: fn(&mut dv_endpoint_statistics) = $extra;
+                extra(&mut s[1]);
                 // Element 1 sits one version-specific stride in, so an arm
                 // wired to another version's layout reads the wrong bytes.
                 let ptr: *const dv_endpoint_statistics = &s[1];
                 let f = unsafe { endpoint_stats_fields($abi, ptr.cast()) };
                 assert_eq!(f.sys_clk_mhz, 1234);
+                assert_eq!(f.dram_clk_mhz, 1066);
                 assert_eq!(f.dram.total, 0x1_2345_6789);
                 assert_eq!(f.dram.free, 77);
+                assert_eq!(f.soft_reset_count, 5);
+                let (sbp, nnp) = if $sbp {
+                    (Some(355), Some(450))
+                } else {
+                    (None, None)
+                };
+                assert_eq!((f.sbp_clk_mhz, f.nnp_clk_mhz), (sbp, nnp));
+                assert_eq!(f.dram.largest_free, $largest);
             }
         };
     }
 
-    stats_roundtrip!(endpoint_stats_read_v1_1, Abi::V1_1, v1_1);
-    stats_roundtrip!(endpoint_stats_read_v1_3, Abi::V1_3, v1_3);
-    stats_roundtrip!(endpoint_stats_read_v3_0, Abi::V3_0, v3_0);
+    stats_roundtrip!(endpoint_stats_read_v1_1, Abi::V1_1, v1_1, sbp: false, largest: None, |_s| {});
+    stats_roundtrip!(endpoint_stats_read_v1_3, Abi::V1_3, v1_3, sbp: true, largest: None, |s| {
+        s.ep_sbp_clk = 355;
+        s.ep_nnp_clk = 450;
+    });
+    stats_roundtrip!(endpoint_stats_read_v3_0, Abi::V3_0, v3_0, sbp: true, largest: Some(4096), |s| {
+        s.ep_sbp_clk = 355;
+        s.ep_nnp_clk = 450;
+        s.ep_dram_stats.ep_largest_contiguous_memory_size = 4096;
+    });
 }

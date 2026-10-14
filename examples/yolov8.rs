@@ -812,7 +812,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let preprocess_time = t_pre.elapsed();
 
     let t_inf = Instant::now();
-    let timing = model.run()?;
+    let stats = model.run()?;
     if !fd_backed {
         copy_from_outputs(&model, &output_tensors)?;
     }
@@ -861,7 +861,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Preprocess:   {:?}", preprocess_time);
     println!(
         "  Inference:    {:?} (npu: {:?}, in: {:?}, out: {:?})",
-        inference_time, timing.run_time, timing.input_time, timing.output_time
+        inference_time, stats.timing.run_time, stats.timing.input_time, stats.timing.output_time
     );
     println!("  Decode:       {:?}", decode_time);
     println!("  Materialize:  {:?}", materialize_time);
@@ -1000,9 +1000,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             pre_ms.push((t1 - t0).as_micros() as f64 / 1000.0);
             inf_ms.push((t2 - t1).as_micros() as f64 / 1000.0);
-            npu_ms.push(t.run_time.as_micros() as f64 / 1000.0);
-            din_ms.push(t.input_time.as_micros() as f64 / 1000.0);
-            dout_ms.push(t.output_time.as_micros() as f64 / 1000.0);
+            npu_ms.push(t.timing.run_time.as_secs_f64() * 1000.0);
+            din_ms.push(t.timing.input_time.as_secs_f64() * 1000.0);
+            dout_ms.push(t.timing.output_time.as_secs_f64() * 1000.0);
             decode_ms.push((t3 - t2).as_micros() as f64 / 1000.0);
             mat_ms.push((t4 - t3).as_micros() as f64 / 1000.0);
             draw_ms.push((t5 - t4).as_micros() as f64 / 1000.0);

@@ -1,5 +1,5 @@
 use crate::{
-    Error,
+    Error, InferenceStats,
     session::{SessionInner, VersionLib, status_result},
 };
 use ara2_sys::{
@@ -51,6 +51,48 @@ impl Add for ModelTiming {
 /// Default inference timeout in milliseconds.
 pub const DEFAULT_TIMEOUT_MS: i32 = 1000;
 
+/// The kind of model, as the runtime reports it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ModelType {
+    /// An ARA-1 convolutional network.
+    Ara1Cnn,
+    /// An ARA-2 convolutional network.
+    Ara2Cnn,
+    /// An ARA-2 language model.
+    Ara2Llm,
+    /// An ARA-2 language model with dynamic shapes (v2).
+    Ara2LlmDynV2,
+    /// Reported by DVAPI 3.0 only.
+    McsLlm,
+    /// A value this crate does not know for the loaded version.
+    Other(u32),
+}
+
+impl ModelType {
+    pub(crate) fn from_raw(value: u32, abi: crate::Abi) -> Self {
+        use ara2_sys::{
+            DV_MODEL_TYPE_DV_MODEL_TYPE_ARA1_CNN, DV_MODEL_TYPE_DV_MODEL_TYPE_ARA2_CNN,
+            DV_MODEL_TYPE_DV_MODEL_TYPE_ARA2_LLM, DV_MODEL_TYPE_DV_MODEL_TYPE_ARA2_LLM_DYN_V2,
+        };
+        match value {
+            DV_MODEL_TYPE_DV_MODEL_TYPE_ARA1_CNN => return Self::Ara1Cnn,
+            DV_MODEL_TYPE_DV_MODEL_TYPE_ARA2_CNN => return Self::Ara2Cnn,
+            DV_MODEL_TYPE_DV_MODEL_TYPE_ARA2_LLM => return Self::Ara2Llm,
+            DV_MODEL_TYPE_DV_MODEL_TYPE_ARA2_LLM_DYN_V2 => return Self::Ara2LlmDynV2,
+            _ => {}
+        }
+        match abi {
+            crate::Abi::V3_0
+                if value == ara2_sys::v3_0::dv_model_type_3_0_DV_MODEL_TYPE_MCS_LLM =>
+            {
+                Self::McsLlm
+            }
+            crate::Abi::V1_1 | crate::Abi::V1_3 | crate::Abi::V3_0 => Self::Other(value),
+        }
+    }
+}
+
 /// A neural network model loaded on an ARA-2 endpoint.
 ///
 /// Models own their loaded resources and are NOT cloneable. When dropped,
@@ -64,7 +106,7 @@ pub const DEFAULT_TIMEOUT_MS: i32 = 1000;
 /// Two inference modes are available:
 ///
 /// - **Synchronous** — [`run()`](Self::run) blocks until the NPU finishes
-///   and returns timing. Simplest path for single-inference workloads.
+///   and returns statistics. Simplest path for single-inference workloads.
 /// - **Asynchronous** — [`submit()`](Self::submit) returns an
 ///   [`InferRequest`] handle immediately, allowing the CPU to do other work
 ///   (e.g., preprocessing the next frame) while the NPU executes. Call
@@ -82,12 +124,12 @@ pub const DEFAULT_TIMEOUT_MS: i32 = 1000;
 /// model.allocate_tensors(Some(TensorMemory::DmaBuf))?;
 ///
 /// // Synchronous inference
-/// let timing = model.run()?;
+/// let stats = model.run()?;
 ///
 /// // Asynchronous inference — overlap CPU work with NPU execution
 /// let request = model.submit()?;
 /// // ... do CPU work here while the NPU is busy ...
-/// let timing = request.wait(DEFAULT_TIMEOUT_MS)?;
+/// let stats = request.wait(DEFAULT_TIMEOUT_MS)?;
 /// # Ok::<(), ara2::Error>(())
 /// ```
 pub struct Model {
@@ -320,7 +362,7 @@ impl Model {
     /// Run inference synchronously on the model using the pre-allocated
     /// tensors.
     ///
-    /// Blocks until the NPU finishes and returns timing statistics. For
+    /// Blocks until the NPU finishes and returns inference statistics. For
     /// workloads where you want to overlap CPU preprocessing with NPU
     /// execution, use [`submit()`](Self::submit) instead.
     ///
@@ -335,12 +377,12 @@ impl Model {
     /// # let endpoints = session.list_endpoints()?;
     /// # let mut model = endpoints[0].load_model_from_file("m.dvm".as_ref())?;
     /// # model.allocate_tensors(None)?;
-    /// let timing = model.run()?;
+    /// let stats = model.run()?;
     /// println!("NPU: {:?}, DMA in: {:?}, DMA out: {:?}",
-    ///     timing.run_time, timing.input_time, timing.output_time);
+    ///     stats.timing.run_time, stats.timing.input_time, stats.timing.output_time);
     /// # Ok::<(), ara2::Error>(())
     /// ```
-    pub fn run(&mut self) -> Result<ModelTiming, Error> {
+    pub fn run(&mut self) -> Result<InferenceStats, Error> {
         // `_map_guards` keeps memory mappings alive through the FFI call.
         let (mut input_blobs, mut output_blobs, _map_guards) = self.build_blobs()?;
 
@@ -363,19 +405,19 @@ impl Model {
             return Err(self.session.status_error(err));
         }
 
-        let timing = extract_timing(request);
+        let stats = extract_stats(request, self.session.abi);
 
-        // Always free the request, even if extract_timing failed.
+        // Always free the request, even if extract_stats failed.
         let free_err = unsafe { self.session.lib.dv_infer_free(request) };
 
-        // Return the timing error first (more informative), then check free.
-        let timing = timing?;
+        // Return the statistics error first (more informative), then check free.
+        let stats = stats?;
 
         if free_err != 0 {
             return Err(self.session.status_error(free_err));
         }
 
-        Ok(timing)
+        Ok(stats)
     }
 
     /// Submit inference asynchronously.
@@ -410,8 +452,8 @@ impl Model {
     /// println!("Request #{} submitted", request.request_id()?);
     ///
     /// // Block until the NPU finishes (up to 1000ms)
-    /// let timing = request.wait(DEFAULT_TIMEOUT_MS)?;
-    /// println!("NPU inference: {:?}", timing.run_time);
+    /// let stats = request.wait(DEFAULT_TIMEOUT_MS)?;
+    /// println!("NPU inference: {:?}", stats.timing.run_time);
     /// # Ok::<(), ara2::Error>(())
     /// ```
     pub fn submit(&mut self) -> Result<InferRequest, Error> {
@@ -876,6 +918,21 @@ impl Model {
         unsafe { crate::raw::model_fields(self.session.abi, self.ptr) }
     }
 
+    /// The DVAPI version the model was compiled for.
+    pub fn version(&self) -> crate::DvapiVersion {
+        crate::version::dvapi_version(self.fields().version)
+    }
+
+    /// The name given when the model was loaded, if any.
+    pub fn name(&self) -> Option<String> {
+        crate::telemetry::c_string(self.fields().name)
+    }
+
+    /// The kind of model the runtime reports.
+    pub fn model_type(&self) -> ModelType {
+        ModelType::from_raw(self.fields().model_type, self.session.abi)
+    }
+
     /// Get the number of input tensors for this model.
     pub fn n_inputs(&self) -> usize {
         self.fields().num_inputs
@@ -1176,7 +1233,7 @@ fn resolve_memory_for(
     }
 }
 
-/// Extract [`ModelTiming`] from a completed inference request.
+/// Extract [`InferenceStats`] from a completed inference request.
 ///
 /// # Safety
 ///
@@ -1186,28 +1243,24 @@ fn resolve_memory_for(
 /// # Errors
 ///
 /// Returns [`Error::NullPointer`] if the `stats` field is null, which
-/// indicates the C library did not populate timing data (e.g., statistics
+/// indicates the C library did not populate statistics (e.g., statistics
 /// were not enabled).
-fn extract_timing(request: *mut dv_infer_request) -> Result<ModelTiming, Error> {
-    unsafe {
-        let timing_ptr = (*request).stats;
-        if timing_ptr.is_null() {
-            return Err(Error::NullPointer(
-                "dv_infer_request.stats is null — timing data unavailable".to_owned(),
-            ));
-        }
-        Ok(ModelTiming {
-            run_time: Duration::from_micros((*timing_ptr).inference_execution_time as u64),
-            input_time: Duration::from_micros((*timing_ptr).input_transfer_time as u64),
-            output_time: Duration::from_micros((*timing_ptr).output_transfer_time as u64),
-        })
+fn extract_stats(request: *mut dv_infer_request, abi: crate::Abi) -> Result<InferenceStats, Error> {
+    // SAFETY: `request` is a completed request from the library.
+    let stats = unsafe { (*request).stats };
+    if stats.is_null() {
+        return Err(Error::NullPointer(
+            "dv_infer_request.stats is null — inference statistics unavailable".to_owned(),
+        ));
     }
+    // SAFETY: `stats` is non-null and owned by the request.
+    Ok(crate::telemetry::inference_stats(unsafe { &*stats }, abi))
 }
 
 /// A pending asynchronous inference request.
 ///
 /// Created by [`Model::submit`]. Call [`wait`](Self::wait) to block until
-/// the NPU finishes and retrieve timing statistics.
+/// the NPU finishes and retrieve inference statistics.
 ///
 /// The underlying C request is freed automatically on drop via
 /// `dv_infer_free`. A request still pending when it is dropped is waited
@@ -1244,8 +1297,8 @@ fn extract_timing(request: *mut dv_infer_request) -> Result<ModelTiming, Error> 
 ///
 /// // Do preprocessing for the next frame while NPU is busy...
 ///
-/// let timing = request.wait(DEFAULT_TIMEOUT_MS)?;
-/// println!("Request {id}: NPU={:?}", timing.run_time);
+/// let stats = request.wait(DEFAULT_TIMEOUT_MS)?;
+/// println!("Request {id}: NPU={:?}", stats.timing.run_time);
 /// # Ok::<(), ara2::Error>(())
 /// ```
 pub struct InferRequest {
@@ -1269,10 +1322,10 @@ pub struct InferRequest {
 unsafe impl Send for InferRequest {}
 
 impl InferRequest {
-    /// Block until this inference request completes and return timing.
+    /// Block until this inference request completes and return statistics.
     ///
     /// Consumes the request handle — the underlying C object is freed
-    /// after extracting timing information. Calling `wait` a second time
+    /// after extracting statistics. Calling `wait` a second time
     /// is not possible since `self` is moved.
     ///
     /// # On error
@@ -1309,11 +1362,11 @@ impl InferRequest {
     /// # let mut model = endpoints[0].load_model_from_file("m.dvm".as_ref())?;
     /// # model.allocate_tensors(None)?;
     /// let request = model.submit()?;
-    /// let timing = request.wait(DEFAULT_TIMEOUT_MS)?;
-    /// println!("Inference took {:?}", timing.run_time);
+    /// let stats = request.wait(DEFAULT_TIMEOUT_MS)?;
+    /// println!("Inference took {:?}", stats.timing.run_time);
     /// # Ok::<(), ara2::Error>(())
     /// ```
-    pub fn wait(self, timeout_ms: i32) -> Result<ModelTiming, Error> {
+    pub fn wait(self, timeout_ms: i32) -> Result<InferenceStats, Error> {
         let mut completed: *mut dv_infer_request = std::ptr::null_mut();
         let mut list = [self.ptr];
 
@@ -1372,7 +1425,7 @@ impl InferRequest {
             let status = unsafe { (*completed).status };
             match status {
                 DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_COMPLETED => {
-                    return extract_timing(completed);
+                    return extract_stats(completed, self.session.abi);
                     // Drop runs here, calling dv_infer_free
                 }
                 DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_FAILED => {
@@ -1774,8 +1827,8 @@ const _: () = {
 
 #[cfg(test)]
 mod tests {
-    use super::{DEFAULT_TIMEOUT_MS, Model};
-    use crate::Error;
+    use super::{DEFAULT_TIMEOUT_MS, Model, ModelType};
+    use crate::{Abi, Error};
     use edgefirst_tensor::{TensorMapTrait as _, TensorMemory, TensorTrait as _};
 
     /// The fd-registration tests below need a session that can pass file
@@ -1896,6 +1949,29 @@ mod tests {
     }
 
     #[test]
+    fn model_type_decodes_per_version() {
+        assert_eq!(ModelType::from_raw(1, Abi::V1_3), ModelType::Ara2Cnn);
+        assert_eq!(ModelType::from_raw(4, Abi::V3_0), ModelType::McsLlm);
+        assert_eq!(ModelType::from_raw(4, Abi::V1_3), ModelType::Other(4));
+    }
+
+    #[test]
+    fn model_information() {
+        let session = crate::tests::test_session();
+        let model = session.list_endpoints().unwrap()[0]
+            .load_model_from_file(&crate::tests::test_model_path())
+            .unwrap();
+        eprintln!(
+            "{:?} {:?} {:?}",
+            model.version(),
+            model.name(),
+            model.model_type()
+        );
+        assert_eq!(model.model_type(), ModelType::Ara2Cnn);
+        assert!(model.name().is_some());
+    }
+
+    #[test]
     fn test_load_model_from_file() {
         let session = crate::tests::test_session();
         let endpoints = session.list_endpoints().unwrap();
@@ -1953,8 +2029,11 @@ mod tests {
             .allocate_tensors(None)
             .expect("should allocate tensors");
 
-        let timing = model.run().expect("inference should succeed");
-        assert!(timing.run_time.as_micros() > 0, "run_time should be > 0");
+        let stats = model.run().expect("inference should succeed");
+        assert!(
+            stats.timing.run_time.as_micros() > 0,
+            "run_time should be > 0"
+        );
     }
 
     #[test]
@@ -1976,10 +2055,13 @@ mod tests {
         let _req_id = request.request_id().expect("should get request id");
 
         // Wait for completion
-        let timing = request
+        let stats = request
             .wait(super::DEFAULT_TIMEOUT_MS)
             .expect("wait should succeed");
-        assert!(timing.run_time.as_micros() > 0, "run_time should be > 0");
+        assert!(
+            stats.timing.run_time.as_micros() > 0,
+            "run_time should be > 0"
+        );
 
         // No in-flight requests after wait
         let count = session.inflight_count().expect("should get inflight count");
@@ -2001,8 +2083,8 @@ mod tests {
         drop(request);
 
         // Verify we can still run inference after dropping a request
-        let timing = model.run().expect("inference should succeed after drop");
-        assert!(timing.run_time.as_micros() > 0);
+        let stats = model.run().expect("inference should succeed after drop");
+        assert!(stats.timing.run_time.as_micros() > 0);
     }
 
     /// A wrong struct layout reads garbage rather than failing a call, so
@@ -2134,6 +2216,38 @@ mod tests {
 
     fn output_bytes(model: &Model, i: usize) -> Vec<u8> {
         model.output_tensor(i).map().unwrap().as_slice().to_vec()
+    }
+
+    #[test]
+    fn inference_stats_are_populated_on_the_host_monotonic_clock() {
+        let session = crate::tests::test_session();
+        let mut model = session.list_endpoints().unwrap()[0]
+            .load_model_from_file(&crate::tests::test_model_path())
+            .unwrap();
+        model.allocate_tensors(None).unwrap();
+        let before = crate::monotonic_now();
+        let stats = model.run().unwrap();
+        let after = crate::monotonic_now();
+        eprintln!("{} {stats:?}", session.abi());
+        assert!(stats.timing.run_time > std::time::Duration::ZERO);
+        assert!(stats.clocks.sys_mhz > 0 && stats.clocks.dram_mhz > 0);
+        assert!(stats.hw_cycles > 0, "hardware cycle count missing");
+        let stamps = [
+            ("input", stats.input_start),
+            ("inference", stats.inference_start),
+            ("output", stats.output_start),
+        ];
+        if session.abi() != crate::Abi::V3_0 {
+            assert!(stamps.iter().all(|(_, t)| t.is_none()));
+            return;
+        }
+        for (name, t) in stamps {
+            let t = t.unwrap_or_else(|| panic!("{name} stamp missing"));
+            assert!(
+                before <= t && t <= after,
+                "{name} stamp {t:?} outside [{before:?}, {after:?}]"
+            );
+        }
     }
 }
 

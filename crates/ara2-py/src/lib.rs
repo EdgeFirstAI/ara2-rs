@@ -31,7 +31,7 @@ fn proxy_endpoint() -> PyResult<discover::ProxyEndpoint> {
 ///     >>> endpoints = session.list_endpoints()
 ///     >>> model = endpoints[0].load_model("model.dvm")
 ///     >>> model.allocate_tensors("dma")
-///     >>> timing = model.run()
+///     >>> stats = model.run()
 #[pymodule(name = "edgefirst_ara2")]
 fn init(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Version
@@ -58,6 +58,16 @@ fn init(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<types::ComponentVersion>()?;
     m.add_class::<types::DramStatistics>()?;
     m.add_class::<types::ModelTiming>()?;
+    m.add_class::<types::Clocks>()?;
+    m.add_class::<types::InferenceStats>()?;
+    m.add_class::<types::LogLevel>()?;
+    m.add_class::<types::ModelType>()?;
+    m.add_class::<types::InterfaceKind>()?;
+    m.add_class::<types::ChipInfo>()?;
+    m.add_class::<types::DramInfo>()?;
+    m.add_class::<types::Interface>()?;
+    m.add_class::<types::EndpointInfo>()?;
+    m.add_class::<types::EndpointStatistics>()?;
     m.add_class::<types::InputQuantization>()?;
     m.add_class::<types::InputPreprocess>()?;
     m.add_class::<types::OutputQuantization>()?;

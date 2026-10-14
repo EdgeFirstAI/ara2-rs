@@ -46,6 +46,12 @@ pyo3::create_exception!(
     Ara2Error,
     "The metadata inside a .dvm archive could not be read."
 );
+pyo3::create_exception!(
+    edgefirst_ara2,
+    UnsupportedError,
+    Ara2Error,
+    "The loaded DVAPI version does not provide the requested feature."
+);
 
 /// Convert an `ara2::Error` into the appropriate Python exception.
 ///
@@ -87,7 +93,7 @@ pub fn to_py_err(err: ara2::Error) -> PyErr {
             }
         }
         ara2::Error::FdPassingUnavailable => TensorError::new_err(msg),
-        ara2::Error::Unsupported { .. } => Ara2Error::new_err(msg),
+        ara2::Error::Unsupported { .. } => UnsupportedError::new_err(msg),
         ara2::Error::UnknownLayerOutputType(_)
         | ara2::Error::UnsupportedLayout(_)
         | ara2::Error::UnsupportedTypeSize(_) => ModelError::new_err(msg),
@@ -140,5 +146,6 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("ModelError", m.py().get_type::<ModelError>())?;
     m.add("TensorError", m.py().get_type::<TensorError>())?;
     m.add("MetadataError", m.py().get_type::<MetadataError>())?;
+    m.add("UnsupportedError", m.py().get_type::<UnsupportedError>())?;
     Ok(())
 }

@@ -89,6 +89,15 @@ class ProxyError(Ara2Error):
 
     ...
 
+class UnsupportedError(Ara2Error):
+    """The loaded DVAPI version does not provide the requested feature.
+
+    Raised by ``Endpoint.is_busy()`` and ``Session.set_log_level()`` on
+    runtimes that lack them.
+    """
+
+    ...
+
 class ModelError(Ara2Error):
     """Model loading or inference error."""
 
@@ -183,6 +192,56 @@ class ModelOutputType:
     def __str__(self) -> str: ...
     def __repr__(self) -> str: ...
 
+class LogLevel:
+    """Verbosity of the client library's own logging."""
+
+    Trace: LogLevel
+    Debug: LogLevel
+    Info: LogLevel
+    Warn: LogLevel
+    Error: LogLevel
+    Critical: LogLevel
+    Off: LogLevel
+
+    def __eq__(self, other: object) -> bool: ...
+    def __int__(self) -> int: ...
+    def __str__(self) -> str: ...
+    def __repr__(self) -> str: ...
+
+class ModelType:
+    """The kind of model, as the runtime reports it.
+
+    ``McsLlm`` is reported by DVAPI 3.0 only. ``Other`` is a value this
+    build does not know for the loaded version; the raw value is logged at
+    warning level."""
+
+    Ara1Cnn: ModelType
+    Ara2Cnn: ModelType
+    Ara2Llm: ModelType
+    Ara2LlmDynV2: ModelType
+    McsLlm: ModelType
+    Other: ModelType
+
+    def __eq__(self, other: object) -> bool: ...
+    def __int__(self) -> int: ...
+    def __str__(self) -> str: ...
+    def __repr__(self) -> str: ...
+
+class InterfaceKind:
+    """The host bus an endpoint is attached through.
+
+    ``Other`` is a host interface value this build does not recognise; the
+    raw value is logged at warning level."""
+
+    Pcie: InterfaceKind
+    Usb: InterfaceKind
+    Other: InterfaceKind
+
+    def __eq__(self, other: object) -> bool: ...
+    def __int__(self) -> int: ...
+    def __str__(self) -> str: ...
+    def __repr__(self) -> str: ...
+
 # =============================================================================
 # Data Classes
 # =============================================================================
@@ -205,16 +264,131 @@ class DramStatistics:
     """DRAM occupied by loaded models in bytes."""
     tensor_occupancy_size: int
     """DRAM occupied by tensor buffers in bytes."""
+    largest_contiguous_free: int | None
+    """Largest contiguous free block in bytes; ``None`` before DVAPI 3.0."""
 
 class ModelTiming:
-    """Timing information from a model inference run."""
+    """Timing information from a model inference run.
 
-    run_time_us: int
-    """NPU inference execution time in microseconds."""
-    input_time_us: int
-    """Input DMA transfer time in microseconds."""
-    output_time_us: int
-    """Output DMA transfer time in microseconds."""
+    Durations are float seconds, like ``time.monotonic()`` differences,
+    and keep the runtime's sub-microsecond precision.
+    """
+
+    run_time: float
+    """NPU inference execution time in seconds."""
+    input_time: float
+    """Input DMA transfer time in seconds."""
+    output_time: float
+    """Output DMA transfer time in seconds."""
+
+class Clocks:
+    """Clock frequencies in MHz."""
+
+    sys_mhz: int
+    """System core clock."""
+    dram_mhz: int
+    """DRAM clock."""
+    nnp_mhz: int | None
+    """Neural processor clock; ``None`` where the library does not report it."""
+    sbp_mhz: int | None
+    """SBP clock; ``None`` where the library does not report it."""
+
+class InferenceStats:
+    """Everything the runtime reports about one completed inference.
+
+    Returned by :meth:`Model.run` and :meth:`InferRequest.wait`.
+
+    The ``*_start`` timestamps are seconds on ``CLOCK_MONOTONIC``, the
+    clock ``time.monotonic()`` reads. They are ``None`` on DVAPI 1.x,
+    whose runtime stamps with the wall clock.
+    """
+
+    timing: ModelTiming
+    """Execution and transfer durations."""
+    clocks: Clocks
+    """Clocks the inference ran at."""
+    hw_cycles: int
+    """Hardware cycles, including floating-point work."""
+    fp_cycles: int
+    """Hardware cycles spent on floating-point work."""
+    input_start: float | None
+    """When the input transfer started."""
+    inference_start: float | None
+    """When the inference entered the NNP queue."""
+    output_start: float | None
+    """When the output transfer started."""
+    retries_session_total: int
+    """Inference retries the proxy performed across this session."""
+    retries_this_inference: int
+    """Retries of this inference."""
+
+class EndpointStatistics:
+    """Live operational statistics for an endpoint."""
+
+    state: State
+    """Current operational state of the endpoint."""
+    clocks: Clocks
+    """Endpoint clocks."""
+    core_voltage_v: float
+    """Average core voltage across the measurement points, in volts.
+
+    DVAPI 1.3 and later; the DVAPI 1.1 runtime (Kinara runtime 1.2.1) does
+    not measure it and reports 0.0.
+    """
+    temp_c: float
+    """Average endpoint temperature across the measurement points, in °C."""
+    soft_reset_count: int
+    """Soft resets the endpoint has performed."""
+    dram: DramStatistics
+    """DRAM usage statistics."""
+
+class ChipInfo:
+    """The ARA-2 chip an endpoint is built on."""
+
+    id: str | None
+    """Chip name, such as ``"ARA-2"``; ``None`` when the library reports none."""
+    revision: str | None
+    """Silicon revision; ``None`` when the library reports none."""
+    control_processors: int
+    """Number of control processors."""
+    neural_processors: int
+    """Number of neural processors."""
+    l2_bytes: int
+    """L2 memory size in bytes."""
+
+class DramInfo:
+    """The DRAM attached to an endpoint."""
+
+    vendor_name: str | None
+    """Manufacturer name, when the runtime knows it."""
+
+class Interface:
+    """Where an endpoint sits on the host."""
+
+    kind: InterfaceKind
+    """The host bus type."""
+    bus: int
+    """Bus number."""
+    device: int
+    """Device number."""
+    port: int
+    """Port number."""
+    sysfs_path: os.PathLike[str] | None
+    """The device's sysfs directory; reported for PCIe only."""
+
+class EndpointInfo:
+    """Static information about an endpoint's hardware."""
+
+    device_id: int
+    """PCI-style device identifier."""
+    vendor_id: int
+    """Vendor identifier."""
+    chip: ChipInfo | None
+    """The ARA-2 chip, when the runtime reports it."""
+    dram: DramInfo | None
+    """The attached DRAM, when the runtime reports it."""
+    interface: Interface | None
+    """How the endpoint is attached to the host, when the runtime reports it."""
 
 class InputQuantization:
     """Input tensor quantization parameters.
@@ -586,6 +760,14 @@ class Session:
         """
         ...
 
+    def set_log_level(self, level: LogLevel) -> None:
+        """Set the client library's log verbosity. DVAPI 1.3 and later.
+
+        Raises:
+            UnsupportedError: If the loaded library does not support it.
+        """
+        ...
+
     def close(self) -> None:
         """Close this Python session handle.
 
@@ -628,6 +810,23 @@ class Endpoint:
         """Get DRAM statistics for the endpoint."""
         ...
 
+    def statistics(self) -> EndpointStatistics:
+        """Live statistics: state, clocks, voltage, temperature, soft
+        resets and DRAM."""
+        ...
+
+    def info(self) -> EndpointInfo:
+        """Static information about the endpoint's hardware."""
+        ...
+
+    def is_busy(self) -> bool:
+        """Whether an inference is running or queued on the endpoint now.
+
+        Raises:
+            UnsupportedError: If the loaded runtime lacks the call.
+        """
+        ...
+
     def load_model(self, model_path: str | os.PathLike[str]) -> Model:
         """Load a neural network model from a .dvm file.
 
@@ -652,7 +851,7 @@ class Model:
         with endpoint.load_model("model.dvm") as model:
             model.allocate_tensors("dma")
             model.set_input_tensor(0, input_data)
-            timing = model.run()
+            stats = model.run()
             output = model.get_output_tensor(0)
 
     For zero-copy preprocessing with edgefirst-image::
@@ -687,16 +886,25 @@ class Model:
         """
         ...
 
-    def set_timeout_ms(self, timeout_ms: int) -> None:
-        """Set the inference timeout in milliseconds (default: 1000)."""
+    def set_timeout(self, timeout: float) -> None:
+        """Set the ``run()`` timeout in seconds (default: 1.0).
+
+        The timeout is rounded up to whole milliseconds.
+
+        Raises:
+            ValueError: If ``timeout`` is negative, not finite, or too large.
+        """
         ...
 
-    def run(self) -> ModelTiming:
+    def run(self) -> InferenceStats:
         """Run inference on the model.
+
+        Returns:
+            InferenceStats: Timing, clocks, cycle counts and timestamps.
 
         Raises:
             TensorError: If tensors have not been allocated.
-            ModelError: If inference times out (increase with ``set_timeout_ms``).
+            ModelError: If inference times out (increase with ``set_timeout``).
             HardwareError: If the NPU is in a fault or thermal state.
         """
         ...
@@ -864,6 +1072,22 @@ class Model:
     # -- Introspection --
 
     @property
+    def version(self) -> str:
+        """DVAPI version the model was compiled for, as
+        ``"major.minor.patch.patch_minor"``."""
+        ...
+
+    @property
+    def name(self) -> str | None:
+        """Name given when the model was loaded, if any."""
+        ...
+
+    @property
+    def model_type(self) -> ModelType:
+        """The kind of model the runtime reports."""
+        ...
+
+    @property
     def n_inputs(self) -> int:
         """Number of input tensors."""
         ...
@@ -938,7 +1162,7 @@ class InferRequest:
     """A pending asynchronous inference request.
 
     Created by :meth:`Model.submit`. Call :meth:`wait` to block until
-    the NPU finishes and retrieve timing information. The GIL is released
+    the NPU finishes and retrieve its statistics. The GIL is released
     during ``wait()`` so other Python threads can run concurrently.
 
     The underlying request is freed automatically when the object is
@@ -950,16 +1174,16 @@ class InferRequest:
 
         request = model.submit()
         # ... preprocess next frame while NPU is busy ...
-        timing = request.wait()
-        print(f"NPU inference: {timing.run_time_us} us")
+        stats = request.wait()
+        print(f"NPU inference: {stats.timing.run_time * 1e3:.2f} ms")
 
     Warning:
         Do not call ``model.allocate_tensors()`` while an InferRequest
         is still pending — the NPU is reading/writing the tensor buffers.
     """
 
-    def wait(self, timeout_ms: int = 1000) -> ModelTiming:
-        """Block until the inference completes and return timing.
+    def wait(self, timeout: float = 1.0) -> InferenceStats:
+        """Block until the inference completes and return its statistics.
 
         The GIL is released during the wait, allowing other Python
         threads to run concurrently.
@@ -968,13 +1192,15 @@ class InferRequest:
         ``Ara2Error``.
 
         Args:
-            timeout_ms: Maximum wait time in milliseconds (default: 1000).
-                        Increase for large models.
+            timeout: Maximum wait time in seconds (default: 1.0), rounded
+                up to whole milliseconds. Increase for large models.
 
         Returns:
-            ModelTiming: Timing information for the completed inference.
+            InferenceStats: Timing, clocks, cycle counts and timestamps for
+            the completed inference.
 
         Raises:
+            ValueError: If ``timeout`` is negative, not finite, or too large.
             Ara2Error: If the request was already consumed, inference
                        failed, or the wait timed out.
         """
@@ -1252,6 +1478,7 @@ __all__ = [
     "LibraryError",
     "HardwareError",
     "ProxyError",
+    "UnsupportedError",
     "ModelError",
     "TensorError",
     "MetadataError",
@@ -1259,10 +1486,20 @@ __all__ = [
     "Abi",
     "State",
     "ModelOutputType",
+    "LogLevel",
+    "ModelType",
+    "InterfaceKind",
     # Data classes
     "ComponentVersion",
     "DramStatistics",
     "ModelTiming",
+    "Clocks",
+    "InferenceStats",
+    "EndpointStatistics",
+    "ChipInfo",
+    "DramInfo",
+    "Interface",
+    "EndpointInfo",
     "InputQuantization",
     "InputPreprocess",
     "OutputQuantization",

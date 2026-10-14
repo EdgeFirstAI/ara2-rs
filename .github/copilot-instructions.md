@@ -34,12 +34,16 @@ Three DVAPI versions are supported: 1.1 (Kinara runtime 1.2.1, packaged by meta-
 ### Key Types
 
 ```
-Session → Endpoint → Model → run() → ModelTiming
+Session → Endpoint → Model → run() → InferenceStats
 ```
 
 - **Session**: Connection to the ARA-2 proxy via UNIX or TCP socket (fd-backed tensors need UNIX). Arc-based, cheaply cloneable.
 - **Endpoint**: A single ARA-2 NPU device. Check status, DRAM stats, load models.
 - **Model**: A loaded DVM neural network. Allocate tensors, set inputs, run inference, read outputs.
+
+### Telemetry
+
+`telemetry.rs` holds the telemetry types. A counter is exposed only if at least one runtime populates it on hardware, and a field the loaded DVAPI version lacks is `None`, never zero. Fields that exist in only some layouts are read through the `VersionFields` trait in `raw.rs` (defaults return `None`; the layouts that have the field override). Calls that exist in only some versions (`is_busy`, `set_log_level`) return `Error::Unsupported` elsewhere. Per-model statistics, queue statistics, the endpoint power state and power-state control are not exposed, because the runtime does not yet report or apply them reliably. Inference timestamps are `Some` only on DVAPI 3.0, the one runtime that stamps `CLOCK_MONOTONIC`. See ARCHITECTURE.md.
 
 ### Ownership Model
 
@@ -165,6 +169,7 @@ cargo nextest run -p ara2
 | `session` | Yes | None | Needs the proxy running |
 | `endpoint` | Yes | None | Needs the proxy + NPU |
 | `model` | Yes | `ARA2_TEST_MODEL` | Needs a compiled .dvm file |
+| `telemetry` | Yes | `ARA2_TEST_MODEL` | Statistics, info, busyness and per-version `None` handling; Python: `TestTelemetry` in `tests/test.py` |
 
 ### Environment Variables
 

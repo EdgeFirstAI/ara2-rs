@@ -30,6 +30,17 @@ class TestPublicSurface(unittest.TestCase):
             "DvmMetadata",
             "Ara2Info",
             "ComponentVersion",
+            "InferenceStats",
+            "Clocks",
+            "EndpointStatistics",
+            "EndpointInfo",
+            "ChipInfo",
+            "DramInfo",
+            "Interface",
+            "LogLevel",
+            "ModelType",
+            "UnsupportedError",
+            "InterfaceKind",
             "proxy_endpoint",
         ]:
             self.assertTrue(hasattr(ara2, name), f"missing {name}")
@@ -84,6 +95,60 @@ class TestVersionsAndTransport(unittest.TestCase):
         self.assertIsNotNone(ctx.exception.name)
         self.assertTrue(ctx.exception.name.startswith("DV_"), ctx.exception.name)
         self.assertIsInstance(ctx.exception.code, int)
+
+
+class TestTelemetry(unittest.TestCase):
+    """Need a running proxy and ``ARA2_TEST_MODEL``."""
+
+    def test_telemetry(self):
+        import os
+        import time
+
+        if "ARA2_TEST_MODEL" not in os.environ:
+            self.skipTest("ARA2_TEST_MODEL not set")
+        session = ara2.Session.connect()
+        endpoint = session.list_endpoints()[0]
+        info = endpoint.info()
+        self.assertEqual(info.vendor_id, 0x1E58)
+        self.assertIsNotNone(info.chip)
+        self.assertGreater(info.chip.neural_processors, 0)
+        model = endpoint.load_model(os.environ["ARA2_TEST_MODEL"])
+        model.allocate_tensors(None)
+        before = time.monotonic()
+        stats = model.run()
+        after = time.monotonic()
+        self.assertTrue(stats.timing.run_time > 0 and stats.hw_cycles > 0)
+        # None on DVAPI 1.x, whose runtime stamps with the wall clock.
+        if stats.inference_start is not None:
+            self.assertTrue(before <= stats.inference_start <= after)
+        es = endpoint.statistics()
+        self.assertTrue(es.clocks.sys_mhz > 0 and es.dram.dram_size > 0)
+        self.assertIsInstance(es.soft_reset_count, int)
+        if session.abi == ara2.Abi.V1_1:
+            try:
+                self.assertIsInstance(endpoint.is_busy(), bool)
+            except ara2.UnsupportedError:
+                pass
+        else:
+            self.assertIsInstance(endpoint.is_busy(), bool)
+        self.assertEqual(model.model_type, ara2.ModelType.Ara2Cnn)
+
+        self.assertIsInstance(model.version, str)
+        self.assertIsInstance(model.name, str)
+        if session.abi == ara2.Abi.V3_0:
+            self.assertIsNotNone(stats.inference_start)
+            largest = es.dram.largest_contiguous_free
+            self.assertTrue(0 < largest <= es.dram.free_size)
+        else:
+            self.assertIsNone(stats.input_start)
+            self.assertIsNone(stats.inference_start)
+            self.assertIsNone(stats.output_start)
+            self.assertIsNone(es.dram.largest_contiguous_free)
+        if session.abi == ara2.Abi.V1_1:
+            with self.assertRaises(ara2.UnsupportedError):
+                session.set_log_level(ara2.LogLevel.Warn)
+        else:
+            session.set_log_level(ara2.LogLevel.Warn)
 
 
 if __name__ == "__main__":

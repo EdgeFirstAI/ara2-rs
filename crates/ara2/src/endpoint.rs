@@ -29,9 +29,10 @@ use ara2_sys::{
 };
 
 use crate::{
-    Abi, Model,
+    Abi, Clocks, EndpointInfo, Model,
     error::Error,
     session::{EndpointList, SessionInner, VersionLib, status_result},
+    telemetry::{endpoint_info, mhz},
 };
 
 /// The operational state of an NPU endpoint.
@@ -110,6 +111,7 @@ impl State {
 ///
 /// All sizes are in bytes.
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub struct DramStatistics {
     /// Total DRAM capacity in bytes.
     pub dram_size: u64,
@@ -123,27 +125,64 @@ pub struct DramStatistics {
     pub model_occupancy_size: u64,
     /// DRAM occupied by tensor buffers in bytes.
     pub tensor_occupancy_size: u64,
+    /// Largest contiguous free block in bytes. `None` before DVAPI 3.0.
+    pub largest_contiguous_free: Option<u64>,
 }
 
 /// Live operational statistics for an endpoint.
 ///
 /// Sourced from `dv_endpoint_get_statistics`. Note the Ara SDK exposes no
-/// power-in-watts reading for the dNPU — temperature, core voltage, and
-/// the clocks are the available power-related telemetry.
+/// power-in-watts reading for the dNPU; temperature, core voltage and the
+/// clocks are the available power-related telemetry.
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub struct EndpointStatistics {
     /// Current operational state of the endpoint.
     pub state: State,
-    /// Endpoint system core clock, in MHz.
-    pub sys_clk_mhz: i32,
-    /// Endpoint DRAM clock, in MHz.
-    pub dram_clk_mhz: i32,
+    /// Endpoint clocks. NNP and SBP are `None` on DVAPI 1.1.
+    pub clocks: Clocks,
     /// Average core voltage across the hardware measurement points, in volts.
+    /// DVAPI 1.3 and later; the DVAPI 1.1 runtime (Kinara runtime 1.2.1)
+    /// does not measure it and reports 0.0.
     pub core_voltage_v: f32,
     /// Average endpoint temperature across the measurement points, in °C.
     pub temp_c: f32,
+    /// Soft resets the endpoint has performed.
+    pub soft_reset_count: u32,
     /// DRAM usage statistics for the endpoint.
     pub dram: DramStatistics,
+}
+
+fn dram_from_fields(d: &crate::raw::DramFields) -> DramStatistics {
+    DramStatistics {
+        dram_size: d.total,
+        dram_occupancy_size: d.occupied,
+        free_size: d.free,
+        reserved_occupancy_size: d.reserved,
+        model_occupancy_size: d.models,
+        tensor_occupancy_size: d.tensors,
+        largest_contiguous_free: d.largest_free,
+    }
+}
+
+/// Builds the public statistics from the version-normalised fields.
+pub(crate) fn assemble_statistics(
+    raw: &crate::raw::EndpointStatsFields,
+    abi: Abi,
+) -> EndpointStatistics {
+    EndpointStatistics {
+        state: State::from_raw(raw.state, abi),
+        clocks: Clocks {
+            sys_mhz: raw.sys_clk_mhz,
+            dram_mhz: raw.dram_clk_mhz,
+            nnp_mhz: raw.nnp_clk_mhz.and_then(mhz),
+            sbp_mhz: raw.sbp_clk_mhz.and_then(mhz),
+        },
+        core_voltage_v: raw.core_voltage_v,
+        temp_c: raw.temp_c,
+        soft_reset_count: raw.soft_reset_count,
+        dram: dram_from_fields(&raw.dram),
+    }
 }
 
 /// An ARA-2 NPU accelerator endpoint.
@@ -172,6 +211,55 @@ unsafe impl Send for Endpoint {}
 unsafe impl Sync for Endpoint {}
 
 impl Endpoint {
+    /// Static information about this endpoint's hardware.
+    pub fn info(&self) -> Result<EndpointInfo, Error> {
+        // SAFETY: `self.ptr` points into the endpoint list `self._list`
+        // keeps alive; the info array and its entries are owned by it.
+        unsafe {
+            let ep = &*self.ptr;
+            if ep.num_ep < 1 || ep.ep_info_list.is_null() {
+                return Err(Error::NullPointer("endpoint has no info".to_owned()));
+            }
+            let info = (*ep.ep_info_list)
+                .as_ref()
+                .ok_or_else(|| Error::NullPointer("endpoint has no info".to_owned()))?;
+            Ok(endpoint_info(info))
+        }
+    }
+
+    /// Whether an inference is running or queued on the endpoint right now.
+    /// A point-in-time snapshot; the runtime advises against polling it in a
+    /// tight loop.
+    pub fn is_busy(&self) -> Result<bool, Error> {
+        let mut busy = false;
+        let s = &self.session;
+        // SAFETY: the session and endpoint handles are live and the
+        // out-pointers are locals.
+        let code = match &s.vlib {
+            VersionLib::V1_1(v) if v.dv_get_endpoint_busyness.is_ok() => unsafe {
+                v.dv_get_endpoint_busyness(s.ptr, self.ptr, &mut busy)
+            },
+            VersionLib::V1_3(v) if v.dv_get_endpoint_busyness.is_ok() => unsafe {
+                v.dv_get_endpoint_busyness(s.ptr, self.ptr, &mut busy)
+            },
+            VersionLib::V3_0(v) if v.dv_get_endpoint_busyness.is_ok() => {
+                // DVAPI 3.0 also reports an active load, which is not exposed.
+                let mut load = 0.0f64;
+                unsafe { v.dv_get_endpoint_busyness(s.ptr, self.ptr, &mut busy, &mut load) }
+            }
+            VersionLib::V1_1(_) | VersionLib::V1_3(_) | VersionLib::V3_0(_) => {
+                return Err(Error::Unsupported {
+                    feature: "endpoint busyness",
+                    abi: s.abi,
+                });
+            }
+        };
+        if code != 0 {
+            return Err(s.status_error(code));
+        }
+        Ok(busy)
+    }
+
     /// Check the current operational state of this endpoint.
     pub fn check_status(&self) -> Result<State, Error> {
         let mut state: DV_ENDPOINT_STATE = 0;
@@ -224,14 +312,7 @@ impl Endpoint {
         // >= 1, and the call succeeded, so it points at the library's
         // statistics for this endpoint.
         let d = unsafe { crate::raw::dram_fields(self.session.abi, dram_stats) };
-        let stats = DramStatistics {
-            dram_size: d.total,
-            dram_occupancy_size: d.occupied,
-            free_size: d.free,
-            reserved_occupancy_size: d.reserved,
-            model_occupancy_size: d.models,
-            tensor_occupancy_size: d.tensors,
-        };
+        let stats = dram_from_fields(&d);
 
         unsafe {
             self.session
@@ -283,14 +364,6 @@ impl Endpoint {
         // a fallible `State` conversion can never leak the allocation.
         // SAFETY: checked above that `stats` is non-null and `ep_count` >= 1.
         let raw = unsafe { crate::raw::endpoint_stats_fields(self.session.abi, stats) };
-        let dram = DramStatistics {
-            dram_size: raw.dram.total,
-            dram_occupancy_size: raw.dram.occupied,
-            free_size: raw.dram.free,
-            reserved_occupancy_size: raw.dram.reserved,
-            model_occupancy_size: raw.dram.models,
-            tensor_occupancy_size: raw.dram.tensors,
-        };
 
         unsafe {
             self.session
@@ -298,14 +371,7 @@ impl Endpoint {
                 .dv_endpoint_free_statistics(stats, ep_count);
         }
 
-        Ok(EndpointStatistics {
-            state: State::from_raw(raw.state, self.session.abi),
-            sys_clk_mhz: raw.sys_clk_mhz,
-            dram_clk_mhz: raw.dram_clk_mhz,
-            core_voltage_v: raw.core_voltage_v,
-            temp_c: raw.temp_c,
-            dram,
-        })
+        Ok(assemble_statistics(&raw, self.session.abi))
     }
 
     /// Load a model from a file onto this endpoint.
@@ -397,6 +463,33 @@ mod tests {
     use super::*;
 
     #[test]
+    fn info_and_is_busy() {
+        let session = crate::tests::test_session();
+        let endpoint = session.list_endpoints().unwrap().remove(0);
+        let info = endpoint.info().unwrap();
+        eprintln!("{info:?}");
+        assert_eq!(info.vendor_id, 0x1e58);
+        let chip = info.chip.expect("chip info");
+        let id = chip.id.expect("chip id");
+        assert!(id.starts_with("ARA"), "{id}");
+        assert!(chip.neural_processors > 0);
+        if let Some(dram) = info.dram {
+            assert!(dram.vendor_name.is_some());
+        }
+        match endpoint.is_busy() {
+            Ok(busy) => eprintln!("{} busy: {busy}", session.abi()),
+            Err(Error::Unsupported { .. }) => {
+                assert_eq!(
+                    session.abi(),
+                    Abi::V1_1,
+                    "dv_get_endpoint_busyness missing from a DVAPI 1.3+ library"
+                );
+            }
+            Err(e) => panic!("is_busy: {e}"),
+        }
+    }
+
+    #[test]
     fn test_list_endpoints_nonempty() {
         let session = crate::tests::test_session();
         let endpoints = session.list_endpoints().expect("should list endpoints");
@@ -433,25 +526,80 @@ mod tests {
     }
 
     #[test]
-    fn test_statistics_nonzero() {
+    fn statistics_report_clocks_and_dram() {
         let session = crate::tests::test_session();
-        let endpoints = session.list_endpoints().unwrap();
-        let endpoint = &endpoints[0];
-        let stats = endpoint.statistics().expect("should get statistics");
-        assert!(stats.sys_clk_mhz > 0, "system clock should be non-zero");
-        assert!(stats.dram_clk_mhz > 0, "DRAM clock should be non-zero");
-        assert!(stats.temp_c.is_finite(), "temperature should be finite");
-        assert!(
-            stats.core_voltage_v.is_finite(),
-            "core voltage should be finite"
-        );
-        assert!(stats.dram.dram_size > 0, "DRAM size should be non-zero");
+        let endpoint = session.list_endpoints().unwrap().remove(0);
+        let mut model = endpoint
+            .load_model_from_file(&crate::tests::test_model_path())
+            .unwrap();
+        model.allocate_tensors(None).unwrap();
+        model.run().unwrap();
+        let stats = endpoint.statistics().unwrap();
+        eprintln!("{} {stats:?}", session.abi());
+        assert!(stats.clocks.sys_mhz > 0 && stats.clocks.dram_mhz > 0);
+        assert!(stats.temp_c.is_finite() && stats.core_voltage_v.is_finite());
+        assert!(stats.dram.dram_size > 0);
+        assert_eq!(stats.clocks.nnp_mhz.is_some(), session.abi() != Abi::V1_1);
+        eprintln!("soft resets: {}", stats.soft_reset_count);
+        match session.abi() {
+            Abi::V3_0 => {
+                let largest = stats
+                    .dram
+                    .largest_contiguous_free
+                    .expect("largest_contiguous_free on DVAPI 3.0");
+                assert!(
+                    largest > 0 && largest <= stats.dram.free_size,
+                    "largest contiguous free {largest} of {} free",
+                    stats.dram.free_size
+                );
+            }
+            Abi::V1_1 | Abi::V1_3 => assert_eq!(stats.dram.largest_contiguous_free, None),
+        }
     }
 }
 
 #[cfg(test)]
 mod offline_tests {
     use super::*;
+    use crate::raw::{DramFields, EndpointStatsFields};
+
+    fn fields() -> EndpointStatsFields {
+        EndpointStatsFields {
+            state: 1,
+            sys_clk_mhz: 1100,
+            dram_clk_mhz: 1066,
+            core_voltage_v: 0.8,
+            temp_c: 40.0,
+            dram: DramFields {
+                total: 10,
+                occupied: 4,
+                free: 6,
+                reserved: 1,
+                models: 2,
+                tensors: 1,
+                largest_free: Some(5),
+            },
+            soft_reset_count: 2,
+            sbp_clk_mhz: Some(355),
+            nnp_clk_mhz: Some(0),
+        }
+    }
+
+    #[test]
+    fn clocks_map_and_unpopulated_ones_are_none() {
+        let s = assemble_statistics(&fields(), Abi::V1_3);
+        assert_eq!(
+            s.clocks,
+            Clocks {
+                sys_mhz: 1100,
+                dram_mhz: 1066,
+                nnp_mhz: None,
+                sbp_mhz: Some(355)
+            }
+        );
+        assert_eq!(s.soft_reset_count, 2);
+        assert_eq!(s.dram.largest_contiguous_free, Some(5));
+    }
 
     /// The two values DVAPI 1.3 reuses. A single mapping cannot serve both
     /// generations, and getting it wrong is silent: the integers are the

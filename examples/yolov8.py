@@ -628,7 +628,7 @@ def main() -> None:
         pre_ms = (time.monotonic() - t0) * 1000
 
         t1 = time.monotonic()
-        timing = model.run()
+        timing = model.run().timing
         after_run()
         inf_ms = (time.monotonic() - t1) * 1000
 
@@ -685,9 +685,9 @@ def main() -> None:
         print(f"  Preprocess:  {pre_ms:6.2f} ms")
         print(
             f"  Inference:   {inf_ms:6.2f} ms"
-            f"  (npu: {timing.run_time_us / 1000:.2f} ms,"
-            f"  in: {timing.input_time_us / 1000:.2f} ms,"
-            f"  out: {timing.output_time_us / 1000:.2f} ms)"
+            f"  (npu: {timing.run_time * 1e3:.2f} ms,"
+            f"  in: {timing.input_time * 1e3:.2f} ms,"
+            f"  out: {timing.output_time * 1e3:.2f} ms)"
         )
         print(f"  Decode:      {dec_ms:6.2f} ms")
         print(f"  Materialize: {mat_ms:6.2f} ms")
@@ -768,7 +768,7 @@ def _benchmark(
         t1 = time.monotonic()
 
         # Inference: NPU execution (includes DMA input upload + output download)
-        timing = model.run()
+        timing = model.run().timing
         after_run()
         t2 = time.monotonic()
 
@@ -801,9 +801,9 @@ def _benchmark(
 
         pre_ms.append((t1 - t0) * 1000)
         inf_ms.append((t2 - t1) * 1000)
-        npu_ms.append(timing.run_time_us / 1000)
-        din_ms.append(timing.input_time_us / 1000)
-        dout_ms.append(timing.output_time_us / 1000)
+        npu_ms.append(timing.run_time * 1e3)
+        din_ms.append(timing.input_time * 1e3)
+        dout_ms.append(timing.output_time * 1e3)
         dec_ms.append((t3 - t2) * 1000)
         mat_ms.append((t4 - t3) * 1000)
         draw_ms.append((t5 - t4) * 1000)

@@ -224,6 +224,20 @@ ara2-sys                                   ara2
 - **One reader.** `raw.rs` is the only module that reads a version-specific struct. Its `with_layout!` macro casts an opaque pointer to the module the session's `Abi` selects and expands its body once per version, so every field access is type-checked against that version's own declaration. Everything else in `ara2` uses the accessors `raw.rs` provides.
 - **Verification.** `crates/ara2-sys/update.sh --verify <version> <sdk-include-dir>` compiles C assertions of every declared size, offset, enumerator and prototype against the real SDK header. It is run by hand when an SDK drops, since SDKs are not available in CI. `ara2-sys/src/lib.rs` pins the verified sizes and offsets as compile-time assertions, so an edit that changes a layout fails the build.
 
+## Telemetry
+
+`telemetry.rs` holds the public telemetry types and the conversions from the raw structs: `InferenceStats`, `Clocks`, `MonotonicTime`, `Retries`, `EndpointInfo` and its parts, and `LogLevel`.
+`Endpoint::statistics()` and `Endpoint::info()` build their results from version-normalised fields that `raw.rs` reads, so the public types never see a version-specific struct.
+
+Two rules shape the module.
+
+- **Expose only what hardware populates.** A counter is exposed only if at least one runtime fills it in on real hardware. Compiler statistics, the queue submission time, DDR addresses, the statistics filter options, the LLM and MCS APIs and the `_with_flags` power functions are not exposed. Per-model statistics, inference queue statistics, the endpoint power state and power-state control are not exposed either, because the runtime does not yet report or apply them reliably.
+- **Absent is `None`, never zero.** A field the loaded DVAPI version lacks reads as `None`. Examples are the inference timestamps on 1.x, the NNP and SBP clocks on 1.1 and `largest_contiguous_free` before 3.0. Calls that exist only in some versions (`is_busy`, `set_log_level`) return `Error::Unsupported` where the runtime lacks them.
+
+Fields that exist in only some layouts are read through the `VersionFields` trait in `raw.rs`. Its methods default to `None`, only the layouts that have the field override them, and `with_layout!` calls them uniformly, so a new version-only field is one default method and one override rather than a branch at every call site.
+
+Inference timestamps are `MonotonicTime` values on `CLOCK_MONOTONIC`, converted only for DVAPI 3.0. DVAPI 1.x stamps the wall clock, and comparing those values with a monotonic reading would be silently wrong, so they are `None`. `monotonic_now()` reads the same clock for comparison, and the values line up with Perfetto traces. On DVAPI 3.0 hardware each stamp falls between `monotonic_now()` readings taken around the inference.
+
 ## Connection
 
 `Session::connect()` makes a single connection attempt, against an endpoint chosen by inspection (`connect.rs`): `ARA2_SOCKET` (`/path`, `unix:/path` or `tcp:IPV4:PORT`), then the first existing path in `SOCKET_PATHS`, then a running proxy found by `discover()`, preferring a UNIX endpoint over a TCP one. One attempt only, because a failed create leaves the DVAPI 1.1 client in a state that can break a later one. The choice is a pure function over (override, existing paths, discovered proxies), unit-tested offline.
@@ -295,7 +309,7 @@ Steps 1–5 are identical. Step 6 is replaced with:
     └─▶ Overlaps with NPU execution
 
 6c. request.wait(timeout_ms)
-    └─▶ Blocks until NPU finishes, returns ModelTiming
+    └─▶ Blocks until NPU finishes, returns InferenceStats
     └─▶ InferRequest is consumed and freed
 
 7. Read output data from model.output_tensor(i)
