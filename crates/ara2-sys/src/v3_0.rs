@@ -7,6 +7,8 @@ pub const dv_endpoint_state_3_0_DV_ENDPOINT_STATE_FAIL_SAFE: dv_endpoint_state_3
 pub type dv_endpoint_state_3_0 = ::std::os::raw::c_uint;
 pub const dv_product_type_3_0_MCS_LLM_MODEL: dv_product_type_3_0 = 7;
 pub type dv_product_type_3_0 = ::std::os::raw::c_uint;
+pub const dv_model_type_3_0_DV_MODEL_TYPE_MCS_LLM: dv_model_type_3_0 = 4;
+pub type dv_model_type_3_0 = ::std::os::raw::c_uint;
 pub const dv_endpoint_power_state_3_0_DV_POWER_STATE_ACTIVE_A1: dv_endpoint_power_state_3_0 = 4;
 pub const dv_endpoint_power_state_3_0_DV_POWER_STATE_ACTIVE_A2: dv_endpoint_power_state_3_0 = 5;
 pub const dv_endpoint_power_state_3_0_DV_POWER_STATE_ACTIVE_A3: dv_endpoint_power_state_3_0 = 6;

@@ -19,6 +19,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ARA2_SOCKET` accepts `unix:/path` and `tcp:IPV4:PORT` as well as a bare socket path.
 - `crates/ara2-sys/update.sh --verify <1.1|1.3|3.0> <sdk-include-dir>` and the `verify_sdk` test, checking ara2-sys declarations against an SDK's headers (`ARA2_SDK_V1_1`, `ARA2_SDK_V1_3`, `ARA2_SDK_V3_0`, `ARA2_SDK_REQUIRE`).
 - Python: `proxy_endpoint()`, `Session.supports_fd_passing`, `Session.supported_versions()`, `ComponentVersion`, `Abi.V3_0`, and `code`, `name`, `sub_code`, `component` and `severity` attributes on every exception (`None` where they do not apply). `NoProxyFound` and `InvalidSocketOverride` raise `ProxyError`, `FdPassingUnavailable` raises `TensorError`, and `ARA2_ABI` refusals raise `LibraryError`.
+- `InferenceStats`, returned by `Model::run()` and `InferRequest::wait()`: the `timing` durations, the `clocks` the inference ran at, `hw_cycles`, `fp_cycles`, `retries`, and the `input_start`, `inference_start` and `output_start` timestamps as `MonotonicTime` on `CLOCK_MONOTONIC` (DVAPI 3.0; `None` on 1.x, which stamps the wall clock).
+- `ara2::monotonic_now()`, for comparing inference timestamps with the host clock.
+- `Clocks` (system, DRAM, NNP and SBP), reported per inference and in `EndpointStatistics`.
+- `EndpointStatistics::soft_reset_count` and `DramStatistics::largest_contiguous_free` (DVAPI 3.0).
+- `Endpoint::info()`, reporting the device and vendor identifiers, the chip, the DRAM vendor name and the host interface.
+- `Endpoint::is_busy()`.
+- `Model::version()`, `Model::name()` and `Model::model_type()`, with `ModelType`.
+- `Session::set_log_level()` and `LogLevel` (DVAPI 1.3 and 3.0).
+- `telemetry` example (Rust and Python), printing endpoint, model and per-inference telemetry and measuring the cost of sampling statistics.
+- Python: `InferenceStats`, `Clocks`, `EndpointStatistics`, `Endpoint.statistics()`, `Endpoint.info()` with `EndpointInfo`, `ChipInfo`, `DramInfo`, `Interface` and `InterfaceKind`, `Endpoint.is_busy()`, `Model.version()`, `Model.name()`, `Model.model_type()` with `ModelType`, `Session.set_log_level()` with `LogLevel`, and `UnsupportedError`, raised for a call the loaded DVAPI version lacks.
 
 ### Changed (BREAKING)
 
@@ -30,6 +40,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ARA2_ABI` is refused with `Error::AbiOverrideRejected` when it contradicts the reported version, and is honoured for an unrecognised version only within the same major version. A refused override stops the library search.
 - Python: `Session.versions()` returns `list[ComponentVersion]`.
 - Python: `edgefirst_ara2.socket_path()` is removed in favour of `proxy_endpoint()`.
+- `Model::run()` and `InferRequest::wait()` return `InferenceStats`; the previous `ModelTiming` is its `timing` field.
+- `EndpointStatistics` reports its clocks as `clocks: Clocks` instead of `sys_clk_mhz` and `dram_clk_mhz`, and is `#[non_exhaustive]`, as is `DramStatistics`.
+- Python: `Model.run()` and `InferRequest.wait()` return `InferenceStats`.
+- Python: times are `float` seconds throughout. `ModelTiming` has `run_time`, `input_time` and `output_time` instead of the integer microsecond `run_time_us`, `input_time_us` and `output_time_us`; `Model.set_timeout(timeout)` replaces `set_timeout_ms(timeout_ms)`, and `InferRequest.wait(timeout=1.0)` replaces `wait(timeout_ms=1000)`. A negative, non-finite or out-of-range timeout raises `ValueError`.
 
 ### Changed
 
@@ -39,6 +53,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dropping a pending `InferRequest` (including after `wait()` returns an error, and a garbage-collected Python `InferRequest`) waits for it to finish, up to 4 waits of `DEFAULT_TIMEOUT_MS` (about 4 s), before freeing it.
 - The yolov8 examples run on sessions that cannot pass file descriptors: they allocate heap tensors and copy the model input and outputs around each inference, keeping the zero-copy DMA-BUF path where it is available.
 - The examples' `--socket` flag is optional; without it the proxy is found as `Session::connect()` does.
+- `ModelTiming` keeps the runtime's sub-microsecond precision instead of truncating to whole microseconds.
+- `EndpointStatistics::core_voltage_v` documents that the DVAPI 1.1 runtime reports 0.0; DVAPI 1.3 and later report the measured voltage.
+- Models must be compiled for the runtime generation they run on: a model compiled for DVAPI 1.3 fails to load on 3.0 with `DV_MODEL_LOAD_FAILURE` (documented).
 
 ### Removed
 

@@ -52,11 +52,11 @@ def main() -> None:
     print(f"Model loaded: {model.n_inputs} inputs, {model.n_outputs} outputs")
 
     # ── Warm-up ──────────────────────────────────────────────────────
-    timing = model.run()
+    timing = model.run().timing
     print(
-        f"Warm-up: inference={timing.run_time_us / 1000:.2f}ms, "
-        f"input_xfer={timing.input_time_us / 1000:.2f}ms, "
-        f"output_xfer={timing.output_time_us / 1000:.2f}ms"
+        f"Warm-up: inference={timing.run_time * 1e3:.2f}ms, "
+        f"input_xfer={timing.input_time * 1e3:.2f}ms, "
+        f"output_xfer={timing.output_time * 1e3:.2f}ms"
     )
     print()
 
@@ -91,11 +91,11 @@ def main() -> None:
         total = sum(range(100_000))  # noqa: F841
         cpu_ms = (time.perf_counter() - cpu_start) * 1000
 
-        timing = request.wait()
+        timing = request.wait().timing
         if i == 0:
             print(
                 f"  (first iter: cpu_work={cpu_ms:.2f}ms, "
-                f"npu={timing.run_time_us / 1000:.2f}ms)"
+                f"npu={timing.run_time * 1e3:.2f}ms)"
             )
     overlap_elapsed = (time.perf_counter() - start) * 1000
     print(f"  Total: {overlap_elapsed:.2f}ms, Avg: {overlap_elapsed / n:.2f}ms/iter")

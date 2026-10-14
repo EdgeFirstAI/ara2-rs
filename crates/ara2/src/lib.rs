@@ -24,8 +24,8 @@
 //! model.allocate_tensors(None)?;
 //!
 //! // Synchronous inference
-//! let timing = model.run()?;
-//! println!("NPU inference: {:?}", timing.run_time);
+//! let stats = model.run()?;
+//! println!("NPU inference: {:?}", stats.timing.run_time);
 //! # Ok::<(), ara2::Error>(())
 //! ```
 //!
@@ -47,7 +47,7 @@
 //! // CPU is free: preprocess next frame, run postprocessing, etc.
 //!
 //! // Wait for result
-//! let timing = request.wait(DEFAULT_TIMEOUT_MS)?;
+//! let stats = request.wait(DEFAULT_TIMEOUT_MS)?;
 //! # Ok::<(), ara2::Error>(())
 //! ```
 //!
@@ -97,6 +97,7 @@ mod error;
 mod model;
 mod session;
 mod status;
+mod telemetry;
 mod version;
 
 pub use connect::proxy_endpoint;
@@ -110,10 +111,14 @@ pub use endpoint::{DramStatistics, Endpoint, EndpointStatistics, State};
 pub use error::Error;
 pub use model::{
     DEFAULT_TIMEOUT_MS, InferRequest, InputPreprocess, InputQuantization, InputSet, InputTensor,
-    Model, ModelOutputType, ModelTiming, OutputQuantization, OutputSet, OutputTensor,
+    Model, ModelOutputType, ModelTiming, ModelType, OutputQuantization, OutputSet, OutputTensor,
 };
 pub use session::{Session, SocketType};
 pub use status::{Severity, StatusComponent, StatusDetail};
+pub use telemetry::{
+    ChipInfo, Clocks, DramInfo, EndpointInfo, InferenceStats, Interface, InterfaceKind, LogLevel,
+    MonotonicTime, Retries, monotonic_now,
+};
 pub use version::{Component, ComponentVersion};
 
 /// Default socket path for the ARA-2 proxy service.

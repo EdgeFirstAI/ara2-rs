@@ -96,9 +96,9 @@ model = endpoints[0].load_model("model.dvm")
 model.allocate_tensors()
 input_data = np.zeros(model.input_size(0), dtype=np.uint8)
 model.set_input_tensor(0, input_data)
-timing = model.run()
+stats = model.run()
 
-print(f"Inference: {timing.run_time_us} us")
+print(f"Inference: {stats.timing.run_time * 1e3:.2f} ms")
 output = model.get_output_tensor(0)
 dequantized = model.dequantize(0)
 ```
@@ -157,8 +157,8 @@ with endpoint.load_model("yolov8s.dvm") as model:
     processor.convert(src, dst, letterbox=(114, 114, 114, 255))
 
     # Run inference — NPU reads from the same DMA-BUF
-    timing = model.run()
-    print(f"Inference: {timing.run_time_us} us")
+    stats = model.run()
+    print(f"Inference: {stats.timing.run_time * 1e3:.2f} ms")
 ```
 
 ## Performance
@@ -254,8 +254,8 @@ print(f"Request #{request.request_id} submitted")
 # CPU is free to do other work here...
 # The GIL is NOT held during wait(), so other Python threads can run
 
-timing = request.wait()  # blocks until NPU finishes
-print(f"NPU inference: {timing.run_time_us} µs")
+stats = request.wait()  # blocks until NPU finishes
+print(f"NPU inference: {stats.timing.run_time * 1e3:.2f} ms")
 
 # Monitor pipeline depth
 print(f"In-flight: {session.inflight_count()}")
@@ -264,6 +264,50 @@ print(f"In-flight: {session.inflight_count()}")
 > **Warning:** Do not call `model.allocate_tensors()` while an
 > `InferRequest` is still pending — the NPU is actively reading/writing
 > the tensor buffers.
+
+## Telemetry and Control
+
+`Model.run()` and `InferRequest.wait()` return an `InferenceStats` with the
+timing, the clocks the inference ran at, hardware cycle counts and, on DVAPI
+3.0, `CLOCK_MONOTONIC` timestamps comparable with `time.monotonic()`.
+The timestamps are `None` on DVAPI 1.x, whose runtime stamps with the wall
+clock.
+
+```python
+import time
+import edgefirst_ara2 as ara2
+
+session = ara2.Session.connect()
+endpoint = session.list_endpoints()[0]
+
+info = endpoint.info()
+if info.chip is not None:
+    print(info.chip.id, info.chip.neural_processors)
+if info.interface is not None:
+    print(info.interface.kind)
+
+stats = endpoint.statistics()
+print(f"{stats.temp_c:.1f} C, NNP {stats.clocks.nnp_mhz} MHz, "
+      f"{stats.dram.free_size} B DRAM free")
+print(endpoint.is_busy())
+
+model = endpoint.load_model("model.dvm")
+model.allocate_tensors()
+before = time.monotonic()
+run = model.run()
+print(f"{run.timing.run_time * 1e3:.2f} ms, {run.hw_cycles} cycles, "
+      f"{model.model_type}")
+if run.inference_start is not None:
+    print(f"queued {run.inference_start - before:.6f} s after submit")
+```
+
+Per-model statistics, inference queue statistics, the endpoint power state and power-state control are not exposed, because the runtime does not yet report or apply them reliably.
+
+The client library's own logging (DVAPI 1.3 and later) is set per session:
+
+```python
+session.set_log_level(ara2.LogLevel.Warn)  # raises UnsupportedError on DVAPI 1.1
+```
 
 ## API Reference
 
@@ -281,6 +325,7 @@ Connection to the ARA-2 proxy service.
 - `supported_versions() -> list[ComponentVersion]` - Every component version the proxy supports
 - `list_endpoints() -> list[Endpoint]` - List available endpoints
 - `inflight_count() -> int` - Number of pending async inference requests
+- `set_log_level(level: LogLevel)` - Client library log verbosity (DVAPI 1.3 and later)
 
 **Properties:**
 - `socket_type: str` - "unix" or "tcp"
@@ -293,6 +338,9 @@ Represents an ARA-2 accelerator device.
 **Methods:**
 - `check_status() -> State` - Get device state
 - `dram_statistics() -> DramStatistics` - Get memory usage
+- `statistics() -> EndpointStatistics` - State, clocks, voltage, temperature, soft resets and DRAM
+- `info() -> EndpointInfo` - Chip, DRAM and host-interface details
+- `is_busy() -> bool` - Whether an inference is running or queued; raises `UnsupportedError` where the runtime lacks the call
 - `load_model(model_path: str) -> Model` - Load a .dvm model
 
 ### Model
@@ -301,8 +349,8 @@ Loaded neural network model.
 
 **Lifecycle:**
 - `allocate_tensors(memory: str | None = None)` - Allocate tensors ("dma", "shm", "mem", or None)
-- `set_timeout_ms(timeout_ms: int)` - Set inference timeout
-- `run() -> ModelTiming` - Execute inference synchronously
+- `set_timeout(timeout: float)` - Set the `run()` timeout in seconds (default 1.0)
+- `run() -> InferenceStats` - Execute inference synchronously
 - `submit() -> InferRequest` - Submit inference asynchronously (returns immediately)
 
 **Tensor I/O (numpy):**
@@ -318,6 +366,7 @@ Loaded neural network model.
 
 **Introspection:**
 - `n_inputs: int`, `n_outputs: int` - Tensor counts
+- `version: str`, `name: str | None`, `model_type: ModelType`
 - `input_shape(i) -> (C, H, W)`, `output_shape(i) -> (C, H, W)`
 - `input_size(i) -> int`, `output_size(i) -> int` - Size in bytes
 - `input_bpp(i) -> int`, `output_bpp(i) -> int` - Bytes per element
@@ -329,7 +378,7 @@ Loaded neural network model.
 Pending asynchronous inference request, created by `Model.submit()`.
 
 **Methods:**
-- `wait(timeout_ms: int = 1000) -> ModelTiming` - Block until complete (GIL released)
+- `wait(timeout: float = 1.0) -> InferenceStats` - Block until complete, timeout in seconds (GIL released)
 
 **Properties:**
 - `request_id: int` - Proxy-assigned ID for log correlation
@@ -354,7 +403,17 @@ Pending asynchronous inference request, created by `Model.submit()`.
 - **State** (enum): Init, Idle, Active, ActiveSlow, ThermalUnknown, Inactive, Fault, Unknown, plus ActiveBoosted and ThermalInactive under DVAPI 1.1 or ThermalActiveSlow and FailSafe under DVAPI 1.3 and 3.0
 - **ModelOutputType** (enum): Classification, Detection, SemanticSegmentation, Raw
 - **DramStatistics**: dram_size, free_size, model_occupancy_size, ...
-- **ModelTiming**: run_time_us, input_time_us, output_time_us
+- **ModelTiming**: run_time, input_time, output_time (float seconds)
+- **InferenceStats**: timing, clocks, hw_cycles, fp_cycles, input_start, inference_start, output_start, retries_session_total, retries_this_inference
+- **Clocks**: sys_mhz, dram_mhz, nnp_mhz, sbp_mhz
+- **EndpointStatistics**: state, clocks, core_voltage_v, temp_c, soft_reset_count, dram
+- **EndpointInfo**: device_id, vendor_id, chip, dram, interface
+- **ChipInfo**: id, revision, control_processors, neural_processors, l2_bytes
+- **DramInfo**: vendor_name
+- **Interface**: kind, bus, device, port, sysfs_path
+- **LogLevel** (enum): Trace, Debug, Info, Warn, Error, Critical, Off
+- **ModelType** (enum): Ara1Cnn, Ara2Cnn, Ara2Llm, Ara2LlmDynV2, McsLlm, Other
+- **InterfaceKind** (enum): Pcie, Usb, Other
 - **InputQuantization**: qn, scale, mean, is_signed
 - **OutputQuantization**: qn, scale, offset, is_signed
 
@@ -368,6 +427,7 @@ Ara2Error (RuntimeError)
  +-- ModelError         - Model load/inference failures
  +-- TensorError        - Tensor allocation, DMA-BUF errors
  +-- MetadataError      - DVM metadata parsing errors
+ +-- UnsupportedError   - Feature not provided by the loaded DVAPI version
 ```
 
 ## Building Wheels

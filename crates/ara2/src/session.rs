@@ -309,6 +309,31 @@ impl Session {
         Ok(out)
     }
 
+    /// Set the client library's log verbosity. DVAPI 1.3 and later.
+    pub fn set_log_level(&self, level: crate::LogLevel) -> Result<(), Error> {
+        let raw = level as u32;
+        let inner = &self.inner;
+        // SAFETY: the call takes a plain value and touches no handle.
+        let code = match &inner.vlib {
+            VersionLib::V1_3(v) if v.dv_client_set_log_level.is_ok() => unsafe {
+                v.dv_client_set_log_level(raw)
+            },
+            VersionLib::V3_0(v) if v.dv_client_set_log_level.is_ok() => unsafe {
+                v.dv_client_set_log_level(raw)
+            },
+            VersionLib::V1_1(_) | VersionLib::V1_3(_) | VersionLib::V3_0(_) => {
+                return Err(Error::Unsupported {
+                    feature: "client log level",
+                    abi: inner.abi,
+                });
+            }
+        };
+        if code != 0 {
+            return Err(inner.status_error(code));
+        }
+        Ok(())
+    }
+
     /// List all available NPU endpoints connected to the proxy.
     ///
     /// The returned endpoints share ownership of the underlying C endpoint list
@@ -368,7 +393,7 @@ impl Session {
     /// let request = model.submit()?;
     /// assert_eq!(session.inflight_count()?, 1);
     ///
-    /// let _timing = request.wait(DEFAULT_TIMEOUT_MS)?;
+    /// let _stats = request.wait(DEFAULT_TIMEOUT_MS)?;
     /// assert_eq!(session.inflight_count()?, 0);
     /// # Ok::<(), ara2::Error>(())
     /// ```
@@ -412,6 +437,22 @@ impl Drop for EndpointList {
 mod tests {
     use super::*;
     use crate::Component;
+
+    #[test]
+    fn log_level_can_be_lowered() {
+        let session = crate::tests::test_session();
+        if session.abi() == Abi::V1_1 {
+            assert!(matches!(
+                session.set_log_level(crate::LogLevel::Warn),
+                Err(Error::Unsupported { .. })
+            ));
+            return;
+        }
+        session.set_log_level(crate::LogLevel::Warn).unwrap();
+        session.list_endpoints().unwrap()[0]
+            .load_model_from_file(&crate::tests::test_model_path())
+            .unwrap();
+    }
 
     #[test]
     fn connect_uses_the_resolved_transport() {

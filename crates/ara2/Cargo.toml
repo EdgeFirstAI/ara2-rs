@@ -52,6 +52,7 @@ edgefirst-decoder = { workspace = true, optional = true }
 edgefirst-image = { workspace = true, features = ["opengl", "static"] }
 edgefirst-tensor.workspace = true
 libcamera = { workspace = true, optional = true }
+libc.workspace = true
 libloading.workspace = true
 log.workspace = true
 ndarray.workspace = true
@@ -89,6 +90,10 @@ required-features = ["decoder"]
 name = "yolov8_live"
 path = "../../examples/yolov8_live.rs"
 required-features = ["camera"]
+
+[[example]]
+name = "telemetry"
+path = "../../examples/telemetry.rs"
 
 [[example]]
 name = "async_infer"

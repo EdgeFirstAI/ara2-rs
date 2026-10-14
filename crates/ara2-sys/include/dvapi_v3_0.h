@@ -23,6 +23,10 @@ enum dv_product_type_3_0 {
   MCS_LLM_MODEL = 7,
 };
 
+enum dv_model_type_3_0 {
+  DV_MODEL_TYPE_MCS_LLM = 4,
+};
+
 enum dv_endpoint_power_state_3_0 {
   DV_POWER_STATE_ACTIVE_A1 = 4,
   DV_POWER_STATE_ACTIVE_A2 = 5,

@@ -109,15 +109,29 @@ Or one version at a time with `crates/ara2-sys/update.sh --verify <1.1|1.3|3.0> 
 
 ### Python tests
 
-`tests/test.py` covers the Python bindings. Install the wheel into a virtual environment on the target rather than the system Python:
+`tests/test.py` covers the Python bindings, including `TestTelemetry`, which needs `ARA2_TEST_MODEL` and skips without it. It is plain `unittest`, so `python test.py` works without pytest. Install the wheel into a virtual environment on the target rather than the system Python:
 
 ```bash
 uvx maturin build --release -m crates/ara2-py/Cargo.toml \
   --target aarch64-unknown-linux-gnu --zig --features pyo3/abi3-py311
 scp target/wheels/edgefirst_ara2-*aarch64*.whl tests/test.py <target>:ara2-rs-test/
 ssh <target> 'cd ~/ara2-rs-test && python3 -m venv venv && . venv/bin/activate && \
-  pip install --force-reinstall edgefirst_ara2-*.whl pytest && python3 -m pytest -q test.py'
+  pip install --force-reinstall edgefirst_ara2-*.whl && ARA2_TEST_MODEL=<model.dvm> python3 test.py'
 ```
+
+### Telemetry tests and measurement
+
+The telemetry tests check each field against what the loaded DVAPI version populates: timestamps `None` on 1.x, `largest_contiguous_free` `None` before 3.0 and within the free size on 3.0, and `is_busy()` and `set_log_level()` succeeding where the runtime has them. Run them with the hardware tests (`ARA2_TEST_MODEL` set, single-threaded).
+
+The `telemetry` example is the measurement procedure. It prints the full report, then times the inference loop alone and while a second thread samples `Endpoint::statistics()` every `sample_ms`:
+
+```bash
+cargo zigbuild --release --target aarch64-unknown-linux-gnu -p ara2 --example telemetry
+scp target/aarch64-unknown-linux-gnu/release/examples/telemetry <target>:ara2-rs-test/
+ssh <target> 'cd ~/ara2-rs-test && ./telemetry <model.dvm> 200 100'
+```
+
+Measured on the DVAPI 1.3 board (i.MX 95, `yolov8n-det-int16`), three runs: 126.8, 126.3 and 125.8 fps alone against 125.7, 126.4 and 126.0 fps while sampling every 100 ms, with a `statistics()` call taking 1.05 to 1.11 ms on average and at most 1.5 ms. On the DVAPI 1.1 board (i.MX 8M Plus, `yolov8n-det-int16`), three runs: 112.1, 111.3 and 110.5 fps alone against 111.1, 111.0 and 111.9 fps while sampling, with a `statistics()` call taking 1.14 to 1.38 ms on average and at most 2.6 ms. On the DVAPI 3.0 board (i.MX 95, proxy over TCP, a 3.0-compiled detection model), three runs: 29.9, 29.9 and 29.8 fps alone against 30.0, 29.9 and 29.9 fps while sampling, with a `statistics()` call taking 7.4 to 10.0 ms on average and at most 40 ms. A model compiled for DVAPI 1.3 fails to load on 3.0 with `DV_MODEL_LOAD_FAILURE`.
 
 ### With nextest
 

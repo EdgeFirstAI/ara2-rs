@@ -3,7 +3,7 @@
 
 use crate::endpoint::Endpoint;
 use crate::error::to_py_err;
-use crate::types::{Abi, ComponentVersion};
+use crate::types::{Abi, ComponentVersion, LogLevel};
 use pyo3::prelude::*;
 use std::{net::Ipv4Addr, path::PathBuf, str::FromStr};
 
@@ -192,6 +192,17 @@ impl Session {
     #[getter]
     fn dvapi_version(&self) -> PyResult<Option<String>> {
         Ok(self.inner()?.dvapi_version().map(|v| v.to_string()))
+    }
+
+    /// Set the client library's log verbosity. DVAPI 1.3 and later.
+    ///
+    /// Args:
+    ///     level: The verbosity to use
+    ///
+    /// Raises:
+    ///     UnsupportedError: If the loaded library does not support it
+    fn set_log_level(&self, level: LogLevel) -> PyResult<()> {
+        self.inner()?.set_log_level(level.into()).map_err(to_py_err)
     }
 
     /// Close this Python session handle.
