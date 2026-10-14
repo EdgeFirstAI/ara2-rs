@@ -10,17 +10,18 @@
 //!
 //! ```no_run
 //! use ara2::{Session, DEFAULT_TIMEOUT_MS};
-//! use edgefirst_tensor::{TensorMemory, TensorTrait as _};
+//! use edgefirst_tensor::TensorTrait as _;
 //!
 //! // Connect to the ARA-2 proxy service. Honors the `ARA2_SOCKET`
-//! // environment variable, falling back to the first of `SOCKET_PATHS`
-//! // that exists.
+//! // environment variable, then the known socket paths, then running
+//! // proxies.
 //! let session = Session::connect()?;
 //! let endpoints = session.list_endpoints()?;
 //!
-//! // Load model and allocate DMA-backed tensors
+//! // Load model and allocate tensors. `None` picks the best memory the
+//! // platform offers (DMA-BUF where available), or heap over TCP.
 //! let mut model = endpoints[0].load_model_from_file("model.dvm".as_ref())?;
-//! model.allocate_tensors(Some(TensorMemory::DmaBuf))?;
+//! model.allocate_tensors(None)?;
 //!
 //! // Synchronous inference
 //! let timing = model.run()?;
@@ -74,23 +75,31 @@
 //!
 //! # DVAPI generations
 //!
-//! `libaraclient` ships in two interface generations whose struct layouts
-//! differ, and both are supported. [`open_library`](crate) probes the
-//! loaded library with `dv_get_client_lib_version` and records the result
-//! as an [`Abi`], which [`Session::abi`] reports. This matters to callers
-//! mainly through [`State`]: DVAPI 1.3 reuses two endpoint state values
-//! for different names, so which of them can be reported depends on the
-//! library loaded.
+//! `libaraclient` ships in three interface generations (DVAPI 1.1, 1.3 and
+//! 3.0) whose struct layouts differ, and all are supported. 3.0 moves
+//! fields within `dv_model`, so layouts are selected per version.
+//! [`open_library`](crate) probes the loaded library with
+//! `dv_get_client_lib_version` and records the result as an [`Abi`], which
+//! [`Session::abi`] reports. This matters to callers mainly through
+//! [`State`]: DVAPI 1.3 and 3.0 reuse two endpoint state values for
+//! different names than 1.1, so which of them can be reported depends on
+//! the library loaded.
 
-use ara2_sys::{araclient, dv_model_output_param, dv_model_output_param_1_3, dv_version};
+use ara2_sys::{araclient, dv_version};
 
+mod raw;
+
+mod connect;
 mod discover;
 pub mod dvm_metadata;
 mod endpoint;
 mod error;
 mod model;
 mod session;
+mod status;
+mod version;
 
+pub use connect::proxy_endpoint;
 pub use discover::{PROXY_COMM, Proxy, ProxyConfig, ProxyEndpoint, discover};
 pub use dvm_metadata::{
     Ara2Info, CompilationInfo, DatasetInfo, DeploymentInfo, DvmMetadata, InputSpec, ModelInfo,
@@ -104,6 +113,8 @@ pub use model::{
     Model, ModelOutputType, ModelTiming, OutputQuantization, OutputSet, OutputTensor,
 };
 pub use session::{Session, SocketType};
+pub use status::{Severity, StatusComponent, StatusDetail};
+pub use version::{Component, ComponentVersion};
 
 /// Default socket path for the ARA-2 proxy service.
 ///
@@ -124,29 +135,10 @@ pub const DEFAULT_SOCKET: &str = "/var/run/proxy.sock";
 /// serve both without a deployment having to supply the path.
 pub const SOCKET_PATHS: &[&str] = &[DEFAULT_SOCKET, "/var/run/ara2.sock"];
 
-/// The `ARA2_SOCKET` environment variable, which pins the proxy socket
-/// path instead of searching [`SOCKET_PATHS`].
+/// The `ARA2_SOCKET` environment variable, which pins the proxy endpoint
+/// instead of searching. Accepts a UNIX socket path, `unix:/path`, or
+/// `tcp:IPV4:PORT`.
 pub const SOCKET_OVERRIDE_ENV: &str = "ARA2_SOCKET";
-
-/// Resolves the ARA-2 proxy socket path: `ARA2_SOCKET` if set, otherwise
-/// the first entry in [`SOCKET_PATHS`] that exists, otherwise
-/// [`DEFAULT_SOCKET`].
-///
-/// [`Session::connect`] resolves through this function and then makes a
-/// single connection attempt. Selecting by existence rather than by
-/// connecting is deliberate: a failed attempt is not free, as the DVAPI
-/// 1.1 client keeps state across one and a later create on the same
-/// handle can come back `DV_SESSION_INVALID_HANDLE`.
-pub fn socket_path() -> String {
-    if let Ok(path) = std::env::var(SOCKET_OVERRIDE_ENV) {
-        return path;
-    }
-    SOCKET_PATHS
-        .iter()
-        .find(|path| std::path::Path::new(path).exists())
-        .unwrap_or(&DEFAULT_SOCKET)
-        .to_string()
-}
 
 /// The architecture-suffixed `libaraclient` name NXP's `imx-nxp-ara2`
 /// package ships for this target, tried first in [`LIBRARY_NAMES`].
@@ -186,10 +178,10 @@ pub const LIBRARY_NAMES: &[&str] = &["libaraclient.so", "libaraclient.so.1"];
 /// 1.2.1 ships DVAPI 1.1.2.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct DvapiVersion {
-    /// Major version. Both generations in circulation report `1`.
+    /// Major version: `1` for DVAPI 1.1 and 1.3, `3` for DVAPI 3.0.
     pub major: u8,
-    /// Minor version. This is what distinguishes the generations, and
-    /// what [`Abi`] is keyed on.
+    /// Minor version. Together with `major` it selects the [`Abi`], which
+    /// is keyed on major.minor.
     pub minor: u8,
     /// Patch version.
     pub patch: u8,
@@ -209,11 +201,9 @@ impl std::fmt::Display for DvapiVersion {
 
 /// The `dvapi.h` generation a loaded `libaraclient` implements.
 ///
-/// Every layout difference between the generations is a field appended to
-/// the end of a struct, so the older layout stays valid for reading fields
-/// both share. Two things do not survive that way and are selected here:
-/// the stride of an array the client indexes, and the meaning of endpoint
-/// states 4 and 5, which 1.3 reuses for different names.
+/// Structs whose layout differs between generations are read through the
+/// loaded generation's own declarations. Endpoint states 4 and 5 also
+/// differ: 1.3 and 3.0 reuse them for different names than 1.1.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[non_exhaustive]
 pub enum Abi {
@@ -222,6 +212,8 @@ pub enum Abi {
     V1_1,
     /// DVAPI 1.3.x, shipped by NXP's rt-sdk-ara2 as `imx-nxp-ara2`.
     V1_3,
+    /// DVAPI 3.0.x, shipped by the arart r3.0 runtime.
+    V3_0,
 }
 
 impl std::fmt::Display for Abi {
@@ -229,20 +221,17 @@ impl std::fmt::Display for Abi {
         match self {
             Abi::V1_1 => f.write_str("1.1"),
             Abi::V1_3 => f.write_str("1.3"),
+            Abi::V3_0 => f.write_str("3.0"),
         }
     }
 }
 
 impl Abi {
-    /// Byte stride between elements of a `dv_model_output_param` array.
-    ///
-    /// The array belongs to the library, so its stride is the library's
-    /// struct size rather than whichever one the bindings happen to name.
-    /// 1.3 appended `has_nms_parent`, taking it from 112 to 120 bytes.
-    pub(crate) const fn output_param_stride(self) -> usize {
+    /// The DVAPI major version this ABI belongs to.
+    pub const fn major(self) -> u8 {
         match self {
-            Abi::V1_1 => size_of::<dv_model_output_param>(),
-            Abi::V1_3 => size_of::<dv_model_output_param_1_3>(),
+            Abi::V1_1 | Abi::V1_3 => 1,
+            Abi::V3_0 => 3,
         }
     }
 
@@ -253,6 +242,7 @@ impl Abi {
         match (version.major, version.minor) {
             (1, 1) => Some(Abi::V1_1),
             (1, 3) => Some(Abi::V1_3),
+            (3, 0) => Some(Abi::V3_0),
             _ => None,
         }
     }
@@ -260,9 +250,13 @@ impl Abi {
 
 /// Environment variable that forces an [`Abi`] rather than probing for one.
 ///
-/// Accepts `1.1` or `1.3`. It exists so a target carrying a DVAPI version
-/// this build does not recognise can still be brought up without waiting on
-/// a new release.
+/// Accepts `1.1`, `1.3` or `3.0`. It exists so a target carrying a DVAPI
+/// version this build does not recognise can still be brought up without
+/// waiting on a new release.
+///
+/// An override that contradicts a library that loaded is reported as
+/// [`Error::AbiOverrideRejected`] rather than skipped: the search for another
+/// candidate library stops there.
 pub const ABI_OVERRIDE_ENV: &str = "ARA2_ABI";
 
 fn abi_override() -> Result<Option<Abi>, error::Error> {
@@ -272,6 +266,7 @@ fn abi_override() -> Result<Option<Abi>, error::Error> {
     match raw.trim() {
         "1.1" => Ok(Some(Abi::V1_1)),
         "1.3" => Ok(Some(Abi::V1_3)),
+        "3.0" => Ok(Some(Abi::V3_0)),
         other => Err(error::Error::AbiOverrideInvalid(other.to_owned())),
     }
 }
@@ -302,7 +297,40 @@ fn probe_version(lib: &araclient) -> Option<DvapiVersion> {
     })
 }
 
-pub(crate) fn open_library() -> Result<(araclient, Abi, Option<DvapiVersion>), error::Error> {
+/// Decides the ABI from an `ARA2_ABI` override and the probed version.
+///
+/// `Ok(None)` means the library is unsupported. An override is only
+/// honoured where it cannot contradict the library: when the probe failed,
+/// or when the reported version is unrecognised but shares the forced
+/// ABI's major version. Forcing another layout over a recognised version is
+/// an error, since every read through it would be at the wrong offsets.
+pub(crate) fn resolve_abi(
+    forced: Option<Abi>,
+    probed: Option<DvapiVersion>,
+) -> Result<Option<Abi>, error::Error> {
+    let known = probed.and_then(Abi::from_version);
+    match (forced, probed, known) {
+        (None, _, known) => Ok(known),
+        (Some(f), _, Some(k)) if f == k => Ok(Some(f)),
+        (Some(f), Some(reported), Some(_)) => Err(error::Error::AbiOverrideRejected {
+            forced: f,
+            reported,
+        }),
+        (Some(f), None, None) => Ok(Some(f)),
+        (Some(f), Some(reported), None) if reported.major == f.major() => Ok(Some(f)),
+        (Some(f), Some(reported), None) => Err(error::Error::AbiOverrideRejected {
+            forced: f,
+            reported,
+        }),
+        (Some(_), None, Some(_)) => unreachable!("a known ABI needs a probed version"),
+    }
+}
+
+/// Opens the first usable candidate in [`LIBRARY_NAMES`], returning its
+/// common function table, ABI, reported version and the name it loaded
+/// under.
+pub(crate) fn open_library()
+-> Result<(araclient, Abi, Option<DvapiVersion>, &'static str), error::Error> {
     let forced = abi_override()?;
     let mut last_err = None;
     let mut rejected: Option<(&'static str, Option<DvapiVersion>)> = None;
@@ -317,11 +345,8 @@ pub(crate) fn open_library() -> Result<(araclient, Abi, Option<DvapiVersion>), e
         };
 
         let version = probe_version(&lib);
-        if let Some(abi) = forced {
-            return Ok((lib, abi, version));
-        }
-        match version.and_then(Abi::from_version) {
-            Some(abi) => return Ok((lib, abi, version)),
+        match resolve_abi(forced, version)? {
+            Some(abi) => return Ok((lib, abi, version, *name)),
             // Keep going rather than failing here: an image can carry more
             // than one libaraclient, and a later candidate may well be a
             // generation this build does know.
@@ -344,6 +369,89 @@ pub(crate) fn open_library() -> Result<(araclient, Abi, Option<DvapiVersion>), e
         tried: LIBRARY_NAMES,
         source: last_err.expect("LIBRARY_NAMES is non-empty"),
     })
+}
+
+#[cfg(test)]
+mod offline_tests {
+    use super::*;
+
+    fn v(major: u8, minor: u8) -> Option<DvapiVersion> {
+        Some(DvapiVersion {
+            major,
+            minor,
+            patch: 0,
+            patch_minor: 0,
+        })
+    }
+
+    #[test]
+    fn probed_versions_map_to_their_abi() {
+        assert_eq!(resolve_abi(None, v(1, 1)).unwrap(), Some(Abi::V1_1));
+        assert_eq!(resolve_abi(None, v(1, 3)).unwrap(), Some(Abi::V1_3));
+        assert_eq!(resolve_abi(None, v(3, 0)).unwrap(), Some(Abi::V3_0));
+        assert_eq!(resolve_abi(None, v(3, 1)).unwrap(), None);
+        assert_eq!(resolve_abi(None, None).unwrap(), None);
+    }
+
+    #[test]
+    fn forcing_a_different_layout_over_a_known_version_is_rejected() {
+        assert!(matches!(
+            resolve_abi(Some(Abi::V1_3), v(3, 0)),
+            Err(Error::AbiOverrideRejected {
+                forced: Abi::V1_3,
+                ..
+            })
+        ));
+        assert!(matches!(
+            resolve_abi(Some(Abi::V1_1), v(1, 3)),
+            Err(Error::AbiOverrideRejected { .. })
+        ));
+        assert_eq!(
+            resolve_abi(Some(Abi::V3_0), v(3, 0)).unwrap(),
+            Some(Abi::V3_0)
+        );
+    }
+
+    #[test]
+    fn forcing_within_the_same_major_brings_up_an_unknown_minor() {
+        assert_eq!(
+            resolve_abi(Some(Abi::V3_0), v(3, 1)).unwrap(),
+            Some(Abi::V3_0)
+        );
+        assert!(matches!(
+            resolve_abi(Some(Abi::V1_3), v(3, 1)),
+            Err(Error::AbiOverrideRejected { .. })
+        ));
+    }
+
+    #[test]
+    fn forcing_applies_when_the_probe_failed() {
+        assert_eq!(resolve_abi(Some(Abi::V1_1), None).unwrap(), Some(Abi::V1_1));
+    }
+
+    #[test]
+    fn unsupported_dvapi_hints_abi_only_for_known_majors() {
+        let message = |major, minor| {
+            error::Error::UnsupportedDvapi {
+                name: "libaraclient.so",
+                version: Some(DvapiVersion {
+                    major,
+                    minor,
+                    patch: 0,
+                    patch_minor: 0,
+                }),
+            }
+            .to_string()
+        };
+        let m = message(3, 1);
+        assert!(
+            m.contains("dvapi_v3_1.h") && m.contains("update.sh --verify"),
+            "{m}"
+        );
+        assert!(m.contains("ARA2_ABI") && m.contains("(3.0)"), "{m}");
+        assert!(message(1, 4).contains("(1.1 or 1.3)"));
+        assert!(!message(4, 0).contains("ARA2_ABI"));
+    }
 }
 
 #[cfg(test)]

@@ -9,6 +9,37 @@ use pyo3::prelude::*;
 pub enum Abi {
     V1_1,
     V1_3,
+    V3_0,
+}
+
+/// A component and the version the proxy reports for it.
+#[pyclass(module = "edgefirst_ara2", frozen, get_all, from_py_object)]
+#[derive(Clone)]
+pub struct ComponentVersion {
+    /// Component name, e.g. "proxy", "firmware", "client_lib",
+    /// or "product_type_N" for one this build does not name.
+    pub component: String,
+    /// Version as "major.minor.patch.patch_minor".
+    pub version: String,
+}
+
+impl From<ara2::ComponentVersion> for ComponentVersion {
+    fn from(v: ara2::ComponentVersion) -> Self {
+        ComponentVersion {
+            component: v.component.to_string(),
+            version: v.version.to_string(),
+        }
+    }
+}
+
+#[pymethods]
+impl ComponentVersion {
+    fn __repr__(&self) -> String {
+        format!(
+            "ComponentVersion(component={:?}, version={:?})",
+            self.component, self.version
+        )
+    }
 }
 
 impl From<ara2::Abi> for Abi {
@@ -16,9 +47,10 @@ impl From<ara2::Abi> for Abi {
         match abi {
             ara2::Abi::V1_1 => Abi::V1_1,
             ara2::Abi::V1_3 => Abi::V1_3,
+            ara2::Abi::V3_0 => Abi::V3_0,
             // ara2::Abi is #[non_exhaustive]; a generation added upstream
             // reaches Python as the newest one this build knows.
-            _ => Abi::V1_3,
+            _ => Abi::V3_0,
         }
     }
 }
@@ -29,6 +61,7 @@ impl Abi {
         match self {
             Abi::V1_1 => "1.1",
             Abi::V1_3 => "1.3",
+            Abi::V3_0 => "3.0",
         }
     }
 

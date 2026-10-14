@@ -76,7 +76,8 @@ use edgefirst_image::{
     Rotation, save_jpeg,
 };
 use edgefirst_tensor::{
-    CpuAccess, DType, PixelFormat, PlaneDescriptor, TensorDyn, TensorMemory, TensorTrait as _,
+    CpuAccess, DType, PixelFormat, PlaneDescriptor, TensorDyn, TensorMapTrait as _, TensorMemory,
+    TensorTrait as _,
 };
 use std::os::fd::AsFd as _;
 use std::{path::PathBuf, time::Instant};
@@ -115,9 +116,10 @@ struct Args {
     #[arg(long, value_enum, default_value_t = ColorModeArg::Class)]
     color_mode: ColorModeArg,
 
-    /// UNIX socket path for the ARA-2 proxy service.
-    #[arg(long, default_value_t = ara2::socket_path())]
-    socket: String,
+    /// UNIX socket path for the ARA-2 proxy service. When omitted, the proxy
+    /// is located as `Session::connect` does.
+    #[arg(long)]
+    socket: Option<String>,
 }
 
 /// How segmentation mask colors are assigned.
@@ -423,6 +425,34 @@ fn bench_row(label: &str, data: &[f64]) {
 
 // ── Main ─────────────────────────────────────────────────────────────────────
 
+/// Copies a preprocessed image into the model's heap input tensor.
+fn copy_to_input(
+    model: &mut ara2::Model,
+    image: &TensorDyn,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let src = image.map_bytes(CpuAccess::Read)?;
+    let mut input = model.input_tensor(0).map()?;
+    let dst = input.as_mut_slice();
+    let n = dst.len().min(src.len());
+    dst[..n].copy_from_slice(&src[..n]);
+    Ok(())
+}
+
+/// Copies the model's heap output tensors into the tensors the decoder reads.
+fn copy_from_outputs(
+    model: &ara2::Model,
+    outputs: &[TensorDyn],
+) -> Result<(), Box<dyn std::error::Error>> {
+    for (i, out) in outputs.iter().enumerate() {
+        let src = model.output_tensor(i).map()?;
+        let src = src.as_slice();
+        let mut dst = out.map_bytes(CpuAccess::Write)?;
+        let n = dst.len().min(src.len());
+        dst[..n].copy_from_slice(&src[..n]);
+    }
+    Ok(())
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let color_mode: ColorMode = args.color_mode.into();
@@ -452,7 +482,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Task: {task:?}, classes: {}", labels.len());
 
     // ── 2. Connect to ARA-2 and load model ───────────────────────────────
-    let session = Session::create_via_unix_socket(&args.socket)?;
+    let session = match &args.socket {
+        Some(path) => Session::create_via_unix_socket(path)?,
+        None => Session::connect()?,
+    };
     let endpoint = &session.list_endpoints()?[0];
     println!(
         "Endpoint: {:?}, DRAM free: {:.1} MB",
@@ -461,8 +494,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let t0 = Instant::now();
+    // DMA-BUF tensors need a session that can pass file descriptors (UNIX);
+    // over TCP fall back to heap tensors.
+    let memory = if session.supports_fd_passing() {
+        Some(TensorMemory::DmaBuf)
+    } else {
+        None
+    };
     let mut model = endpoint.load_model_from_file(&args.model)?;
-    model.allocate_tensors(Some(TensorMemory::DmaBuf))?;
+    model.allocate_tensors(memory)?;
     println!("Model loaded in {:?}", t0.elapsed());
 
     let input_shape = model.input_shape(0);
@@ -683,17 +723,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         input_quant.is_signed, input_quant.qn, input_quant.offset, input_quant.qmode
     );
 
-    let input_fd = model.input_tensor(0).clone_fd()?;
-    let plane = PlaneDescriptor::new(input_fd.as_fd())?;
-    let mut dst = processor.import_image(
-        plane,
-        None,
-        in_w,
-        in_h,
-        PixelFormat::PlanarRgb,
-        input_dtype,
-        None,
-    )?;
+    // With fd-backed model tensors the GPU writes the model input and the
+    // decoder reads the model outputs in place. Heap tensors (a TCP session)
+    // cannot be imported, so preprocessing goes to a HAL image and both
+    // directions are copied around each inference.
+    let fd_backed = matches!(
+        model.input_tensor(0).memory(),
+        TensorMemory::DmaBuf | TensorMemory::Shm
+    );
+    let mut dst = if fd_backed {
+        let input_fd = model.input_tensor(0).clone_fd()?;
+        let plane = PlaneDescriptor::new(input_fd.as_fd())?;
+        processor.import_image(
+            plane,
+            None,
+            in_w,
+            in_h,
+            PixelFormat::PlanarRgb,
+            input_dtype,
+            None,
+        )?
+    } else {
+        println!("  model tensors are heap memory: copying input and outputs");
+        processor.create_image(
+            in_w,
+            in_h,
+            PixelFormat::PlanarRgb,
+            input_dtype,
+            None,
+            CpuAccess::Read,
+        )?
+    };
 
     // Letterbox: fit src into model input preserving aspect ratio with gray padding.
     let letterbox = Crop::letterbox([114, 114, 114, 255]);
@@ -714,7 +774,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     // ── 5b. Pre-allocate output tensor wrappers ──────────────────────────
-    // Wrap the model's DMA output buffers directly — no per-frame CPU copy.
+    // Wrap the model's DMA output buffers directly — no per-frame CPU copy —
+    // or, for heap model tensors, allocate tensors the outputs are copied to.
     let output_tensors: Vec<TensorDyn> = (0..n_outputs)
         .map(|i| {
             let dtype = match (quants[i].2, quants[i].3) {
@@ -724,23 +785,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 (2, true) => DType::I16,
                 _ => panic!("unsupported bpp={} signed={}", quants[i].2, quants[i].3),
             };
-            let fd = model.output_tensor(i).clone_fd().expect("clone output fd");
-            TensorDyn::from_fd(fd, &shapes[i], dtype, None).expect("wrap output tensor")
+            if fd_backed {
+                let fd = model.output_tensor(i).clone_fd().expect("clone output fd");
+                TensorDyn::from_fd(fd, &shapes[i], dtype, None).expect("wrap output tensor")
+            } else {
+                TensorDyn::new(&shapes[i], dtype, Some(TensorMemory::Mem), None)
+                    .expect("allocate output tensor")
+            }
         })
         .collect();
     let output_refs: Vec<&TensorDyn> = output_tensors.iter().collect();
 
     // ── 6. Warmup ────────────────────────────────────────────────────────
     processor.convert(&src, &mut dst, Rotation::None, Flip::None, letterbox)?;
+    if !fd_backed {
+        copy_to_input(&mut model, &dst)?;
+    }
     model.run()?;
 
     // ── 7. Inference ─────────────────────────────────────────────────────
     let t_pre = Instant::now();
     processor.convert(&src, &mut dst, Rotation::None, Flip::None, letterbox)?;
+    if !fd_backed {
+        copy_to_input(&mut model, &dst)?;
+    }
     let preprocess_time = t_pre.elapsed();
 
     let t_inf = Instant::now();
     let timing = model.run()?;
+    if !fd_backed {
+        copy_from_outputs(&model, &output_tensors)?;
+    }
     let inference_time = t_inf.elapsed();
 
     // ── 8. Decode → Materialize → Draw ───────────────────────────────────
@@ -836,7 +911,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         {
             let mut warmup_boxes = Vec::with_capacity(100);
             processor.convert(&src, &mut dst, Rotation::None, Flip::None, letterbox)?;
+            if !fd_backed {
+                copy_to_input(&mut model, &dst)?;
+            }
             model.run()?;
+            if !fd_backed {
+                copy_from_outputs(&model, &output_tensors)?;
+            }
             let proto = decoder
                 .decode_proto(&output_refs, &mut warmup_boxes)
                 .map_err(|e| format!("decode_proto: {e:#?}"))?;
@@ -876,10 +957,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Preprocess: GPU letterbox-resize src → NPU input tensor (DMA-BUF).
             let t0 = Instant::now();
             processor.convert(&src, &mut dst, Rotation::None, Flip::None, letterbox)?;
+            if !fd_backed {
+                copy_to_input(&mut model, &dst)?;
+            }
             let t1 = Instant::now();
 
             // Inference: NPU execution (includes DMA upload/download).
             let t = model.run()?;
+            if !fd_backed {
+                copy_from_outputs(&model, &output_tensors)?;
+            }
             let t2 = Instant::now();
 
             // Step 1 — Decode: NMS + dequant on NPU output tensors.

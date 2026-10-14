@@ -1,5 +1,5 @@
 use crate::DvapiVersion;
-use ara2_sys::{DV_LAYER_OUTPUT_TYPE, dv_status_code};
+use ara2_sys::DV_LAYER_OUTPUT_TYPE;
 
 /// `#[non_exhaustive]` because the variant set is not fixed: `Error::Codec`
 /// exists only with the `codec` feature, and Cargo unifies features across the
@@ -36,6 +36,13 @@ pub enum Error {
     /// [`crate::ABI_OVERRIDE_ENV`] was set to something other than a
     /// recognised [`crate::Abi`]. Carries the offending value.
     AbiOverrideInvalid(String),
+    /// `ARA2_ABI` asked for a layout that contradicts the version the library reported.
+    AbiOverrideRejected {
+        /// The layout the override asked for.
+        forced: crate::Abi,
+        /// The version the library reported.
+        reported: DvapiVersion,
+    },
     /// A proxy configuration file could not be read.
     ProxyConfigUnreadable {
         /// The file that could not be read.
@@ -56,6 +63,16 @@ pub enum Error {
         /// The process it came from, when it came from [`crate::discover`].
         pid: Option<u32>,
     },
+    /// `ARA2_SOCKET` is not a usable endpoint. Carries the value.
+    InvalidSocketOverride(String),
+    /// No proxy endpoint could be found. Lists every candidate checked.
+    NoProxyFound {
+        /// Each candidate, in the order checked.
+        checked: Vec<String>,
+    },
+    /// Shared-memory or DMA-BUF tensors were requested on a TCP session,
+    /// which cannot pass file descriptors to the proxy.
+    FdPassingUnavailable,
     /// `/proc` could not be read, so running proxies cannot be found.
     ProcUnavailable {
         /// The path under `/proc` that could not be read.
@@ -63,12 +80,26 @@ pub enum Error {
         /// Why reading it failed.
         source: std::io::Error,
     },
-    /// The client library returned a `dv_status_code_t` indicating failure.
-    /// Codes are grouped by range: 100s hardware, 200s proxy, 300s client
-    /// library, 400s proxy transport, 500s device.
-    Ara2(dv_status_code),
-    /// A `dv_product_type_t` outside the set this build recognises.
-    UnknownProductType(i32),
+    /// The client library returned a failing status. `name` is the
+    /// library's own name for `code`; `detail` is present when the call
+    /// had a detailed-status variant (DVAPI 1.3 and later). Codes are
+    /// grouped by range: 100s hardware, 200s proxy, 300s client library,
+    /// 400s proxy transport, 500s device.
+    Ara2 {
+        /// The `dv_status_code_t` value.
+        code: i32,
+        /// The library's name for it, from `dv_stringify_status_code`.
+        name: String,
+        /// Component and severity, when the library provided them.
+        detail: Option<crate::StatusDetail>,
+    },
+    /// The loaded DVAPI version does not provide this feature.
+    Unsupported {
+        /// What was asked for.
+        feature: &'static str,
+        /// The loaded version.
+        abi: crate::Abi,
+    },
     /// A `dv_layer_output_type_t` outside the set this build recognises.
     UnknownLayerOutputType(DV_LAYER_OUTPUT_TYPE),
     /// A tensor layout string the crate cannot map to an axis order.
@@ -123,12 +154,6 @@ impl From<libloading::Error> for Error {
     }
 }
 
-impl From<dv_status_code> for Error {
-    fn from(e: dv_status_code) -> Self {
-        Error::Ara2(e)
-    }
-}
-
 impl From<edgefirst_tensor::Error> for Error {
     fn from(e: edgefirst_tensor::Error) -> Self {
         Error::TensorError(e)
@@ -172,16 +197,34 @@ impl std::fmt::Display for Error {
                 tried.join(", ")
             ),
             Error::UnsupportedDvapi { name, version } => match version {
-                Some(version) => write!(
-                    f,
-                    "{name} implements DVAPI {version}, which this build of ara2 has no \
-                     struct layout for; set {} to 1.1 or 1.3 to force one",
-                    crate::ABI_OVERRIDE_ENV
-                ),
+                Some(version) => {
+                    write!(
+                        f,
+                        "{name} implements DVAPI {version}, which this build of ara2 has \
+                         no struct layout for; declare it in a new \
+                         crates/ara2-sys/include/dvapi_v{}_{}.h and check it with \
+                         crates/ara2-sys/update.sh --verify against that SDK's headers",
+                        version.major, version.minor
+                    )?;
+                    let same_major = match version.major {
+                        1 => Some("1.1 or 1.3"),
+                        3 => Some("3.0"),
+                        _ => None,
+                    };
+                    if let Some(layouts) = same_major {
+                        write!(
+                            f,
+                            ", or set {} to a known layout of the same major version \
+                             ({layouts}) to try bringing it up",
+                            crate::ABI_OVERRIDE_ENV
+                        )?;
+                    }
+                    Ok(())
+                }
                 None => write!(
                     f,
                     "{name} would not report a DVAPI version (no usable \
-                     dv_get_client_lib_version); set {} to 1.1 or 1.3 to force one",
+                     dv_get_client_lib_version); set {} to 1.1, 1.3 or 3.0 to force one",
                     crate::ABI_OVERRIDE_ENV
                 ),
             },
@@ -202,6 +245,19 @@ impl std::fmt::Display for Error {
                 ),
                 None => f.write_str("no endpoint this client can reach was declared"),
             },
+            Error::InvalidSocketOverride(v) => write!(
+                f,
+                "{} is set to {v:?}; expected a socket path, unix:/path, or tcp:IPV4:PORT",
+                crate::SOCKET_OVERRIDE_ENV
+            ),
+            Error::NoProxyFound { checked } => {
+                write!(f, "no ARA-2 proxy found; checked {}", checked.join(", "))
+            }
+            Error::FdPassingUnavailable => f.write_str(
+                "this session is connected over TCP, which cannot pass file descriptors; \
+                 pass None (heap on TCP) or Some(TensorMemory::Mem), or configure \
+                 the proxy with interface_type: SOCKET for zero-copy tensors",
+            ),
             Error::ProcUnavailable { path, source } => write!(
                 f,
                 "could not read {} to look for a running proxy: {source}",
@@ -209,11 +265,32 @@ impl std::fmt::Display for Error {
             ),
             Error::AbiOverrideInvalid(value) => write!(
                 f,
-                "{} is set to {value:?}; expected 1.1 or 1.3",
+                "{} is set to {value:?}; expected 1.1, 1.3 or 3.0",
                 crate::ABI_OVERRIDE_ENV
             ),
-            Error::Ara2(e) => write!(f, "Ara2 error: {e:?}"),
-            Error::UnknownProductType(e) => write!(f, "Unknown product type: {e:?}"),
+            Error::AbiOverrideRejected { forced, reported } => write!(
+                f,
+                "{} forces DVAPI {forced}, but the library reports {reported}; forcing a \
+                 layout is only allowed for an unrecognised version of the same major release",
+                crate::ABI_OVERRIDE_ENV
+            ),
+            Error::Ara2 {
+                code,
+                name,
+                detail: None,
+            } => write!(f, "{name} ({code})"),
+            Error::Ara2 {
+                code,
+                name,
+                detail: Some(d),
+            } => write!(
+                f,
+                "{name} ({code}) from the {}, {} (sub-code {})",
+                d.component, d.severity, d.sub_code
+            ),
+            Error::Unsupported { feature, abi } => {
+                write!(f, "{feature} is not available with DVAPI {abi}")
+            }
             Error::UnknownLayerOutputType(e) => write!(f, "Unknown layer output type: {e:?}"),
             Error::UnsupportedLayout(e) => write!(f, "Unsupported layout: {e:?}"),
             Error::UnsupportedTypeSize(e) => write!(f, "Unsupported type size: {e:?}"),

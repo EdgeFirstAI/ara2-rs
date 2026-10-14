@@ -22,7 +22,7 @@ DEFAULT_SOCKET: str
 Matches ``interface_socket_file`` in NXP's rt-sdk-ara2
 ``proxy_config.yaml``, and is the first entry in :data:`SOCKET_PATHS`.
 Override at runtime with the ``ARA2_SOCKET`` environment variable -- see
-:func:`socket_path` and :meth:`Session.connect`.
+:func:`proxy_endpoint` and :meth:`Session.connect`.
 """
 
 SOCKET_PATHS: list[str]
@@ -33,15 +33,18 @@ NXP's rt-sdk-ara2 configures ``/var/run/proxy.sock``, and the Kinara
 runtime meta-kinara packages configures ``/var/run/ara2.sock``.
 """
 
-def socket_path() -> str:
-    """Resolve the ARA-2 proxy socket path.
+def proxy_endpoint() -> ProxyEndpoint:
+    """Resolve the endpoint :meth:`Session.connect` will open.
 
     Returns ``ARA2_SOCKET`` if it is set, otherwise the first entry in
-    :data:`SOCKET_PATHS` that exists, otherwise :data:`DEFAULT_SOCKET`.
-    :meth:`Session.connect` resolves through this function and then makes
-    a single connection attempt; this is exposed separately for callers
-    that need the path as a string, such as the default value of a CLI
-    flag.
+    :data:`SOCKET_PATHS` that exists, otherwise a running proxy (UNIX
+    before TCP). :meth:`Session.connect` resolves through this function and
+    then makes a single connection attempt; this is exposed separately for
+    callers that need to know where it will connect, such as the default
+    value of a CLI flag.
+
+    Raises:
+        ProxyError: If no proxy endpoint can be found.
     """
     ...
 
@@ -50,9 +53,21 @@ def socket_path() -> str:
 # =============================================================================
 
 class Ara2Error(RuntimeError):
-    """Base exception for all ARA-2 errors."""
+    """Base exception for all ARA-2 errors.
 
-    ...
+    Every instance has the attributes below. When the client library
+    returned a failing status, ``code`` (the ``dv_status_code_t`` value) and
+    ``name`` (the library's name for it) are set. On DVAPI 1.3 and later,
+    calls with a detailed-status variant also set ``sub_code``,
+    ``component`` (e.g. ``"proxy"``) and ``severity`` (e.g.
+    ``"retryable"``). Attributes that do not apply are ``None``.
+    """
+
+    code: int | None
+    name: str | None
+    sub_code: int | None
+    component: str | None
+    severity: str | None
 
 class LibraryError(Ara2Error):
     """Failed to load the ARA-2 client library.
@@ -104,6 +119,8 @@ class Abi:
     """DVAPI 1.1.x, shipped by the Kinara ARA-2 runtime meta-kinara packages."""
     V1_3: Abi
     """DVAPI 1.3.x, shipped by NXP's rt-sdk-ara2 as ``imx-nxp-ara2``."""
+    V3_0: Abi
+    """DVAPI 3.0.x, shipped by the arart r3.0 runtime."""
 
     def __eq__(self, other: object) -> bool: ...
     def __int__(self) -> int: ...
@@ -113,10 +130,10 @@ class Abi:
 class State:
     """Endpoint operational state returned by ``Endpoint.check_status()``.
 
-    The members are the union of both DVAPI generations. DVAPI 1.3 reuses
-    values 4 and 5 for names 1.1 does not have, so ``ActiveBoosted`` and
-    ``ThermalInactive`` are only reported under 1.1, and
-    ``ThermalActiveSlow`` and ``FailSafe`` only under 1.3.
+    The members are the union of all three DVAPI generations. DVAPI 1.3 and
+    3.0 reuse values 4 and 5 for names 1.1 does not have, so ``ActiveBoosted``
+    and ``ThermalInactive`` are only reported under 1.1, and
+    ``ThermalActiveSlow`` and ``FailSafe`` only under 1.3 and 3.0.
     ``Session.abi`` reports which library is loaded.
     """
 
@@ -410,6 +427,22 @@ def discover() -> list[Proxy]:
     """
     ...
 
+class ComponentVersion:
+    """A component and the version the proxy reports for it."""
+
+    @property
+    def component(self) -> str:
+        """Component name, e.g. ``"proxy"``, ``"firmware"``, ``"client_lib"``.
+
+        ``"product_type_N"`` for a component this build does not name.
+        """
+        ...
+
+    @property
+    def version(self) -> str:
+        """Version as ``"major.minor.patch.patch_minor"``."""
+        ...
+
 class Session:
     """ARA-2 session for communicating with the proxy.
 
@@ -429,16 +462,18 @@ class Session:
 
     @staticmethod
     def connect() -> Session:
-        """Create a session connected to the proxy over its UNIX socket.
+        """Create a session connected to the proxy.
 
-        Connects at the path :func:`socket_path` resolves: ``ARA2_SOCKET``
-        if set, otherwise the first entry in :data:`SOCKET_PATHS` that
-        exists. This is the recommended way to connect; use
+        Connects to the endpoint :func:`proxy_endpoint` resolves:
+        ``ARA2_SOCKET`` if set, otherwise the first entry in
+        :data:`SOCKET_PATHS` that exists, otherwise a running proxy. This
+        is the recommended way to connect; use
         :meth:`create_via_unix_socket` when the path must be hardcoded or
         is chosen some other way.
 
         Raises:
-            ProxyError: If the socket does not exist or the proxy is not running.
+            ProxyError: If no proxy endpoint is found, or the connection
+                to the endpoint fails.
         """
         ...
 
@@ -490,11 +525,28 @@ class Session:
         """
         ...
 
-    def versions(self) -> dict[str, str]:
-        """Get version information for all components.
+    def versions(self) -> list[ComponentVersion]:
+        """Versions of the components currently running.
 
         Returns:
-            Dictionary mapping component names to version strings.
+            One :class:`ComponentVersion` per running component.
+        """
+        ...
+
+    def supported_versions(self) -> list[ComponentVersion]:
+        """Every component version the proxy supports.
+
+        May list a component more than once.
+        """
+        ...
+
+    @property
+    def supports_fd_passing(self) -> bool:
+        """Whether the session can use shared-memory and DMA-BUF tensors.
+
+        True for UNIX-socket sessions; False over TCP, where tensors live
+        in heap memory with no file descriptor, so the tensor fd accessors
+        raise ``TensorError`` and data is copied instead.
         """
         ...
 
@@ -624,8 +676,14 @@ class Model:
 
         Args:
             memory: Memory type — ``"dma"``, ``"shm"``, ``"mem"``, or
-                    ``None`` (auto-select, tries DMA first). Use ``"dma"``
-                    for zero-copy workflows with edgefirst-image.
+                    ``None`` (auto-select, tries DMA first; heap on a TCP
+                    session, which cannot pass file descriptors). Use
+                    ``"dma"`` for zero-copy workflows with edgefirst-image.
+
+        Over TCP the tensors are heap memory without a file descriptor, so
+        ``input_tensor_fd()`` and ``output_tensor_fd()`` raise
+        ``TensorError``. Check ``Session.supports_fd_passing`` and copy
+        data with ``set_input_tensor()`` and ``get_output_tensor()`` instead.
         """
         ...
 
@@ -772,7 +830,8 @@ class Model:
 
         Raises:
             IndexError: If index is out of range.
-            TensorError: If tensors are not allocated or use system memory.
+            TensorError: If tensors are not allocated or use system memory
+                (always the case over TCP).
         """
         ...
 
@@ -789,7 +848,8 @@ class Model:
 
         Raises:
             IndexError: If index is out of range.
-            TensorError: If tensors are not allocated or use system memory.
+            TensorError: If tensors are not allocated or use system memory
+                (always the case over TCP).
         """
         ...
 
@@ -882,7 +942,9 @@ class InferRequest:
     during ``wait()`` so other Python threads can run concurrently.
 
     The underlying request is freed automatically when the object is
-    garbage-collected or when ``wait()`` returns.
+    garbage-collected or when ``wait()`` returns. Dropping or
+    garbage-collecting a request that was never waited on blocks while it
+    finishes, for up to about 4 s.
 
     Example::
 
@@ -1183,7 +1245,7 @@ __all__ = [
     "DEFAULT_SOCKET",
     "SOCKET_PATHS",
     # Functions
-    "socket_path",
+    "proxy_endpoint",
     "discover",
     # Exceptions
     "Ara2Error",
@@ -1198,6 +1260,7 @@ __all__ = [
     "State",
     "ModelOutputType",
     # Data classes
+    "ComponentVersion",
     "DramStatistics",
     "ModelTiming",
     "InputQuantization",

@@ -1,6 +1,6 @@
-use crate::{Abi, DvapiVersion, Endpoint, error::Error};
-use ara2_sys::{araclient, dv_endpoint, dv_product_version, dv_session, dv_version};
-use std::{collections::HashMap, ffi::c_char, net::Ipv4Addr, sync::Arc};
+use crate::{Abi, ComponentVersion, DvapiVersion, Endpoint, error::Error, status::RawStatus};
+use ara2_sys::{araclient, dv_endpoint, dv_product_version, dv_session, dv_status_code_t};
+use std::{ffi::c_char, net::Ipv4Addr, sync::Arc};
 
 /// The Ara-2 proxy supports session connections over either a TCP or UNIX
 /// named socket.
@@ -24,6 +24,66 @@ pub(crate) struct SessionInner {
     /// per call.
     pub(crate) abi: Abi,
     pub(crate) dvapi_version: Option<DvapiVersion>,
+    /// The functions only `abi`'s version has, from the same library.
+    pub(crate) vlib: VersionLib,
+}
+
+/// The version-specific function table for the loaded library.
+pub(crate) enum VersionLib {
+    // No call is routed through the 1.1 table yet; it has no detailed-status variants.
+    #[allow(dead_code)]
+    V1_1(ara2_sys::v1_1::araclient_v1_1),
+    V1_3(ara2_sys::v1_3::araclient_v1_3),
+    V3_0(ara2_sys::v3_0::araclient_v3_0),
+}
+
+impl VersionLib {
+    /// Opens the version-specific function table from the same library.
+    /// dlopen reference-counts, so this maps no second copy.
+    pub(crate) fn open(abi: Abi, name: &str) -> Result<Self, Error> {
+        // SAFETY: `name` is the library the common table already loaded.
+        unsafe {
+            Ok(match abi {
+                Abi::V1_1 => VersionLib::V1_1(ara2_sys::v1_1::araclient_v1_1::new(name)?),
+                Abi::V1_3 => VersionLib::V1_3(ara2_sys::v1_3::araclient_v1_3::new(name)?),
+                Abi::V3_0 => VersionLib::V3_0(ara2_sys::v3_0::araclient_v3_0::new(name)?),
+            })
+        }
+    }
+}
+
+impl SessionInner {
+    /// A failing status code as an [`Error`], named by the library.
+    pub(crate) fn status_error(&self, code: dv_status_code_t) -> Error {
+        crate::status::status_error_from(&self.lib, code)
+    }
+
+    /// A failing detailed status as an [`Error`], named by the library.
+    pub(crate) fn detailed_error(&self, status: RawStatus) -> Error {
+        Error::Ara2 {
+            code: status.code as i32,
+            name: self.status_name(status.code),
+            detail: Some(crate::StatusDetail {
+                sub_code: status.sub_code,
+                component: crate::StatusComponent::from_raw(status.component),
+                severity: crate::Severity::from_raw(status.severity),
+            }),
+        }
+    }
+
+    /// The library's own name for `code`.
+    pub(crate) fn status_name(&self, code: dv_status_code_t) -> String {
+        crate::status::status_name(&self.lib, code)
+    }
+}
+
+/// `Ok` for a successful detailed status, the named error otherwise.
+pub(crate) fn status_result(session: &SessionInner, status: RawStatus) -> Result<(), Error> {
+    if status.code == 0 {
+        Ok(())
+    } else {
+        Err(session.detailed_error(status))
+    }
 }
 
 // Safety: The C library is thread-safe for session operations.
@@ -67,22 +127,40 @@ impl std::fmt::Debug for Session {
 }
 
 impl Session {
-    /// Connect to the ARA-2 proxy over its UNIX socket, at the path
-    /// [`crate::socket_path`] resolves.
+    /// Connect to the ARA-2 proxy, choosing the endpoint by inspection.
     ///
-    /// This is the recommended way to connect: it lets a deployment
-    /// override the socket path (e.g. a proxy configured to listen
-    /// somewhere other than NXP's default) without a recompile. Use
-    /// [`Session::create_via_unix_socket`] directly when the path must be
-    /// hardcoded or is chosen some other way.
+    /// The endpoint is the first of: `ARA2_SOCKET` (a socket path,
+    /// `unix:/path` or `tcp:IPV4:PORT`), the first existing entry of
+    /// [`crate::SOCKET_PATHS`], or a running proxy found by
+    /// [`crate::discover`], preferring UNIX endpoints over TCP. Exactly one
+    /// connection attempt is made: a failed attempt is not free, as the
+    /// DVAPI 1.1 client keeps state across one and a later create on the
+    /// same handle can come back `DV_SESSION_INVALID_HANDLE`.
+    ///
+    /// This is the recommended way to connect: it lets a deployment pick
+    /// the proxy without a recompile. A TCP session cannot pass file
+    /// descriptors; see [`Session::supports_fd_passing`].
     pub fn connect() -> Result<Self, Error> {
-        // Exactly one connection attempt, against a path chosen by testing
-        // for the socket's existence. Choosing it by connecting instead
-        // would mean a failed attempt whenever the first candidate is not
-        // the right one, and a failed attempt is not free: the DVAPI 1.1
-        // client keeps state across it and a later create on the same
-        // handle can come back DV_SESSION_INVALID_HANDLE.
-        Self::create_via_unix_socket(&crate::socket_path())
+        let endpoint = crate::proxy_endpoint()?;
+        if let crate::ProxyEndpoint::Tcp(ip, port) = &endpoint {
+            log::warn!(
+                "connecting to the ARA-2 proxy over TCP at {ip}:{port}; shared-memory and \
+                 DMA-BUF tensors are unavailable on TCP (set interface_type: SOCKET in the \
+                 proxy configuration to enable them)"
+            );
+        }
+        endpoint.connect()
+    }
+
+    /// Whether this session can pass file descriptors to the proxy, which
+    /// `TensorMemory::Shm` and `TensorMemory::DmaBuf` tensors require. True
+    /// for UNIX-socket sessions, false for TCP.
+    ///
+    /// When false, tensors the client allocates are heap memory with no file
+    /// descriptor: `clone_fd()` fails on them and they must be accessed
+    /// through `map()`.
+    pub fn supports_fd_passing(&self) -> bool {
+        matches!(self.inner.socket_type, SocketType::Unix)
     }
 
     /// Connect to the proxy described by a proxy configuration file.
@@ -118,7 +196,8 @@ impl Session {
     /// # Arguments
     /// * `socket_path` - Path to the UNIX socket (e.g., `/var/run/proxy.sock`)
     pub fn create_via_unix_socket(socket_path: &str) -> Result<Self, Error> {
-        let (lib, abi, dvapi_version) = crate::open_library()?;
+        let (lib, abi, dvapi_version, name) = crate::open_library()?;
+        let vlib = VersionLib::open(abi, name)?;
         let mut ptr: *mut dv_session = std::ptr::null_mut();
         let socket_path = std::ffi::CString::new(socket_path)
             .map_err(|_| Error::NullPointer("Socket path contains null byte".to_owned()))?;
@@ -127,7 +206,7 @@ impl Session {
         };
 
         if err != 0 {
-            return Err(err.into());
+            return Err(crate::status::status_error_from(&lib, err));
         }
 
         Ok(Self {
@@ -137,6 +216,7 @@ impl Session {
                 socket_type: SocketType::Unix,
                 abi,
                 dvapi_version,
+                vlib,
             }),
         })
     }
@@ -147,7 +227,8 @@ impl Session {
     /// * `ip` - IPv4 address of the proxy host
     /// * `port` - TCP port number
     pub fn create_via_tcp_ipv4_socket(ip: Ipv4Addr, port: u16) -> Result<Self, Error> {
-        let (lib, abi, dvapi_version) = crate::open_library()?;
+        let (lib, abi, dvapi_version, name) = crate::open_library()?;
+        let vlib = VersionLib::open(abi, name)?;
         let mut ptr: *mut dv_session = std::ptr::null_mut();
         let ip_cstring = std::ffi::CString::new(ip.to_string())
             .map_err(|_| Error::NullPointer("Invalid IP address".to_owned()))?;
@@ -156,7 +237,7 @@ impl Session {
         };
 
         if err != 0 {
-            return Err(err.into());
+            return Err(crate::status::status_error_from(&lib, err));
         }
 
         Ok(Self {
@@ -166,6 +247,7 @@ impl Session {
                 socket_type: SocketType::Tcp,
                 abi,
                 dvapi_version,
+                vlib,
             }),
         })
     }
@@ -189,61 +271,42 @@ impl Session {
         self.inner.dvapi_version
     }
 
-    /// Get version information for all components (proxy, firmware, drivers,
-    /// etc.).
-    pub fn versions(&self) -> Result<HashMap<String, String>, Error> {
+    /// Versions of the components currently running: proxy, firmware,
+    /// client library and so on, as the proxy reports them.
+    pub fn versions(&self) -> Result<Vec<ComponentVersion>, Error> {
+        // SAFETY: `s` is this session's live handle; the out-pointers are
+        // the locals `version_list` passes.
+        self.version_list(|s, p, c| unsafe {
+            self.inner.lib.dv_exchange_current_version_details(s, p, c)
+        })
+    }
+
+    /// Every component version the proxy supports, which can list several
+    /// versions of the same component (e.g. each firmware it can load).
+    pub fn supported_versions(&self) -> Result<Vec<ComponentVersion>, Error> {
+        // SAFETY: as in `versions`.
+        self.version_list(|s, p, c| unsafe { self.inner.lib.dv_retrieve_version_details(s, p, c) })
+    }
+
+    fn version_list(
+        &self,
+        call: impl FnOnce(*mut dv_session, *mut *mut dv_product_version, *mut u8) -> dv_status_code_t,
+    ) -> Result<Vec<ComponentVersion>, Error> {
         let mut products: *mut dv_product_version = std::ptr::null_mut();
         let mut count: u8 = 0;
-        let err = unsafe {
-            self.inner
-                .lib
-                .dv_retrieve_version_details(self.inner.ptr, &mut products, &mut count)
-        };
+        let err = call(self.inner.ptr, &mut products, &mut count);
         if err != 0 {
-            return Err(err.into());
+            return Err(self.inner.status_error(err));
         }
-
-        let mut versions = HashMap::new();
-        for i in 0..count {
-            let product = unsafe { products.offset(i as isize) };
-            unsafe {
-                match (*product).product_type {
-                    ara2_sys::DV_PRODUCT_TYPE_PROXY => versions.insert(
-                        "proxy".to_owned(),
-                        version_to_string((*product).product_version),
-                    ),
-                    ara2_sys::DV_PRODUCT_TYPE_PCI_DRIVER => versions.insert(
-                        "pci_driver".to_owned(),
-                        version_to_string((*product).product_version),
-                    ),
-                    ara2_sys::DV_PRODUCT_TYPE_FIRMWARE => versions.insert(
-                        "firmware".to_owned(),
-                        version_to_string((*product).product_version),
-                    ),
-                    ara2_sys::DV_PRODUCT_TYPE_CNN_MODEL => versions.insert(
-                        "cnn_model".to_owned(),
-                        version_to_string((*product).product_version),
-                    ),
-                    ara2_sys::DV_PRODUCT_TYPE_LLM_MODEL => versions.insert(
-                        "llm_model".to_owned(),
-                        version_to_string((*product).product_version),
-                    ),
-                    ara2_sys::DV_PRODUCT_TYPE_CLIENT_LIB => versions.insert(
-                        "client_lib".to_owned(),
-                        version_to_string((*product).product_version),
-                    ),
-                    ara2_sys::DV_PRODUCT_TYPE_SYSAPI => versions.insert(
-                        "sysapi".to_owned(),
-                        version_to_string((*product).product_version),
-                    ),
-                    t => {
-                        return Err(Error::UnknownProductType(t));
-                    }
-                };
-            }
+        if products.is_null() {
+            return Ok(Vec::new());
         }
-
-        Ok(versions)
+        // SAFETY: the library returned `count` entries at `products`.
+        let list = unsafe { std::slice::from_raw_parts(products, count as usize) };
+        let out = crate::version::component_versions(list);
+        // SAFETY: `products` came from the call above and is freed once.
+        unsafe { self.inner.lib.dv_free_version_details(products) };
+        Ok(out)
     }
 
     /// List all available NPU endpoints connected to the proxy.
@@ -260,7 +323,7 @@ impl Session {
         };
 
         if err != 0 {
-            return Err(err.into());
+            return Err(self.inner.status_error(err));
         }
 
         // Wrap the endpoint list pointer so it is freed when all Endpoint
@@ -317,7 +380,7 @@ impl Session {
                 .dv_infer_get_inflight_count(self.inner.ptr, &mut count)
         };
         if err != 0 {
-            return Err(err.into());
+            return Err(self.inner.status_error(err));
         }
         Ok(count)
     }
@@ -345,21 +408,26 @@ impl Drop for EndpointList {
     }
 }
 
-fn version_to_string(version: dv_version) -> String {
-    format!(
-        "{}.{}.{}.{}",
-        version.major, version.minor, version.patch, version.patch_minor
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Component;
 
     #[test]
-    fn test_unix_socket_connect() {
+    fn connect_uses_the_resolved_transport() {
+        let endpoint = crate::proxy_endpoint().expect("should resolve a proxy endpoint");
         let session = Session::connect().expect("should connect to ARA-2 proxy");
-        assert!(matches!(session.socket_type(), SocketType::Unix));
+        println!("connected to {endpoint:?}");
+        match endpoint {
+            crate::ProxyEndpoint::Unix(_) => {
+                assert!(matches!(session.socket_type(), SocketType::Unix));
+                assert!(session.supports_fd_passing());
+            }
+            crate::ProxyEndpoint::Tcp(..) => {
+                assert!(matches!(session.socket_type(), SocketType::Tcp));
+                assert!(!session.supports_fd_passing());
+            }
+        }
     }
 
     #[test]
@@ -369,20 +437,49 @@ mod tests {
     }
 
     #[test]
-    fn test_versions_returns_expected_keys() {
+    fn failing_calls_name_their_status() {
         let session = crate::tests::test_session();
-        let versions = session.versions().expect("should retrieve versions");
-
-        // The proxy and client_lib versions should always be present
-        assert!(versions.contains_key("proxy"), "missing proxy version");
-        assert!(
-            versions.contains_key("client_lib"),
-            "missing client_lib version"
-        );
-
-        // All version strings should be non-empty
-        for (key, value) in &versions {
-            assert!(!value.is_empty(), "version for '{key}' should not be empty");
+        let endpoints = session.list_endpoints().unwrap();
+        let err = endpoints[0]
+            .load_model_from_file("/nonexistent/model.dvm".as_ref())
+            .expect_err("loading a missing file must fail");
+        println!("load of a missing model: {err}");
+        match err {
+            Error::Ara2 { name, detail, .. } => {
+                assert!(name.starts_with("DV_"), "{name}");
+                if session.abi() != crate::Abi::V1_1 {
+                    assert!(detail.is_some(), "1.3+ should give a detailed status");
+                }
+            }
+            other => panic!("expected Error::Ara2, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_versions_report_running_components() {
+        let session = crate::tests::test_session();
+        let running = session
+            .versions()
+            .expect("should retrieve running versions");
+        assert!(
+            running.iter().any(|v| v.component == Component::Proxy),
+            "{running:?}"
+        );
+        assert!(
+            running.iter().any(|v| v.component == Component::ClientLib),
+            "{running:?}"
+        );
+        let firmware: Vec<_> = running
+            .iter()
+            .filter(|v| v.component == Component::Firmware)
+            .collect();
+        assert!(
+            firmware.len() <= 1,
+            "running firmware should be one entry: {running:?}"
+        );
+        let supported = session
+            .supported_versions()
+            .expect("should retrieve supported versions");
+        assert!(!supported.is_empty());
     }
 }

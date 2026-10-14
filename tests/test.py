@@ -17,10 +17,20 @@ class TestPublicSurface(unittest.TestCase):
 
     def test_classes_present(self):
         for name in [
-            "Session", "Endpoint", "Model", "InferRequest",
-            "InputQuantization", "InputPreprocess", "OutputQuantization",
-            "InputTensorInfo", "OutputTensorInfo", "ModelTiming",
-            "DvmMetadata", "Ara2Info",
+            "Session",
+            "Endpoint",
+            "Model",
+            "InferRequest",
+            "InputQuantization",
+            "InputPreprocess",
+            "OutputQuantization",
+            "InputTensorInfo",
+            "OutputTensorInfo",
+            "ModelTiming",
+            "DvmMetadata",
+            "Ara2Info",
+            "ComponentVersion",
+            "proxy_endpoint",
         ]:
             self.assertTrue(hasattr(ara2, name), f"missing {name}")
 
@@ -33,6 +43,47 @@ class TestSessionErrors(unittest.TestCase):
     def test_invalid_tcp_ip_raises(self):
         with self.assertRaises(Exception):
             ara2.Session.create_via_tcp_ipv4_socket("not.an.ip", 1234)
+
+    def test_direct_errors_have_status_attributes(self):
+        with self.assertRaises(ara2.Ara2Error) as ctx:
+            ara2.Session.create_via_tcp_ipv4_socket("not.an.ip", 1234)
+        for attr in ("code", "name", "sub_code", "component", "severity"):
+            self.assertIsNone(getattr(ctx.exception, attr), attr)
+
+
+class TestVersionsAndTransport(unittest.TestCase):
+    """Need a running proxy; skipped when none is reachable."""
+
+    @classmethod
+    def setUpClass(cls):
+        try:
+            ara2.proxy_endpoint()
+        except ara2.ProxyError as e:
+            raise unittest.SkipTest(f"no proxy endpoint: {e}")
+        cls.session = ara2.Session.connect()
+
+    def test_versions_and_transport(self):
+        running = self.session.versions()
+        names = [v.component for v in running]
+        self.assertIn("proxy", names)
+        self.assertIn("client_lib", names)
+        self.assertLessEqual(names.count("firmware"), 1, names)
+        self.assertGreaterEqual(
+            len(self.session.supported_versions()), len(running) - 1
+        )
+        self.assertIsInstance(self.session.supports_fd_passing, bool)
+        self.assertIn(self.session.abi, (ara2.Abi.V1_1, ara2.Abi.V1_3, ara2.Abi.V3_0))
+
+    def test_errors_carry_status_name(self):
+        endpoints = self.session.list_endpoints()
+        if not endpoints:
+            self.skipTest("no endpoints")
+        endpoint = endpoints[0]
+        with self.assertRaises(ara2.Ara2Error) as ctx:
+            endpoint.load_model("/nonexistent/model.dvm")
+        self.assertIsNotNone(ctx.exception.name)
+        self.assertTrue(ctx.exception.name.startswith("DV_"), ctx.exception.name)
+        self.assertIsInstance(ctx.exception.code, int)
 
 
 if __name__ == "__main__":

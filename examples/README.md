@@ -144,7 +144,7 @@ export BINDGEN_EXTRA_CLANG_ARGS="--target=aarch64-poky-linux --sysroot=$SYSROOT 
 cargo build --release --target aarch64-unknown-linux-gnu --example yolov8_live
 ```
 
-### Run (imx95-frdm with on-board `os08a20` MIPI-CSI sensor)
+### Run (FRDM i.MX 95 with on-board `os08a20` MIPI-CSI sensor)
 
 ```bash
 export XDG_RUNTIME_DIR=/run/user/0
@@ -176,7 +176,7 @@ Only the `nxp/neo` pipeline exposes NV12, YUYV, NV16, UYVY, RGB, etc.
 | `--threshold` | 0.50 | Detection confidence threshold |
 | `--iou` | 0.45 | NMS IoU threshold |
 | `--color-mode` | `class` | Mask coloring: `class`, `instance`, or `track` |
-| `--socket` | `$ARA2_SOCKET`, else `/var/run/proxy.sock` | ARA-2 proxy UNIX socket path |
+| `--socket` | none: the proxy is found as `Session::connect()` does | ARA-2 proxy UNIX socket path |
 
 On i.MX95 with the Neo ISP, only `1920x1080` and `3840x2160` are supported
 capture sizes; other values will be silently adjusted.
@@ -201,7 +201,7 @@ pip install edgefirst-ara2 'edgefirst-decoder>=0.31' 'edgefirst-image>=0.31' \
 The `--system-site-packages` flag is required to pick up the libcamera
 Python bindings from system packages.
 
-### Run (imx95-frdm with on-board `os08a20` MIPI-CSI sensor)
+### Run (FRDM i.MX 95 with on-board `os08a20` MIPI-CSI sensor)
 
 ```bash
 export XDG_RUNTIME_DIR=/run/user/0
@@ -230,11 +230,11 @@ See the Rust `yolov8_live` section above for why
 | `--threshold` | 0.50 | Detection confidence threshold |
 | `--iou` | 0.45 | NMS IoU threshold |
 | `--color-mode` | `class` | Mask coloring: `class`, `instance`, or `track` |
-| `--socket` | `$ARA2_SOCKET`, else `/var/run/proxy.sock` | ARA-2 proxy UNIX socket path |
+| `--socket` | none: the proxy is found as `Session::connect()` does | ARA-2 proxy UNIX socket path |
 
 ---
 
-## Performance (measured on imx95-frdm)
+## Performance (measured on FRDM i.MX 95)
 
 ### yolov8n-seg (nano) at 1920x1080
 
