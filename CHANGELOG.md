@@ -7,9 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- DVAPI 3.0 (Kinara arart r3.0) support, alongside DVAPI 1.1 and 1.3.
+- `Abi::V3_0` and `Abi::major()`.
+- `Session::supported_versions()`, listing every component version the proxy supports; a component may appear more than once.
+- `Session::supports_fd_passing()`.
+- `ara2::proxy_endpoint()`, reporting the endpoint `Session::connect()` would open.
+- `Component`, `ComponentVersion`, `StatusDetail`, `StatusComponent` and `Severity`.
+- `Error::FdPassingUnavailable`, `Error::NoProxyFound`, `Error::InvalidSocketOverride`, `Error::AbiOverrideRejected` and `Error::Unsupported`.
+- `ARA2_SOCKET` accepts `unix:/path` and `tcp:IPV4:PORT` as well as a bare socket path.
+- `crates/ara2-sys/update.sh --verify <1.1|1.3|3.0> <sdk-include-dir>` and the `verify_sdk` test, checking ara2-sys declarations against an SDK's headers (`ARA2_SDK_V1_1`, `ARA2_SDK_V1_3`, `ARA2_SDK_V3_0`, `ARA2_SDK_REQUIRE`).
+- Python: `proxy_endpoint()`, `Session.supports_fd_passing`, `Session.supported_versions()`, `ComponentVersion`, `Abi.V3_0`, and `code`, `name`, `sub_code`, `component` and `severity` attributes on every exception (`None` where they do not apply). `NoProxyFound` and `InvalidSocketOverride` raise `ProxyError`, `FdPassingUnavailable` raises `TensorError`, and `ARA2_ABI` refusals raise `LibraryError`.
+
+### Changed (BREAKING)
+
+- `ara2-sys` exposes only its own declarations, split into the crate root (shared items, with version-specific structs opaque) and the `v1_1`, `v1_3` and `v3_0` modules.
+- `Session::versions()` returns the running component versions as `Vec<ComponentVersion>`.
+- `Error::Ara2` is a struct variant with `code`, `name` and `detail`, displayed as `NAME (code)`. On DVAPI 1.3 and 3.0, model load, submit and wait errors carry the detailed status.
+- `impl From<ara2_sys::dv_status_code> for Error` is removed; status codes are reported through `Error::Ara2`, named by the library.
+- `ara2::socket_path()` is replaced by `ara2::proxy_endpoint()`.
+- `ARA2_ABI` is refused with `Error::AbiOverrideRejected` when it contradicts the reported version, and is honoured for an unrecognised version only within the same major version. A refused override stops the library search.
+- Python: `Session.versions()` returns `list[ComponentVersion]`.
+- Python: `edgefirst_ara2.socket_path()` is removed in favour of `proxy_endpoint()`.
+
+### Changed
+
+- `Session::connect()` falls back to discovered proxies, preferring UNIX endpoints over TCP, and reports a failed discovery in `Error::NoProxyFound`.
+- `Session::connect()` logs a warning when it selects a TCP endpoint.
+- On a TCP session, `memory: None` allocates heap (`TensorMemory::Mem`) tensors, and an explicit `Shm` or `DmaBuf` fails with `Error::FdPassingUnavailable` before anything is allocated.
+- Dropping a pending `InferRequest` (including after `wait()` returns an error, and a garbage-collected Python `InferRequest`) waits for it to finish, up to 4 waits of `DEFAULT_TIMEOUT_MS` (about 4 s), before freeing it.
+- The yolov8 examples run on sessions that cannot pass file descriptors: they allocate heap tensors and copy the model input and outputs around each inference, keeping the zero-copy DMA-BUF path where it is available.
+- The examples' `--socket` flag is optional; without it the proxy is found as `Session::connect()` does.
+
+### Removed
+
+- `Error::UnknownProductType`; unknown product types are reported as `Component::Other`.
+- The vendored SDK headers.
+
 ### Fixed
 
 - Shared-memory and DMA-BUF tensors are now unregistered from the proxy when dropped. Previously every registration leaked a proxy-side file descriptor and mapping, so repeated `allocate_tensors`, `allocate_input_set` or `allocate_output_set` calls grew the proxy without bound. A pending `InferRequest` keeps the registrations it uses alive until it completes.
+- `Session::versions()` reported the last supported firmware rather than the running one.
+- `Session::versions()` leaked the version list.
+- Dropping an in-flight `InferRequest` made the next submit fail with `Ara2(402)` because the model was still busy.
+- `Endpoint::statistics()` no longer leaks the library's buffer when it reports no entries, and `Endpoint::dram_statistics()` returns `Error::NullPointer` instead of dereferencing a null buffer.
 
 ## [0.22.0] - 2026-10-12
 
