@@ -475,8 +475,9 @@ impl Model {
     // Introspection
     // ========================================================================
 
-    /// The DVAPI version the model was compiled for, as
-    /// "major.minor.patch.patch_minor".
+    /// The model format version the model was compiled to, as
+    /// "major.minor.patch.patch_minor": 2.0.0.0 for DVAPI 1.x runtimes,
+    /// 3.0.0.0 for 3.x. Its major is what read_model_format() returns.
     #[getter]
     fn version(&self) -> PyResult<String> {
         Ok(self.inner_ref()?.version().to_string())

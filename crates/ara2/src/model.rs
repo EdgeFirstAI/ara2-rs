@@ -918,7 +918,9 @@ impl Model {
         unsafe { crate::raw::model_fields(self.session.abi, self.ptr) }
     }
 
-    /// The DVAPI version the model was compiled for.
+    /// The model format version the model was compiled to: 2.0.0.0 for
+    /// DVAPI 1.x runtimes, 3.0.0.0 for 3.x. Its major is what
+    /// [`crate::read_model_format`] reads from the file.
     pub fn version(&self) -> crate::DvapiVersion {
         crate::version::dvapi_version(self.fields().version)
     }

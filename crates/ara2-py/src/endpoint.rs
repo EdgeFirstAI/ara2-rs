@@ -69,6 +69,11 @@ impl Endpoint {
     ///
     /// Returns:
     ///     Model: Loaded model ready for inference
+    ///
+    /// Raises:
+    ///     HardwareError: If the client library could not parse the file
+    ///         (code 520), with ``compatibility`` and ``model_format`` set
+    ///         and a message saying whether to reconvert the model
     fn load_model(&self, model_path: PathBuf) -> PyResult<Model> {
         let model = self
             .0

@@ -209,9 +209,21 @@ Requires a `libaraclient` implementing DVAPI 1.1, 1.3 or 3.0. The following must
   | NXP `imx-nxp-ara2` (rt-sdk-ara2 2.1.1) | 1.3 | UNIX `/var/run/proxy.sock` |
   | Kinara arart r3.0 | 3.0 | TCP `127.0.0.1:5000` (sample config); UNIX with `interface_type: "SOCKET"` |
 
-  [`open_library`](crates/ara2/src/lib.rs) probes the loaded library with `dv_get_client_lib_version` and reads every version-specific struct at that version's layout; 3.0 moves fields within `dv_model`, so no one layout serves all three. A proxy accepts only clients of its own DVAPI version, so a system carries one library. Models are compiled for one runtime generation too: a model compiled for DVAPI 1.3 fails to load on 3.0 with `DV_MODEL_LOAD_FAILURE`. The library's name has also differed in every packaging so far and there is no soname to rely on, so the architecture-suffixed name for the target is tried first (`libaraclient_aarch64.so`, `libaraclient_x86_64.so`), then `libaraclient.so` and `libaraclient.so.1`.
+  [`open_library`](crates/ara2/src/lib.rs) probes the loaded library with `dv_get_client_lib_version` and reads every version-specific struct at that version's layout; 3.0 moves fields within `dv_model`, so no one layout serves all three. A proxy accepts only clients of its own DVAPI version, so a system carries one library. Models are compiled for one runtime generation too: see [Model compatibility](#model-compatibility). The library's name has also differed in every packaging so far and there is no soname to rely on, so the architecture-suffixed name for the target is tried first (`libaraclient_aarch64.so`, `libaraclient_x86_64.so`), then `libaraclient.so` and `libaraclient.so.1`.
 - **The proxy service** — provides NPU access, must be running before connecting. It is `rt-sdk-ara2.service` under NXP's packaging and `ara2.service` under meta-kinara's.
 - **ARA-2 hardware** — PCIe accelerator card visible via `lspci`
+
+### Model compatibility
+
+A `.dvm` is compiled for one runtime generation. Converters built on the DVAPI 1.x SDKs write model format 2, which loads on DVAPI 1.x runtimes only (verified on 1.1 and 1.3); converters built on the DVAPI 3.0 SDK write format 3, which loads on DVAPI 3.x only. The client library rejects a model of the other generation with `DV_MODEL_LOAD_FAILURE` (520) and logs only that it could not parse the file, exactly as it does for a damaged one.
+
+`ara2::read_model_format` and `read_model_format_from_file` read the format from a model without loading it (the file reader reads only the parts that hold it), returning `None` when the file's structure is not recognised. `ModelCompatibility::new(format, session.abi())` compares it with the runtime. `Endpoint::load_model_from_file` does both before loading, logs a warning for a model of the other generation, and turns a `DV_MODEL_LOAD_FAILURE` into `Error::ModelLoadFailed`, which keeps the library's status and says which case applies:
+
+```text
+DV_MODEL_LOAD_FAILURE (520): yolov8n-det-int16.dvm is model format 2 (built for DVAPI 1.x runtimes; converted by ara2-converter 2.5.0), but this runtime is DVAPI 3.0; reconvert it with a converter built on the DVAPI 3.x SDK
+```
+
+When the format matches the runtime the message says the file may be damaged, and when the format cannot be read it names both causes. The converter and SDK versions come from the `ara2` section of the embedded `edgefirst.json` when present (`Ara2Info::converter_version`, `sdk_version`, `dvm_format`).
 
 ### Connecting
 

@@ -107,6 +107,22 @@ ARA2_SDK_REQUIRE=all cargo test -p ara2-sys --test verify_sdk
 
 Or one version at a time with `crates/ara2-sys/update.sh --verify <1.1|1.3|3.0> <dir>`, which also prints what the SDK declares that ara2-sys does not. Unset versions are skipped unless `ARA2_SDK_REQUIRE` names them.
 
+### Model format tests
+
+`dvm_format` and `error` have offline tests over synthetic buffers. Two hardware tests cover the format check: `model_format_matches_loaded_version` (needs `ARA2_TEST_MODEL`) checks that the format read from the file equals the major version of `Model::version()` after loading, and `foreign_model_load_explains_mismatch` loads `ARA2_TEST_FOREIGN_MODEL`, a model built for the other runtime generation than the board's, and expects `Error::ModelLoadFailed` with a `Mismatch` and status 520. It skips when the variable is unset. `tests/test.py` has the same pair in `TestModelFormat`.
+
+```bash
+ARA2_TEST_MODEL=<model for this runtime> ARA2_TEST_FOREIGN_MODEL=<model for the other one> \
+  cargo test -p ara2 -- model_format foreign_model --test-threads=1
+```
+
+`ARA2_TEST_FORMAT_FILES` runs the reader over real files without hardware, as comma-separated `path=format` pairs (`none` where the format should be unrecognised):
+
+```bash
+ARA2_TEST_FORMAT_FILES=yolov8n-det-int16.dvm=2,truncated.dvm=none \
+  cargo test -p ara2 offline_real_files_when_given -- --nocapture
+```
+
 ### Python tests
 
 `tests/test.py` covers the Python bindings, including `TestTelemetry`, which needs `ARA2_TEST_MODEL` and skips without it. It is plain `unittest`, so `python test.py` works without pytest. Install the wheel into a virtual environment on the target rather than the system Python:
@@ -131,7 +147,7 @@ scp target/aarch64-unknown-linux-gnu/release/examples/telemetry <target>:ara2-rs
 ssh <target> 'cd ~/ara2-rs-test && ./telemetry <model.dvm> 200 100'
 ```
 
-Measured on the DVAPI 1.3 board (i.MX 95, `yolov8n-det-int16`), three runs: 126.8, 126.3 and 125.8 fps alone against 125.7, 126.4 and 126.0 fps while sampling every 100 ms, with a `statistics()` call taking 1.05 to 1.11 ms on average and at most 1.5 ms. On the DVAPI 1.1 board (i.MX 8M Plus, `yolov8n-det-int16`), three runs: 112.1, 111.3 and 110.5 fps alone against 111.1, 111.0 and 111.9 fps while sampling, with a `statistics()` call taking 1.14 to 1.38 ms on average and at most 2.6 ms. On the DVAPI 3.0 board (i.MX 95, proxy over TCP, a 3.0-compiled detection model), three runs: 29.9, 29.9 and 29.8 fps alone against 30.0, 29.9 and 29.9 fps while sampling, with a `statistics()` call taking 7.4 to 10.0 ms on average and at most 40 ms. A model compiled for DVAPI 1.3 fails to load on 3.0 with `DV_MODEL_LOAD_FAILURE`.
+Measured on the DVAPI 1.3 board (i.MX 95, `yolov8n-det-int16`), three runs: 126.8, 126.3 and 125.8 fps alone against 125.7, 126.4 and 126.0 fps while sampling every 100 ms, with a `statistics()` call taking 1.05 to 1.11 ms on average and at most 1.5 ms. On the DVAPI 1.1 board (i.MX 8M Plus, `yolov8n-det-int16`), three runs: 112.1, 111.3 and 110.5 fps alone against 111.1, 111.0 and 111.9 fps while sampling, with a `statistics()` call taking 1.14 to 1.38 ms on average and at most 2.6 ms. On the DVAPI 3.0 board (i.MX 95, proxy over TCP, a 3.0-compiled detection model), three runs: 29.9, 29.9 and 29.8 fps alone against 30.0, 29.9 and 29.9 fps while sampling, with a `statistics()` call taking 7.4 to 10.0 ms on average and at most 40 ms. A model compiled for DVAPI 1.3 fails to load on 3.0 with `DV_MODEL_LOAD_FAILURE`, reported as `Error::ModelLoadFailed` with a `Mismatch`.
 
 ### With nextest
 
@@ -150,6 +166,8 @@ RUST_LOG=debug cargo test -p ara2 -- --nocapture
 | Variable | Description |
 |----------|-------------|
 | `ARA2_TEST_MODEL` | Path to a `.dvm` model file for model tests |
+| `ARA2_TEST_FOREIGN_MODEL` | Path to a `.dvm` built for the other runtime generation than the board's, for the load-failure test |
+| `ARA2_TEST_FORMAT_FILES` | `path=format` pairs (`none` for unrecognised) for the offline real-file format test |
 | `ARA2_SOCKET` | Pins the proxy endpoint: a UNIX socket path, `unix:/path` or `tcp:IPV4:PORT` |
 | `ARA2_ABI` | Forces a struct layout (`1.1`, `1.3`, `3.0`); see the README for when it is honoured |
 | `ARA2_SDK_V1_1`, `ARA2_SDK_V1_3`, `ARA2_SDK_V3_0` | SDK include directories for `verify_sdk` |
