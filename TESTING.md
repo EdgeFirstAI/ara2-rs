@@ -31,7 +31,7 @@ A new test that needs no hardware must be named `offline` (or sit in an `offline
 
 | Board and runtime | DVAPI | Library | Proxy transport | Coverage |
 |-------------------|-------|---------|-----------------|----------|
-| i.MX 8M Plus FRDM with Kinara runtime 1.2.1 | 1.1 | system | UNIX `/var/run/ara2.sock` | SDK verifier and offline layout tests only for this release |
+| i.MX 8M Plus FRDM with Kinara runtime 1.2.1 | 1.1 | system | UNIX `/var/run/ara2.sock` | Full suite and Python tests |
 | i.MX 95 board with NXP rt-sdk-ara2 2.1.1 | 1.3 | `/usr/lib/libaraclient_aarch64.so` | UNIX `/var/run/proxy.sock` | Full suite and Python tests |
 | i.MX 95 FRDM with arart r3.0 | 3.0 | `LD_LIBRARY_PATH=/opt/ara2/art/linux/aarch64/lib` | TCP `127.0.0.1:5000` by default, UNIX with `interface_type: "SOCKET"` | Full suite and Python tests over TCP |
 
