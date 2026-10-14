@@ -179,6 +179,8 @@ cargo nextest run -p ara2
 | `ARA2_ABI` | Forces a layout (`1.1`, `1.3`, `3.0`) under the same-major rule |
 | `ARA2_SDK_V1_1` / `_V1_3` / `_V3_0`, `ARA2_SDK_REQUIRE` | SDK include directories for `ara2-sys`'s `verify_sdk` test |
 | `ARA2_TEST_MODEL` | Path to a `.dvm` model file for model tests |
+| `ARA2_TEST_FOREIGN_MODEL` | Path to a `.dvm` built for the other runtime generation, for the load-failure test |
+| `ARA2_TEST_FORMAT_FILES` | `path=format` pairs for the offline real-file format test |
 | `RUST_LOG` | Log level: `debug`, `info`, `warn`, `error` |
 
 ## On-Target Debugging

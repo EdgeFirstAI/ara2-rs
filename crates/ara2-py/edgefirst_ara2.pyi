@@ -60,7 +60,12 @@ class Ara2Error(RuntimeError):
     ``name`` (the library's name for it) are set. On DVAPI 1.3 and later,
     calls with a detailed-status variant also set ``sub_code``,
     ``component`` (e.g. ``"proxy"``) and ``severity`` (e.g.
-    ``"retryable"``). Attributes that do not apply are ``None``.
+    ``"retryable"``). When the client library could not parse a model file
+    (``DV_MODEL_LOAD_FAILURE``), ``compatibility`` says whether the model's
+    format suits the runtime generation (``"mismatch"``, ``"matching"`` or
+    ``"unknown"``) and ``model_format`` is the format read from the file
+    (2 or 3), and the message says what to do about it. Attributes that do not
+    apply are ``None``.
     """
 
     code: int | None
@@ -68,6 +73,8 @@ class Ara2Error(RuntimeError):
     sub_code: int | None
     component: str | None
     severity: str | None
+    model_format: int | None
+    compatibility: Literal["mismatch", "matching", "unknown"] | None
 
 class LibraryError(Ara2Error):
     """Failed to load the ARA-2 client library.
@@ -833,9 +840,16 @@ class Endpoint:
         Args:
             model_path: Path to the compiled model file (.dvm)
 
+        The file's model format is read first, and a model built for the
+        other runtime generation is logged as a warning before loading.
+
         Raises:
-            ModelError: If the file is not a valid DVM or is incompatible.
-            HardwareError: If the endpoint has insufficient DRAM.
+            HardwareError: If the client library could not parse the file
+                (code 520, ``DV_MODEL_LOAD_FAILURE``), with
+                ``compatibility`` and ``model_format`` set and a message
+                saying whether to reconvert the model; or if the endpoint
+                has insufficient DRAM.
+            Ara2Error: Or one of its subclasses, for any other failure.
         """
         ...
 
@@ -1073,8 +1087,9 @@ class Model:
 
     @property
     def version(self) -> str:
-        """DVAPI version the model was compiled for, as
-        ``"major.minor.patch.patch_minor"``."""
+        """Model format version the model was compiled to, as
+        ``"major.minor.patch.patch_minor"``: 2.0.0.0 for DVAPI 1.x runtimes,
+        3.0.0.0 for 3.x. Its major is what ``read_model_format()`` returns."""
         ...
 
     @property
@@ -1240,6 +1255,23 @@ def read_labels(path: str | os.PathLike[str]) -> list[str]:
 
 def has_metadata(path: str | os.PathLike[str]) -> bool:
     """Check if a DVM file has embedded metadata."""
+    ...
+
+def read_model_format(path: str | os.PathLike[str]) -> int | None:
+    """Read the model format a DVM file was compiled to.
+
+    Converters built on the DVAPI 1.x SDKs write format 2 and those built
+    on the DVAPI 3.0 SDK write format 3. Format 2 models
+    load on DVAPI 1.x runtimes only, format 3 on DVAPI 3.x only. Only the
+    parts of the file that hold the format are read.
+
+    Returns:
+        The format, or ``None`` when the file's structure is not
+        recognised (it is not then guessed at).
+
+    Raises:
+        MetadataError: If the file cannot be read.
+    """
     ...
 
 class DvmMetadata:
@@ -1452,8 +1484,8 @@ class Ara2Info:
     """Kinara-specific metadata from the ``ara2`` section of ``edgefirst.json``.
 
     Exposes ARA-2 / Kinara-specific fields carried in the DVM's
-    EdgeFirst metadata. Currently only the quantization mode is
-    surfaced, but more fields may be added in future releases.
+    EdgeFirst metadata: the quantization mode and the conversion
+    provenance. Every field is ``None`` when the metadata does not carry it.
     """
 
     @property
@@ -1463,6 +1495,22 @@ class Ara2Info:
         Returns ``None`` if the DVM's metadata does not carry a
         ``qmode`` field in its ``ara2`` section.
         """
+        ...
+    @property
+    def converter_version(self) -> str | None:
+        """Version of the converter that produced the model.
+
+        Read from ``converter_version``, or from ``version`` where a
+        converter wrote that instead.
+        """
+        ...
+    @property
+    def sdk_version(self) -> str | None:
+        """Version of the Kinara SDK the converter was built on."""
+        ...
+    @property
+    def dvm_format(self) -> int | None:
+        """Model format the converter recorded (2 for DVAPI 1.x runtimes, 3 for 3.x)."""
         ...
 
 __all__ = [
@@ -1516,6 +1564,7 @@ __all__ = [
     "read_metadata",
     "read_labels",
     "has_metadata",
+    "read_model_format",
     "DvmMetadata",
     "Ara2Info",
     "DatasetInfo",

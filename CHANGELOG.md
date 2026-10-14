@@ -29,6 +29,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Session::set_log_level()` and `LogLevel` (DVAPI 1.3 and 3.0).
 - `telemetry` example (Rust and Python), printing endpoint, model and per-inference telemetry and measuring the cost of sampling statistics.
 - Python: `InferenceStats`, `Clocks`, `EndpointStatistics`, `Endpoint.statistics()`, `Endpoint.info()` with `EndpointInfo`, `ChipInfo`, `DramInfo`, `Interface` and `InterfaceKind`, `Endpoint.is_busy()`, `Model.version()`, `Model.name()`, `Model.model_type()` with `ModelType`, `Session.set_log_level()` with `LogLevel`, and `UnsupportedError`, raised for a call the loaded DVAPI version lacks.
+- `ara2::read_model_format()` and `ara2::read_model_format_from_file()`, reading a `.dvm`'s model format number (2 from the DVAPI 1.x SDKs, 3 from the 3.0 SDK) without loading it. The format is read from the model's FlatBuffers header and validated; a file it cannot validate reads as `None`.
+- `Error::ModelLoadFailed` and `ModelCompatibility`. A model load that fails with `DV_MODEL_LOAD_FAILURE` now reports whether the model's format matches the running DVAPI generation, and on a mismatch says to reconvert the model with a converter built on the matching SDK. When the model's `edgefirst.json` records them, the message names the converter and SDK versions.
+- `Endpoint::load_model_from_file()` logs a warning before loading a model whose format does not match the runtime.
+- `Ara2Info::converter_version`, `Ara2Info::sdk_version` and `Ara2Info::dvm_format`, read from `edgefirst.json` when present.
+- Python: `read_model_format()`, and `compatibility` and `model_format` attributes on the exception raised for a failed model load.
 
 ### Changed (BREAKING)
 
@@ -44,6 +49,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `EndpointStatistics` reports its clocks as `clocks: Clocks` instead of `sys_clk_mhz` and `dram_clk_mhz`, and is `#[non_exhaustive]`, as is `DramStatistics`.
 - Python: `Model.run()` and `InferRequest.wait()` return `InferenceStats`.
 - Python: times are `float` seconds throughout. `ModelTiming` has `run_time`, `input_time` and `output_time` instead of the integer microsecond `run_time_us`, `input_time_us` and `output_time_us`; `Model.set_timeout(timeout)` replaces `set_timeout_ms(timeout_ms)`, and `InferRequest.wait(timeout=1.0)` replaces `wait(timeout_ms=1000)`. A negative, non-finite or out-of-range timeout raises `ValueError`.
+- A model load failing with `DV_MODEL_LOAD_FAILURE` returns `Error::ModelLoadFailed`, carrying the `Error::Ara2` status, instead of `Error::Ara2`.
+- `Ara2Info` is `#[non_exhaustive]`.
 
 ### Changed
 

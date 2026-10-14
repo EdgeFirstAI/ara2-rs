@@ -58,6 +58,26 @@ pub fn has_metadata(path: PathBuf) -> PyResult<bool> {
     Ok(ara2::has_metadata(&data))
 }
 
+/// Read the model format a DVM file was compiled to.
+///
+/// Converters built on the DVAPI 1.x SDKs write format 2 and those built on
+/// the DVAPI 3.0 SDK write format 3. Only the parts of the file that hold
+/// the format are read.
+///
+/// Args:
+///     path: Path to the .dvm model file (str or os.PathLike)
+///
+/// Returns:
+///     int or None: The format (2 or 3), or None when the file's structure
+///     is not recognised
+///
+/// Raises:
+///     MetadataError: If the file cannot be read
+#[pyfunction]
+pub fn read_model_format(path: PathBuf) -> PyResult<Option<u8>> {
+    ara2::read_model_format_from_file(&path).map_err(meta_err)
+}
+
 /// EdgeFirst metadata embedded in a DVM model file.
 #[pyclass(module = "edgefirst_ara2")]
 pub struct DvmMetadata(ara2::DvmMetadata);
@@ -397,12 +417,43 @@ impl Ara2Info {
         self.inner.qmode
     }
 
-    fn __repr__(&self) -> String {
-        match self.inner.qmode {
-            Some(q) => format!("Ara2Info(qmode={q})"),
-            None => "Ara2Info(qmode=None)".to_string(),
-        }
+    /// Version of the converter that produced the model.
+    #[getter]
+    fn converter_version(&self) -> Option<&str> {
+        self.inner.converter_version.as_deref()
     }
+
+    /// Version of the Kinara SDK the converter was built on.
+    #[getter]
+    fn sdk_version(&self) -> Option<&str> {
+        self.inner.sdk_version.as_deref()
+    }
+
+    /// Model format the converter recorded (2 for DVAPI 1.x runtimes, 3
+    /// for DVAPI 3.x).
+    #[getter]
+    fn dvm_format(&self) -> Option<u32> {
+        self.inner.dvm_format
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "Ara2Info(qmode={}, converter_version={}, sdk_version={}, dvm_format={})",
+            py_opt(self.inner.qmode.map(|q| q.to_string())),
+            py_opt(
+                self.inner
+                    .converter_version
+                    .as_ref()
+                    .map(|s| format!("{s:?}"))
+            ),
+            py_opt(self.inner.sdk_version.as_ref().map(|s| format!("{s:?}"))),
+            py_opt(self.inner.dvm_format.map(|f| f.to_string())),
+        )
+    }
+}
+
+fn py_opt(value: Option<String>) -> String {
+    value.unwrap_or_else(|| "None".to_owned())
 }
 
 /// Compilation information from metadata.

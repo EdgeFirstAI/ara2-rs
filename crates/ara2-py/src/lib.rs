@@ -90,6 +90,7 @@ fn init(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(metadata::read_metadata, m)?)?;
     m.add_function(wrap_pyfunction!(metadata::read_labels, m)?)?;
     m.add_function(wrap_pyfunction!(metadata::has_metadata, m)?)?;
+    m.add_function(wrap_pyfunction!(metadata::read_model_format, m)?)?;
 
     // Session helpers
     m.add_function(wrap_pyfunction!(proxy_endpoint, m)?)?;

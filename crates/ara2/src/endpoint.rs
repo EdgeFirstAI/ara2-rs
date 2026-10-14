@@ -29,11 +29,14 @@ use ara2_sys::{
 };
 
 use crate::{
-    Abi, Clocks, EndpointInfo, Model,
+    Abi, Clocks, EndpointInfo, Model, ModelCompatibility,
     error::Error,
     session::{EndpointList, SessionInner, VersionLib, status_result},
     telemetry::{endpoint_info, mhz},
 };
+
+/// `dv_status_code_t` for a model the client library could not parse.
+const DV_MODEL_LOAD_FAILURE: i32 = 520;
 
 /// The operational state of an NPU endpoint.
 ///
@@ -382,7 +385,33 @@ impl Endpoint {
     /// # Returns
     /// A `Model` that can be used for inference. The model keeps the endpoint
     /// (and session) alive through reference counting.
+    ///
+    /// # Errors
+    /// When the client library cannot parse the file
+    /// (`DV_MODEL_LOAD_FAILURE`), the result is [`Error::ModelLoadFailed`],
+    /// which carries the library's status and says whether the model's
+    /// format was built for this runtime generation. The model format is
+    /// read before loading, and a model built for the other generation is
+    /// also logged as a warning.
     pub fn load_model_from_file(&self, path: &Path) -> Result<Model, Error> {
+        let session = &*self.session;
+        let format = crate::read_model_format_from_file(path);
+        let compatibility = match &format {
+            Ok(format) => ModelCompatibility::new(*format, session.abi),
+            Err(_) => ModelCompatibility::Unknown,
+        };
+        if let ModelCompatibility::Mismatch {
+            model_format,
+            runtime,
+        } = compatibility
+        {
+            log::warn!(
+                "{} is model format {model_format}, which is not built for this DVAPI {runtime} \
+                 runtime; reconvert it with a converter built on the DVAPI {}.x SDK",
+                path.display(),
+                runtime.major()
+            );
+        }
         let model_name = match path.file_stem() {
             Some(name) => name.to_string_lossy().to_string(),
             None => "model".to_string(),
@@ -394,7 +423,6 @@ impl Endpoint {
             .map_err(|_| Error::NullPointer("Invalid model name".to_owned()))?;
 
         let mut model: *mut dv_model = std::ptr::null_mut();
-        let session = &*self.session;
         let path_ptr = path_cstr.as_ptr() as *const c_char;
         let name_ptr = name_cstr.as_ptr() as *const c_char;
         let priority = DV_MODEL_PRIORITY_LEVEL_DV_MODEL_PRIORITY_LEVEL_DEFAULT;
@@ -451,6 +479,24 @@ impl Endpoint {
 
         if let Err(err) = result {
             log::error!("dv_model_load_from_file of {}: {err}", path.display());
+            // A file that could not be opened here is not a parse failure,
+            // so its status is returned as it came.
+            if format.is_ok()
+                && matches!(err, Error::Ara2 { code, .. } if code == DV_MODEL_LOAD_FAILURE)
+            {
+                let ara2 = crate::dvm_metadata::read_ara2_info_from_file(path);
+                let (converter_version, sdk_version) = ara2
+                    .map(|a| (a.converter_version, a.sdk_version))
+                    .unwrap_or_default();
+                return Err(Error::ModelLoadFailed {
+                    status: Box::new(err),
+                    path: path.to_path_buf(),
+                    runtime: session.abi,
+                    compatibility,
+                    converter_version,
+                    sdk_version,
+                });
+            }
             return Err(err);
         }
 
@@ -486,6 +532,51 @@ mod tests {
                 );
             }
             Err(e) => panic!("is_busy: {e}"),
+        }
+    }
+
+    #[test]
+    fn model_format_matches_loaded_version() {
+        let path = crate::tests::test_model_path();
+        let format = crate::read_model_format_from_file(&path).unwrap();
+        let session = crate::tests::test_session();
+        let endpoint = session.list_endpoints().unwrap().remove(0);
+        let model = endpoint.load_model_from_file(&path).unwrap();
+        assert_eq!(format, Some(model.version().major), "{}", path.display());
+        assert!(matches!(
+            ModelCompatibility::new(format, session.abi()),
+            ModelCompatibility::Matching { .. }
+        ));
+    }
+
+    /// `ARA2_TEST_FOREIGN_MODEL` names a model built for the other runtime
+    /// generation than the one under test.
+    #[test]
+    fn foreign_model_load_explains_mismatch() {
+        let Ok(path) = std::env::var("ARA2_TEST_FOREIGN_MODEL") else {
+            eprintln!("ARA2_TEST_FOREIGN_MODEL not set; skipping");
+            return;
+        };
+        let session = crate::tests::test_session();
+        let endpoint = session.list_endpoints().unwrap().remove(0);
+        let err = endpoint
+            .load_model_from_file(path.as_ref())
+            .expect_err("a model of the other generation must not load");
+        eprintln!("{err}");
+        match &err {
+            Error::ModelLoadFailed {
+                status,
+                compatibility: ModelCompatibility::Mismatch { runtime, .. },
+                ..
+            } => {
+                assert!(
+                    matches!(**status, Error::Ara2 { code: 520, .. }),
+                    "{status:?}"
+                );
+                assert_eq!(*runtime, session.abi());
+                assert!(err.to_string().contains("reconvert"), "{err}");
+            }
+            other => panic!("expected ModelLoadFailed with a mismatch, got {other:?}"),
         }
     }
 

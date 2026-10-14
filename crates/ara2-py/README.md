@@ -233,6 +233,25 @@ if metadata:
 labels = edgefirst_ara2.read_labels("model.dvm")
 ```
 
+### Model compatibility
+
+A `.dvm` is compiled for one runtime generation: model format 2 (converters built on the DVAPI 1.x SDKs) loads only on DVAPI 1.x runtimes (verified on 1.1 and 1.3), and format 3 (DVAPI 3.0 SDK) only on DVAPI 3.x. `read_model_format()` reads the format without loading the model, and returns `None` when the file's structure is not recognised:
+
+```python
+fmt = edgefirst_ara2.read_model_format("model.dvm")  # 2, 3 or None
+```
+
+The client library reports a model of the other generation exactly as it reports a damaged file. `Endpoint.load_model()` reads the format first, so when the library cannot parse the file the exception (`HardwareError`, `code` 520, `name` `"DV_MODEL_LOAD_FAILURE"`) says which it is: `compatibility` is `"mismatch"`, `"matching"` or `"unknown"`, `model_format` is the format read, and the message says whether to reconvert the model. `metadata.ara2.converter_version` and `sdk_version` give the converter provenance when the model carries it.
+
+```python
+try:
+    model = endpoint.load_model("model.dvm")
+except edgefirst_ara2.Ara2Error as e:
+    if e.compatibility == "mismatch":
+        print(f"model format {e.model_format} needs reconverting for {session.abi}")
+    raise
+```
+
 ## Async Inference
 
 The `submit()` / `wait()` API enables overlapping CPU work with NPU
@@ -393,6 +412,7 @@ Pending asynchronous inference request, created by `Model.submit()`.
 - `read_metadata(path: str) -> DvmMetadata | None`
 - `read_labels(path: str) -> list[str]`
 - `has_metadata(path: str) -> bool`
+- `read_model_format(path: str) -> int | None` - model format (2 for DVAPI 1.x runtimes, 3 for 3.x), `None` when not recognised
 
 ### Supporting Types
 
@@ -429,6 +449,8 @@ Ara2Error (RuntimeError)
  +-- MetadataError      - DVM metadata parsing errors
  +-- UnsupportedError   - Feature not provided by the loaded DVAPI version
 ```
+
+Every exception has `code`, `name`, `sub_code`, `component`, `severity`, `model_format` and `compatibility` attributes, `None` where they do not apply. A model the client library cannot parse (code 520) raises `HardwareError` with `model_format` and `compatibility` set.
 
 ## Building Wheels
 

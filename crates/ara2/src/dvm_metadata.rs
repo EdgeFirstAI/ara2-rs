@@ -12,7 +12,7 @@ use crate::Error;
 #[cfg(feature = "decoder")]
 use edgefirst_decoder::configs::DimName;
 use serde::Deserialize;
-use std::io::{Cursor, Read as _};
+use std::io::{Cursor, Read, Seek};
 use zip::ZipArchive;
 
 /// Deserialize a `dshape` from either the spec's array of single-key maps
@@ -62,10 +62,67 @@ pub const LABELS_FILENAME: &str = "labels.txt";
 /// Written by the edgefirst-studio-ara2 converter service. Fields are
 /// optional so older DVMs without this section continue to deserialize.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(from = "Ara2InfoFields")]
+#[non_exhaustive]
 pub struct Ara2Info {
     /// Kinara quantization mode (9 = asymmetric, the production default).
-    #[serde(default)]
     pub qmode: Option<i32>,
+    /// Version of the converter that produced the model. Read from
+    /// `converter_version`, or from `version` where a converter wrote that
+    /// instead.
+    pub converter_version: Option<String>,
+    /// Version of the Kinara SDK the converter was built on.
+    pub sdk_version: Option<String>,
+    /// Model format the converter recorded (2 for DVAPI 1.x runtimes, 3
+    /// for DVAPI 3.x).
+    pub dvm_format: Option<u32>,
+}
+
+/// The `ara2` section as written. The provenance fields are taken only
+/// when they have the expected type, so an unexpected type there cannot make the whole
+/// metadata unreadable.
+#[derive(Deserialize)]
+struct Ara2InfoFields {
+    #[serde(default)]
+    qmode: Option<i32>,
+    #[serde(default, deserialize_with = "lenient_string")]
+    converter_version: Option<String>,
+    #[serde(default, deserialize_with = "lenient_string")]
+    version: Option<String>,
+    #[serde(default, deserialize_with = "lenient_string")]
+    sdk_version: Option<String>,
+    #[serde(default, deserialize_with = "lenient_u32")]
+    dvm_format: Option<u32>,
+}
+
+impl From<Ara2InfoFields> for Ara2Info {
+    fn from(f: Ara2InfoFields) -> Self {
+        Ara2Info {
+            qmode: f.qmode,
+            converter_version: f.converter_version.or(f.version),
+            sdk_version: f.sdk_version,
+            dvm_format: f.dvm_format,
+        }
+    }
+}
+
+fn lenient_u32<'de, D>(deserializer: D) -> Result<Option<u32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(serde_json::Value::deserialize(deserializer)?
+        .as_u64()
+        .and_then(|v| u32::try_from(v).ok()))
+}
+
+fn lenient_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(match serde_json::Value::deserialize(deserializer)? {
+        serde_json::Value::String(s) => Some(s),
+        _ => None,
+    })
 }
 
 /// EdgeFirst metadata embedded in a DVM file.
@@ -408,10 +465,12 @@ pub fn read_metadata(data: &[u8]) -> Result<Option<DvmMetadata>, Error> {
 /// * `Ok(None)` - No ZIP archive or no metadata file present
 /// * `Err(_)` - ZIP reading error
 pub fn read_metadata_raw(data: &[u8]) -> Result<Option<String>, Error> {
-    let cursor = Cursor::new(data);
+    metadata_json(Cursor::new(data))
+}
 
+fn metadata_json<R: Read + Seek>(reader: R) -> Result<Option<String>, Error> {
     // Try to open as ZIP - if this fails, there's no metadata
-    let mut archive = match ZipArchive::new(cursor) {
+    let mut archive = match ZipArchive::new(reader) {
         Ok(a) => a,
         Err(zip::result::ZipError::InvalidArchive(_)) => return Ok(None),
         Err(e) => return Err(Error::Zip(e)),
@@ -500,6 +559,17 @@ pub fn has_metadata(data: &[u8]) -> bool {
 pub fn read_metadata_from_file(path: &std::path::Path) -> Result<Option<DvmMetadata>, Error> {
     let data = std::fs::read(path)?;
     read_metadata(&data)
+}
+
+/// The `ara2` section of a model file's metadata, reading only the
+/// appended archive rather than the whole model. Any failure is `None`.
+pub(crate) fn read_ara2_info_from_file(path: &std::path::Path) -> Option<Ara2Info> {
+    let file = std::io::BufReader::new(std::fs::File::open(path).ok()?);
+    let json = metadata_json(file).ok()??;
+    // Only the `ara2` section is parsed, so a malformed field elsewhere in
+    // the metadata does not hide the provenance.
+    let mut root: serde_json::Value = serde_json::from_str(&json).ok()?;
+    serde_json::from_value(root.get_mut("ara2")?.take()).ok()
 }
 
 /// Read labels from a DVM file path.
@@ -757,6 +827,62 @@ mod tests {
         let md: DvmMetadata = serde_json::from_str(json).unwrap();
         assert!(md.ara2.is_some());
         assert!(md.ara2.unwrap().qmode.is_none());
+    }
+
+    #[test]
+    fn offline_ara2_provenance_parses() {
+        let json = r#"{"ara2": {"qmode": 9, "converter_version": "1.4.0",
+            "version": "0.9", "sdk_version": "r3.0", "dvm_format": 3}}"#;
+        let a = serde_json::from_str::<DvmMetadata>(json)
+            .unwrap()
+            .ara2
+            .unwrap();
+        assert_eq!(a.converter_version.as_deref(), Some("1.4.0"));
+        assert_eq!(a.sdk_version.as_deref(), Some("r3.0"));
+        assert_eq!(a.dvm_format, Some(3));
+    }
+
+    #[test]
+    fn offline_ara2_legacy_version_key_is_the_converter_version() {
+        let json = r#"{"ara2": {"version": "0.9"}}"#;
+        let a = serde_json::from_str::<DvmMetadata>(json)
+            .unwrap()
+            .ara2
+            .unwrap();
+        assert_eq!(a.converter_version.as_deref(), Some("0.9"));
+        assert_eq!(a.sdk_version, None);
+        assert_eq!(a.dvm_format, None);
+    }
+
+    #[test]
+    fn offline_ara2_provenance_of_another_type_is_none() {
+        let json = r#"{"ara2": {"qmode": 9, "converter_version": 2, "sdk_version": null,
+            "dvm_format": "3"}}"#;
+        let a = serde_json::from_str::<DvmMetadata>(json)
+            .unwrap()
+            .ara2
+            .unwrap();
+        assert_eq!(a.qmode, Some(9));
+        assert_eq!(a.converter_version, None);
+        assert_eq!(a.sdk_version, None);
+        assert_eq!(a.dvm_format, None);
+    }
+
+    #[test]
+    fn offline_ara2_info_from_file_reads_only_its_section() {
+        let json = r#"{"ara2": {"converter_version": "1.4.0", "sdk_version": "r3.0"},
+            "outputs": [{"dshape": [{"batch": 1, "box_coords": 4}]}]}"#;
+        let dir = std::env::temp_dir().join(format!("ara2-ara2-info-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("model.dvm");
+        std::fs::write(&path, make_dvm_with_metadata(json, None)).unwrap();
+        let a = read_ara2_info_from_file(&path).unwrap();
+        assert_eq!(a.converter_version.as_deref(), Some("1.4.0"));
+        assert_eq!(a.sdk_version.as_deref(), Some("r3.0"));
+        std::fs::write(&path, b"no archive").unwrap();
+        assert!(read_ara2_info_from_file(&path).is_none());
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(read_ara2_info_from_file(&path).is_none());
     }
 
     #[test]

@@ -84,6 +84,13 @@
 //! [`State`]: DVAPI 1.3 and 3.0 reuse two endpoint state values for
 //! different names than 1.1, so which of them can be reported depends on
 //! the library loaded.
+//!
+//! Models are tied to a generation too: model format 2 loads on DVAPI 1.x
+//! runtimes and format 3 on DVAPI 3.x. [`read_model_format_from_file`]
+//! reads a model's format without loading it, and
+//! [`Endpoint::load_model_from_file`] reports a model the library cannot
+//! parse as [`Error::ModelLoadFailed`], saying whether its format suits the
+//! runtime.
 
 use ara2_sys::{araclient, dv_version};
 
@@ -91,6 +98,7 @@ mod raw;
 
 mod connect;
 mod discover;
+mod dvm_format;
 pub mod dvm_metadata;
 mod endpoint;
 mod error;
@@ -102,6 +110,7 @@ mod version;
 
 pub use connect::proxy_endpoint;
 pub use discover::{PROXY_COMM, Proxy, ProxyConfig, ProxyEndpoint, discover};
+pub use dvm_format::{ModelCompatibility, read_model_format, read_model_format_from_file};
 pub use dvm_metadata::{
     Ara2Info, CompilationInfo, DatasetInfo, DeploymentInfo, DvmMetadata, InputSpec, ModelInfo,
     OutputSpec, PpaMetrics, has_metadata, read_labels, read_labels_from_file, read_metadata,

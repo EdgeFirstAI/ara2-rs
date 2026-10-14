@@ -266,8 +266,18 @@ pub enum Error {
 
 `Error::Ara2` names the code with the library's own `dv_stringify_status_code`. On DVAPI 1.3 and 3.0, model loading, asynchronous submission and waiting go through the `_s` / `_e` detailed-status variants, so their errors also carry the component, severity and sub-code.
 
+`Error::ModelLoadFailed` wraps a `DV_MODEL_LOAD_FAILURE` from `load_model_from_file` with the model's format compatibility, described below. A file that could not be opened for the format check keeps its plain `Error::Ara2`, since that is not a parse failure.
+
+## Model format
+
+A `.dvm` built for the other runtime generation fails to load with the same status and log line as a damaged file, so `dvm_format.rs` reads the model format before loading and `load_model_from_file` explains a failure with it (`ModelCompatibility`: `Mismatch`, `Matching` or `Unknown`). Format 2 belongs to DVAPI 1.x runtimes and format 3 to DVAPI 3.x; any other format is `Unknown`.
+
+The `.dvm` is a FlatBuffers buffer whose schema Kinara does not publish. The converter stores the format as a one-field sub-table holding a single byte, the major version `Model::version()` reports after a load; the bytes after it are padding. Its field id differs between generations but its slot sits at byte offset 80 of the root table in both, so the reader finds it by that slot and validates each step: root offset and root table in bounds, a root vtable of sane size that lists slot 80, a forward offset to a sub-table whose vtable declares exactly one field at offset 4, and a format from 1 to 15. Any failed check is reported as unknown rather than guessed at, since without the schema a guess cannot be told from a coincidence. The root vtable usually sits near the end of the file, so the file reader seeks to each piece instead of reading a fixed prefix or the whole model.
+
+On a load failure the converter provenance (`converter_version`, `sdk_version`) is read from the `ara2` section of the embedded `edgefirst.json`, reading only the ZIP trailer; missing or malformed metadata leaves it `None` and never changes the error.
+
 All error variants implement `std::error::Error` with proper `source()`
-chaining for integration with `anyhow` and `eyre`.
+chaining for integration with `anyhow` and `eyre`. `ModelLoadFailed` exposes its status as the `status` field rather than through `source()`, since its message already includes it.
 
 ## Inference Pipeline
 
