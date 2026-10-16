@@ -89,11 +89,13 @@ jobs:
     steps:
       # Selects edgefirst_ara2-* wheels and sdist by filename, so the .crate
       # files release.yml also stages never reach PyPI, and fails if any file
-      # carries a version other than the tag's: a PyPI version is immutable.
+      # carries a version other than the built one: a PyPI version is
+      # immutable. artifact-version, not version: a release candidate whose
+      # manifests still carry the base version built files with that version.
       - uses: EdgeFirstAI/.github/.github/actions/stage-pypi@9e296f92996b38683c684b9091ed59cb27562770  # v2.3.0
         with:
           distribution: edgefirst-ara2
-          version: ${{ needs.publish.outputs.version }}
+          version: ${{ needs.publish.outputs.artifact-version }}
 
       # Directly in the job, never through a composite action: it resolves its
       # own container image from the repository it is called from.
