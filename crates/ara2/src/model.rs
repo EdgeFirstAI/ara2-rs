@@ -1,9 +1,12 @@
-use crate::{Error, session::SessionInner};
+use crate::{
+    Error, InferenceStats,
+    session::{SessionInner, VersionLib, status_result},
+};
 use ara2_sys::{
     DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_COMPLETED,
     DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_FAILED, DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_QUEUED,
     DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_RUNNING, DV_LAYER_OUTPUT_TYPE, dv_blob, dv_endpoint,
-    dv_infer_request, dv_model, dv_model_output_param, dv_shm_descriptor,
+    dv_infer_request, dv_model, dv_shm_descriptor,
 };
 use edgefirst_tensor::{HostView, Tensor, TensorMapTrait as _, TensorMemory, TensorTrait};
 use log::debug;
@@ -48,6 +51,48 @@ impl Add for ModelTiming {
 /// Default inference timeout in milliseconds.
 pub const DEFAULT_TIMEOUT_MS: i32 = 1000;
 
+/// The kind of model, as the runtime reports it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ModelType {
+    /// An ARA-1 convolutional network.
+    Ara1Cnn,
+    /// An ARA-2 convolutional network.
+    Ara2Cnn,
+    /// An ARA-2 language model.
+    Ara2Llm,
+    /// An ARA-2 language model with dynamic shapes (v2).
+    Ara2LlmDynV2,
+    /// Reported by DVAPI 3.0 only.
+    McsLlm,
+    /// A value this crate does not know for the loaded version.
+    Other(u32),
+}
+
+impl ModelType {
+    pub(crate) fn from_raw(value: u32, abi: crate::Abi) -> Self {
+        use ara2_sys::{
+            DV_MODEL_TYPE_DV_MODEL_TYPE_ARA1_CNN, DV_MODEL_TYPE_DV_MODEL_TYPE_ARA2_CNN,
+            DV_MODEL_TYPE_DV_MODEL_TYPE_ARA2_LLM, DV_MODEL_TYPE_DV_MODEL_TYPE_ARA2_LLM_DYN_V2,
+        };
+        match value {
+            DV_MODEL_TYPE_DV_MODEL_TYPE_ARA1_CNN => return Self::Ara1Cnn,
+            DV_MODEL_TYPE_DV_MODEL_TYPE_ARA2_CNN => return Self::Ara2Cnn,
+            DV_MODEL_TYPE_DV_MODEL_TYPE_ARA2_LLM => return Self::Ara2Llm,
+            DV_MODEL_TYPE_DV_MODEL_TYPE_ARA2_LLM_DYN_V2 => return Self::Ara2LlmDynV2,
+            _ => {}
+        }
+        match abi {
+            crate::Abi::V3_0
+                if value == ara2_sys::v3_0::dv_model_type_3_0_DV_MODEL_TYPE_MCS_LLM =>
+            {
+                Self::McsLlm
+            }
+            crate::Abi::V1_1 | crate::Abi::V1_3 | crate::Abi::V3_0 => Self::Other(value),
+        }
+    }
+}
+
 /// A neural network model loaded on an ARA-2 endpoint.
 ///
 /// Models own their loaded resources and are NOT cloneable. When dropped,
@@ -61,7 +106,7 @@ pub const DEFAULT_TIMEOUT_MS: i32 = 1000;
 /// Two inference modes are available:
 ///
 /// - **Synchronous** — [`run()`](Self::run) blocks until the NPU finishes
-///   and returns timing. Simplest path for single-inference workloads.
+///   and returns statistics. Simplest path for single-inference workloads.
 /// - **Asynchronous** — [`submit()`](Self::submit) returns an
 ///   [`InferRequest`] handle immediately, allowing the CPU to do other work
 ///   (e.g., preprocessing the next frame) while the NPU executes. Call
@@ -79,20 +124,20 @@ pub const DEFAULT_TIMEOUT_MS: i32 = 1000;
 /// model.allocate_tensors(Some(TensorMemory::DmaBuf))?;
 ///
 /// // Synchronous inference
-/// let timing = model.run()?;
+/// let stats = model.run()?;
 ///
 /// // Asynchronous inference — overlap CPU work with NPU execution
 /// let request = model.submit()?;
 /// // ... do CPU work here while the NPU is busy ...
-/// let timing = request.wait(DEFAULT_TIMEOUT_MS)?;
+/// let stats = request.wait(DEFAULT_TIMEOUT_MS)?;
 /// # Ok::<(), ara2::Error>(())
 /// ```
 pub struct Model {
     session: Arc<SessionInner>,
     endpoint_ptr: *mut dv_endpoint,
     ptr: *mut dv_model,
-    inputs: Vec<(Tensor<u8>, *mut dv_shm_descriptor)>,
-    outputs: Vec<(Tensor<u8>, *mut dv_shm_descriptor)>,
+    inputs: Vec<BoundTensor>,
+    outputs: Vec<BoundTensor>,
     timeout_ms: i32,
 }
 
@@ -112,8 +157,119 @@ impl std::fmt::Debug for Model {
 // as inference operations are not thread-safe.
 unsafe impl Send for Model {}
 
+/// One shared-memory registration with the proxy, released on drop.
+///
+/// The proxy maps the buffer from its own copy of the file descriptor and
+/// holds it until unregistered. Held through an `Arc` so a pending
+/// [`InferRequest`] can keep it alive after the tensor set that created it
+/// is dropped.
+pub(crate) struct ShmRegistration {
+    session: Arc<SessionInner>,
+    desc: std::ptr::NonNull<dv_shm_descriptor>,
+}
+
+// Safety: the descriptor is only passed back to the library through the
+// session's handle, which is internally synchronized.
+unsafe impl Send for ShmRegistration {}
+unsafe impl Sync for ShmRegistration {}
+
+impl ShmRegistration {
+    fn as_ptr(&self) -> *mut dv_shm_descriptor {
+        self.desc.as_ptr()
+    }
+}
+
+impl Drop for ShmRegistration {
+    fn drop(&mut self) {
+        // SAFETY: `desc` is a live descriptor from dv_shmfd_register.
+        let (fd, size) = unsafe {
+            let desc = self.desc.as_ref();
+            (desc.fd, desc.size)
+        };
+        // SAFETY: `desc` came from dv_shmfd_register on this session and is
+        // unregistered exactly once, here.
+        let err = unsafe { self.session.lib.dv_shmfd_unregister(self.desc.as_ptr()) };
+        if err != 0 {
+            log::warn!(
+                "dv_shmfd_unregister of fd {fd} ({size} bytes) failed with {} ({err})",
+                self.session.status_name(err)
+            );
+        }
+    }
+}
+
+/// A tensor and, for shared-memory or DMA-BUF memory, its registration.
+///
+/// When this is the last reference, `shm` drops first so the proxy unmaps
+/// the buffer before it is freed. A pending [`InferRequest`] may hold the
+/// registration longer, which is safe because the proxy keeps its own
+/// reference to the file descriptor.
+pub(crate) struct BoundTensor {
+    shm: Option<Arc<ShmRegistration>>,
+    tensor: Tensor<u8>,
+}
+
+impl BoundTensor {
+    fn desc_ptr(&self) -> *mut dv_shm_descriptor {
+        self.shm
+            .as_ref()
+            .map_or(std::ptr::null_mut(), |r| r.as_ptr())
+    }
+}
+
+/// Registrations of every bound tensor that has one.
+fn shm_guards<'a>(tensors: impl Iterator<Item = &'a BoundTensor>) -> Vec<Arc<ShmRegistration>> {
+    tensors.filter_map(|t| t.shm.clone()).collect()
+}
+
 /// Blob descriptors paired with map guards that keep memory mappings alive.
 type BlobsWithGuards = (Vec<dv_blob>, Vec<dv_blob>, Vec<HostView<'static, u8>>);
+
+impl Model {
+    /// Submits `dv_infer_async`, through the detailed-status variant where
+    /// the loaded version has one.
+    ///
+    /// # Safety
+    ///
+    /// The blobs must describe buffers that stay valid until the request
+    /// completes.
+    unsafe fn infer_async(
+        &self,
+        inputs: &mut [dv_blob],
+        outputs: &mut [dv_blob],
+        request: &mut *mut dv_infer_request,
+    ) -> Result<(), Error> {
+        let session = &*self.session;
+        let (ip, op) = (inputs.as_mut_ptr(), outputs.as_mut_ptr());
+        let (ep, model) = (self.endpoint_ptr, self.ptr);
+        unsafe {
+            match &session.vlib {
+                VersionLib::V1_3(v) if v.dv_infer_async_s.is_ok() => status_result(
+                    session,
+                    v.dv_infer_async_s(session.ptr, ep, model, ip, op, true, request)
+                        .into(),
+                ),
+                VersionLib::V3_0(v) if v.dv_infer_async_e.is_ok() => status_result(
+                    session,
+                    v.dv_infer_async_e(session.ptr, ep, model, ip, op, true, request)
+                        .into(),
+                ),
+                // A forced ARA2_ABI can load a library lacking the detailed symbols.
+                _ => {
+                    let code =
+                        session
+                            .lib
+                            .dv_infer_async(session.ptr, ep, model, ip, op, true, request);
+                    if code == 0 {
+                        Ok(())
+                    } else {
+                        Err(session.status_error(code))
+                    }
+                }
+            }
+        }
+    }
+}
 
 impl Model {
     /// Create a new Model instance.
@@ -154,14 +310,14 @@ impl Model {
             .inputs
             .iter()
             .map(|tensor| {
-                let blob = if tensor.1.is_null() {
-                    let map = tensor.0.map()?;
+                let blob = if tensor.shm.is_none() {
+                    let map = tensor.tensor.map()?;
                     let ptr = map.as_ptr() as *mut std::ffi::c_void;
                     map_guards.push(map);
                     (ptr, ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_RAW_POINTER)
                 } else {
                     (
-                        tensor.1 as *mut std::ffi::c_void,
+                        tensor.desc_ptr() as *mut std::ffi::c_void,
                         ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_SHM_DESCRIPTOR,
                     )
                 };
@@ -169,7 +325,7 @@ impl Model {
                 Ok(dv_blob {
                     handle: blob.0,
                     offset: 0,
-                    size: tensor.0.size() as u64,
+                    size: tensor.tensor.size() as u64,
                     blob_type: blob.1,
                 })
             })
@@ -179,14 +335,14 @@ impl Model {
             .outputs
             .iter()
             .map(|tensor| {
-                let blob = if tensor.1.is_null() {
-                    let map = tensor.0.map()?;
+                let blob = if tensor.shm.is_none() {
+                    let map = tensor.tensor.map()?;
                     let ptr = map.as_ptr() as *mut std::ffi::c_void;
                     map_guards.push(map);
                     (ptr, ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_RAW_POINTER)
                 } else {
                     (
-                        tensor.1 as *mut std::ffi::c_void,
+                        tensor.desc_ptr() as *mut std::ffi::c_void,
                         ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_SHM_DESCRIPTOR,
                     )
                 };
@@ -194,7 +350,7 @@ impl Model {
                 Ok(dv_blob {
                     handle: blob.0,
                     offset: 0,
-                    size: tensor.0.size() as u64,
+                    size: tensor.tensor.size() as u64,
                     blob_type: blob.1,
                 })
             })
@@ -206,7 +362,7 @@ impl Model {
     /// Run inference synchronously on the model using the pre-allocated
     /// tensors.
     ///
-    /// Blocks until the NPU finishes and returns timing statistics. For
+    /// Blocks until the NPU finishes and returns inference statistics. For
     /// workloads where you want to overlap CPU preprocessing with NPU
     /// execution, use [`submit()`](Self::submit) instead.
     ///
@@ -221,12 +377,12 @@ impl Model {
     /// # let endpoints = session.list_endpoints()?;
     /// # let mut model = endpoints[0].load_model_from_file("m.dvm".as_ref())?;
     /// # model.allocate_tensors(None)?;
-    /// let timing = model.run()?;
+    /// let stats = model.run()?;
     /// println!("NPU: {:?}, DMA in: {:?}, DMA out: {:?}",
-    ///     timing.run_time, timing.input_time, timing.output_time);
+    ///     stats.timing.run_time, stats.timing.input_time, stats.timing.output_time);
     /// # Ok::<(), ara2::Error>(())
     /// ```
-    pub fn run(&mut self) -> Result<ModelTiming, Error> {
+    pub fn run(&mut self) -> Result<InferenceStats, Error> {
         // `_map_guards` keeps memory mappings alive through the FFI call.
         let (mut input_blobs, mut output_blobs, _map_guards) = self.build_blobs()?;
 
@@ -246,22 +402,22 @@ impl Model {
         };
 
         if err != 0 {
-            return Err(err.into());
+            return Err(self.session.status_error(err));
         }
 
-        let timing = extract_timing(request);
+        let stats = extract_stats(request, self.session.abi);
 
-        // Always free the request, even if extract_timing failed.
+        // Always free the request, even if extract_stats failed.
         let free_err = unsafe { self.session.lib.dv_infer_free(request) };
 
-        // Return the timing error first (more informative), then check free.
-        let timing = timing?;
+        // Return the statistics error first (more informative), then check free.
+        let stats = stats?;
 
         if free_err != 0 {
-            return Err(free_err.into());
+            return Err(self.session.status_error(free_err));
         }
 
-        Ok(timing)
+        Ok(stats)
     }
 
     /// Submit inference asynchronously.
@@ -296,34 +452,22 @@ impl Model {
     /// println!("Request #{} submitted", request.request_id()?);
     ///
     /// // Block until the NPU finishes (up to 1000ms)
-    /// let timing = request.wait(DEFAULT_TIMEOUT_MS)?;
-    /// println!("NPU inference: {:?}", timing.run_time);
+    /// let stats = request.wait(DEFAULT_TIMEOUT_MS)?;
+    /// println!("NPU inference: {:?}", stats.timing.run_time);
     /// # Ok::<(), ara2::Error>(())
     /// ```
     pub fn submit(&mut self) -> Result<InferRequest, Error> {
         // Map guards keep raw-pointer memory mappings alive. For
         // RAW_POINTER blobs the NPU references the mapped pointers
         // throughout execution, so guards are stored in InferRequest
-        // and dropped only after wait() or cancellation.
+        // and dropped only after wait() or the request's drop.
         let (mut input_blobs, mut output_blobs, map_guards) = self.build_blobs()?;
 
         let mut request: *mut dv_infer_request = std::ptr::null_mut();
 
-        let err = unsafe {
-            self.session.lib.dv_infer_async(
-                self.session.ptr,
-                self.endpoint_ptr,
-                self.ptr,
-                input_blobs.as_mut_ptr(),
-                output_blobs.as_mut_ptr(),
-                true,
-                &mut request,
-            )
-        };
-
-        if err != 0 {
-            return Err(err.into());
-        }
+        // SAFETY: the guards for these buffers move into the returned
+        // InferRequest, which keeps them valid until it completes.
+        unsafe { self.infer_async(&mut input_blobs, &mut output_blobs, &mut request)? };
 
         if request.is_null() {
             return Err(Error::NullPointer(
@@ -334,6 +478,7 @@ impl Model {
         Ok(InferRequest {
             session: Arc::clone(&self.session),
             ptr: request,
+            _shm_guards: shm_guards(self.inputs.iter().chain(self.outputs.iter())),
             _map_guards: map_guards,
         })
     }
@@ -346,20 +491,25 @@ impl Model {
     /// [`Self::allocate_tensors`]-allocated outputs, decoupling the output buffer
     /// from the model slot.
     ///
+    /// `memory: None` allocates heap (`TensorMemory::Mem`) when the session
+    /// cannot pass file descriptors (TCP). Heap tensors have no fd and must be
+    /// accessed through `map()`; see [`Self::allocate_tensors`].
+    ///
     /// Allocate more sets than pipeline slots so a decoder can hold some sets
     /// while the model keeps inferring into others.
     pub fn allocate_output_set(&self, memory: Option<TensorMemory>) -> Result<OutputSet, Error> {
+        let memory = self.resolve_memory(memory)?;
         let tensors = (0..self.n_outputs())
             .map(|i| {
                 let size = self.output_size(i);
                 let tensor = Tensor::<u8>::new(&[size], memory, None)?;
-                match tensor.memory() {
+                let shm = match tensor.memory() {
                     TensorMemory::Shm | TensorMemory::DmaBuf => {
-                        let desc = self.shmfd_register(&tensor)?;
-                        Ok((tensor, desc))
+                        Some(Arc::new(self.shmfd_register(&tensor)?))
                     }
-                    _ => Ok((tensor, std::ptr::null_mut())),
-                }
+                    _ => None,
+                };
+                Ok(BoundTensor { shm, tensor })
             })
             .collect::<Result<Vec<_>, Error>>()?;
         Ok(OutputSet {
@@ -374,20 +524,25 @@ impl Model {
     /// sizes and memory type. Pass it to [`Self::submit_with_io_set`] to read from
     /// an arbitrary pool tensor instead of the model's own input, decoupling
     /// the input DMA-BUF from the model slot.
+    ///
+    /// `memory: None` allocates heap (`TensorMemory::Mem`) when the session
+    /// cannot pass file descriptors (TCP). Heap tensors have no fd and must be
+    /// accessed through `map()`; see [`Self::allocate_tensors`].
     pub fn allocate_input_set(&self, memory: Option<TensorMemory>) -> Result<InputSet, Error> {
+        let memory = self.resolve_memory(memory)?;
         let tensors = (0..self.n_inputs())
             .map(|i| {
                 // Use CHW shape so the tensor is compatible with HAL's TensorImageRef,
                 // matching the layout that allocate_tensors produces for model inputs.
                 let shape = self.input_shape(i);
                 let tensor = Tensor::<u8>::new(&shape, memory, None)?;
-                match tensor.memory() {
+                let shm = match tensor.memory() {
                     TensorMemory::Shm | TensorMemory::DmaBuf => {
-                        let desc = self.shmfd_register(&tensor)?;
-                        Ok((tensor, desc))
+                        Some(Arc::new(self.shmfd_register(&tensor)?))
                     }
-                    _ => Ok((tensor, std::ptr::null_mut())),
-                }
+                    _ => None,
+                };
+                Ok(BoundTensor { shm, tensor })
             })
             .collect::<Result<Vec<_>, Error>>()?;
         Ok(InputSet {
@@ -426,7 +581,7 @@ impl Model {
         }
         for i in 0..n_out {
             let expected = self.output_size(i);
-            let got = output_set.tensors[i].0.size();
+            let got = output_set.tensors[i].tensor.size();
             if got != expected {
                 return Err(Error::TensorSizeMismatch { expected, got });
             }
@@ -437,21 +592,21 @@ impl Model {
             .inputs
             .iter()
             .map(|tensor| {
-                let blob = if tensor.1.is_null() {
-                    let map = tensor.0.map()?;
+                let blob = if tensor.shm.is_none() {
+                    let map = tensor.tensor.map()?;
                     let ptr = map.as_ptr() as *mut std::ffi::c_void;
                     map_guards.push(map);
                     (ptr, ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_RAW_POINTER)
                 } else {
                     (
-                        tensor.1 as *mut std::ffi::c_void,
+                        tensor.desc_ptr() as *mut std::ffi::c_void,
                         ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_SHM_DESCRIPTOR,
                     )
                 };
                 Ok(dv_blob {
                     handle: blob.0,
                     offset: 0,
-                    size: tensor.0.size() as u64,
+                    size: tensor.tensor.size() as u64,
                     blob_type: blob.1,
                 })
             })
@@ -461,21 +616,21 @@ impl Model {
             .tensors
             .iter()
             .map(|tensor| {
-                let blob = if tensor.1.is_null() {
-                    let map = tensor.0.map()?;
+                let blob = if tensor.shm.is_none() {
+                    let map = tensor.tensor.map()?;
                     let ptr = map.as_ptr() as *mut std::ffi::c_void;
                     map_guards.push(map);
                     (ptr, ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_RAW_POINTER)
                 } else {
                     (
-                        tensor.1 as *mut std::ffi::c_void,
+                        tensor.desc_ptr() as *mut std::ffi::c_void,
                         ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_SHM_DESCRIPTOR,
                     )
                 };
                 Ok(dv_blob {
                     handle: blob.0,
                     offset: 0,
-                    size: tensor.0.size() as u64,
+                    size: tensor.tensor.size() as u64,
                     blob_type: blob.1,
                 })
             })
@@ -483,21 +638,9 @@ impl Model {
 
         let mut request: *mut dv_infer_request = std::ptr::null_mut();
 
-        let err = unsafe {
-            self.session.lib.dv_infer_async(
-                self.session.ptr,
-                self.endpoint_ptr,
-                self.ptr,
-                input_blobs.as_mut_ptr(),
-                output_blobs.as_mut_ptr(),
-                true,
-                &mut request,
-            )
-        };
-
-        if err != 0 {
-            return Err(err.into());
-        }
+        // SAFETY: the guards for these buffers move into the returned
+        // InferRequest, which keeps them valid until it completes.
+        unsafe { self.infer_async(&mut input_blobs, &mut output_blobs, &mut request)? };
 
         if request.is_null() {
             return Err(Error::NullPointer(
@@ -508,6 +651,7 @@ impl Model {
         Ok(InferRequest {
             session: Arc::clone(&self.session),
             ptr: request,
+            _shm_guards: shm_guards(self.inputs.iter().chain(output_set.tensors.iter())),
             _map_guards: map_guards,
         })
     }
@@ -556,14 +700,14 @@ impl Model {
         }
         for i in 0..n_in {
             let expected = self.input_size(i);
-            let got = input_set.tensors[i].0.size();
+            let got = input_set.tensors[i].tensor.size();
             if got != expected {
                 return Err(Error::TensorSizeMismatch { expected, got });
             }
         }
         for i in 0..n_out {
             let expected = self.output_size(i);
-            let got = output_set.tensors[i].0.size();
+            let got = output_set.tensors[i].tensor.size();
             if got != expected {
                 return Err(Error::TensorSizeMismatch { expected, got });
             }
@@ -574,21 +718,21 @@ impl Model {
             .tensors
             .iter()
             .map(|tensor| {
-                let blob = if tensor.1.is_null() {
-                    let map = tensor.0.map()?;
+                let blob = if tensor.shm.is_none() {
+                    let map = tensor.tensor.map()?;
                     let ptr = map.as_ptr() as *mut std::ffi::c_void;
                     map_guards.push(map);
                     (ptr, ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_RAW_POINTER)
                 } else {
                     (
-                        tensor.1 as *mut std::ffi::c_void,
+                        tensor.desc_ptr() as *mut std::ffi::c_void,
                         ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_SHM_DESCRIPTOR,
                     )
                 };
                 Ok(dv_blob {
                     handle: blob.0,
                     offset: 0,
-                    size: tensor.0.size() as u64,
+                    size: tensor.tensor.size() as u64,
                     blob_type: blob.1,
                 })
             })
@@ -598,21 +742,21 @@ impl Model {
             .tensors
             .iter()
             .map(|tensor| {
-                let blob = if tensor.1.is_null() {
-                    let map = tensor.0.map()?;
+                let blob = if tensor.shm.is_none() {
+                    let map = tensor.tensor.map()?;
                     let ptr = map.as_ptr() as *mut std::ffi::c_void;
                     map_guards.push(map);
                     (ptr, ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_RAW_POINTER)
                 } else {
                     (
-                        tensor.1 as *mut std::ffi::c_void,
+                        tensor.desc_ptr() as *mut std::ffi::c_void,
                         ara2_sys::DV_BLOB_TYPE_DV_BLOB_TYPE_SHM_DESCRIPTOR,
                     )
                 };
                 Ok(dv_blob {
                     handle: blob.0,
                     offset: 0,
-                    size: tensor.0.size() as u64,
+                    size: tensor.tensor.size() as u64,
                     blob_type: blob.1,
                 })
             })
@@ -620,21 +764,9 @@ impl Model {
 
         let mut request: *mut dv_infer_request = std::ptr::null_mut();
 
-        let err = unsafe {
-            self.session.lib.dv_infer_async(
-                self.session.ptr,
-                self.endpoint_ptr,
-                self.ptr,
-                input_blobs.as_mut_ptr(),
-                output_blobs.as_mut_ptr(),
-                true,
-                &mut request,
-            )
-        };
-
-        if err != 0 {
-            return Err(err.into());
-        }
+        // SAFETY: the guards for these buffers move into the returned
+        // InferRequest, which keeps them valid until it completes.
+        unsafe { self.infer_async(&mut input_blobs, &mut output_blobs, &mut request)? };
 
         if request.is_null() {
             return Err(Error::NullPointer(
@@ -645,43 +777,65 @@ impl Model {
         Ok(InferRequest {
             session: Arc::clone(&self.session),
             ptr: request,
+            _shm_guards: shm_guards(input_set.tensors.iter().chain(output_set.tensors.iter())),
             _map_guards: map_guards,
         })
     }
 
     /// Get a mutable reference to an input tensor.
+    ///
+    /// On a TCP session this is a heap tensor without an fd; use `map()`
+    /// rather than `clone_fd()` (see [`Self::allocate_tensors`]).
     pub fn input_tensor(&mut self, idx: usize) -> &mut Tensor<u8> {
-        &mut self.inputs[idx].0
+        &mut self.inputs[idx].tensor
     }
 
     /// Get a reference to an output tensor.
+    ///
+    /// On a TCP session this is a heap tensor without an fd; use `map()`
+    /// rather than `clone_fd()` (see [`Self::allocate_tensors`]).
     pub fn output_tensor(&self, idx: usize) -> &Tensor<u8> {
-        &self.outputs[idx].0
+        &self.outputs[idx].tensor
     }
 
     /// Allocate input and output tensors for this model.
     ///
     /// # Arguments
     /// * `memory` - The memory type to use for tensors. Use `TensorMemory::DmaBuf`
-    ///   or `TensorMemory::Shm` for zero-copy inference.
+    ///   or `TensorMemory::Shm` for zero-copy inference. `None` picks the
+    ///   best memory the platform offers, except on a TCP session, which
+    ///   cannot pass file descriptors: there `None` allocates heap
+    ///   (`TensorMemory::Mem`), and an explicit `Shm` or `DmaBuf` fails with
+    ///   [`Error::FdPassingUnavailable`].
     ///
     /// Input tensors are allocated with CHW shape `[channels, height, width]`
     /// to enable zero-copy preprocessing with HAL's `TensorImageRef`.
     /// Output tensors use flat shape since they may have padding or
     /// different element sizes.
+    ///
+    /// # Tensors on TCP sessions
+    ///
+    /// Tensors allocated by this client on a session without fd passing
+    /// (`Session::supports_fd_passing()` is false, i.e. TCP) are heap memory,
+    /// not DMA-BUF. They have no file descriptor, so `clone_fd()` on them
+    /// fails and they cannot be handed to the HAL by fd (zero-copy
+    /// preprocessing, `TensorDyn::from_fd`). Check `tensor.memory()`, and read
+    /// and write such tensors through `map()`. Zero-copy fd sharing needs a
+    /// UNIX-socket session.
     pub fn allocate_tensors(&mut self, memory: Option<TensorMemory>) -> Result<(), Error> {
+        let memory = self.resolve_memory(memory)?;
         self.inputs = (0..self.n_inputs())
             .map(|i| {
                 // Allocate with CHW shape for compatibility with HAL TensorImageRef
                 let shape = self.input_shape(i);
                 let tensor = Tensor::<u8>::new(&shape, memory, None)?;
-                match tensor.memory() {
+                let shm = match tensor.memory() {
                     TensorMemory::Shm | TensorMemory::DmaBuf => {
-                        let desc = self.shmfd_register(&tensor)?;
-                        Ok((tensor, desc))
+                        Some(Arc::new(self.shmfd_register(&tensor)?))
                     }
-                    _ => Ok((tensor, std::ptr::null_mut())),
-                }
+                    _ => None,
+                };
+                Ok(BoundTensor { shm, tensor })
             })
             .collect::<Result<Vec<_>, Error>>()?;
         self.outputs = (0..self.n_outputs())
@@ -689,22 +843,32 @@ impl Model {
                 // Use the actual size from the model, not computed from shape
                 let size = self.output_size(i);
                 let tensor = Tensor::<u8>::new(&[size], memory, None)?;
-                match tensor.memory() {
+                let shm = match tensor.memory() {
                     TensorMemory::Shm | TensorMemory::DmaBuf => {
-                        let desc = self.shmfd_register(&tensor)?;
-                        Ok((tensor, desc))
+                        Some(Arc::new(self.shmfd_register(&tensor)?))
                     }
-                    _ => Ok((tensor, std::ptr::null_mut())),
-                }
+                    _ => None,
+                };
+                Ok(BoundTensor { shm, tensor })
             })
             .collect::<Result<Vec<_>, Error>>()?;
 
         Ok(())
     }
 
+    fn resolve_memory(&self, memory: Option<TensorMemory>) -> Result<Option<TensorMemory>, Error> {
+        resolve_memory_for(
+            matches!(self.session.socket_type, crate::SocketType::Unix),
+            memory,
+        )
+    }
+
     /// Register a tensor's file descriptor with the proxy for zero-copy
     /// transfers.
-    fn shmfd_register(&self, tensor: &Tensor<u8>) -> Result<*mut dv_shm_descriptor, Error> {
+    fn shmfd_register(&self, tensor: &Tensor<u8>) -> Result<ShmRegistration, Error> {
+        if !matches!(self.session.socket_type, crate::SocketType::Unix) {
+            return Err(Error::FdPassingUnavailable);
+        }
         let mut desc: *mut dv_shm_descriptor = std::ptr::null_mut();
         match tensor.memory() {
             TensorMemory::Shm | TensorMemory::DmaBuf => {}
@@ -730,33 +894,55 @@ impl Model {
         };
 
         if result != 0 {
-            return Err(result.into());
+            return Err(self.session.status_error(result));
         }
 
-        if desc.is_null() {
-            return Err(Error::NullPointer(
-                "shmfd_register returned null".to_string(),
-            ));
-        }
+        let desc = std::ptr::NonNull::new(desc)
+            .ok_or_else(|| Error::NullPointer("shmfd_register returned null".to_string()))?;
 
         debug!(
             "shmfd_register {:?} fd {:?} => {:?}",
             tensor.memory(),
             fd,
-            unsafe { *desc }
+            unsafe { *desc.as_ptr() }
         );
 
-        Ok(desc)
+        Ok(ShmRegistration {
+            session: Arc::clone(&self.session),
+            desc,
+        })
+    }
+
+    fn fields(&self) -> crate::raw::ModelFields {
+        // SAFETY: `self.ptr` is a live model handle from `self.session`'s library.
+        unsafe { crate::raw::model_fields(self.session.abi, self.ptr) }
+    }
+
+    /// The model format version the model was compiled to: 2.0.0.0 for
+    /// DVAPI 1.x runtimes, 3.0.0.0 for 3.x. Its major is what
+    /// [`crate::read_model_format`] reads from the file.
+    pub fn version(&self) -> crate::DvapiVersion {
+        crate::version::dvapi_version(self.fields().version)
+    }
+
+    /// The name given when the model was loaded, if any.
+    pub fn name(&self) -> Option<String> {
+        crate::telemetry::c_string(self.fields().name)
+    }
+
+    /// The kind of model the runtime reports.
+    pub fn model_type(&self) -> ModelType {
+        ModelType::from_raw(self.fields().model_type, self.session.abi)
     }
 
     /// Get the number of input tensors for this model.
     pub fn n_inputs(&self) -> usize {
-        unsafe { (*self.ptr).num_inputs as usize }
+        self.fields().num_inputs
     }
 
     /// Get the shape of an input tensor.
     pub fn input_shape(&self, idx: usize) -> [usize; 3] {
-        let input = unsafe { (*self.ptr).input_param.add(idx) };
+        let input = unsafe { self.fields().input_param.add(idx) };
         unsafe {
             [
                 (*input).nch as usize,
@@ -778,7 +964,7 @@ impl Model {
 
     /// Get detailed information about an input tensor.
     pub fn input_info(&self, idx: usize) -> InputTensor {
-        let input = unsafe { (*self.ptr).input_param.add(idx) };
+        let input = unsafe { self.fields().input_param.add(idx) };
 
         let params = unsafe { (*input).preprocess_param };
 
@@ -850,54 +1036,36 @@ impl Model {
 
     /// Get the number of output tensors for this model.
     pub fn n_outputs(&self) -> usize {
-        unsafe { (*self.ptr).num_outputs as usize }
+        self.fields().num_outputs
     }
 
-    /// Pointer to output parameter `idx`.
-    ///
-    /// The array belongs to `libaraclient`, so the stride is that
-    /// library's `dv_model_output_param` size, which differs between DVAPI
-    /// generations. `<*mut T>::add` would use the size of whichever type
-    /// the bindings name and land at the wrong address on the other
-    /// generation, so the arithmetic is done in bytes against the probed
-    /// [`crate::Abi`].
-    ///
-    /// This is the only place the ABI is allowed to matter: every field
-    /// read through the returned pointer sits at the same offset in both
-    /// generations.
-    fn output_param(&self, idx: usize) -> *mut dv_model_output_param {
+    /// The fields of output parameter `idx`, read at the loaded library's
+    /// layout.
+    fn output_param(&self, idx: usize) -> crate::raw::OutputFields {
         // SAFETY: `self.ptr` is a live model handle, and callers index
         // within `num_outputs`, which the library sized the array to.
-        unsafe {
-            (*self.ptr)
-                .output_param
-                .cast::<u8>()
-                .add(idx * self.session.abi.output_param_stride())
-                .cast()
-        }
+        unsafe { crate::raw::output_fields(self.session.abi, self.ptr, idx) }
     }
 
     /// Get the shape of an output tensor.
     pub fn output_shape(&self, idx: usize) -> [usize; 3] {
         let output = self.output_param(idx);
-        unsafe {
-            [
-                (*output).nch as usize,
-                (*output).height as usize,
-                (*output).width as usize,
-            ]
-        }
+        [
+            output.nch as usize,
+            output.height as usize,
+            output.width as usize,
+        ]
     }
 
     /// Get the size in bytes of an output tensor (as specified by the model).
     pub fn output_size(&self, idx: usize) -> usize {
         let output = self.output_param(idx);
-        unsafe { (*output).size as usize }
+        output.size as usize
     }
 
     /// Get the size in bytes of an input tensor (as specified by the model).
     pub fn input_size(&self, idx: usize) -> usize {
-        let input = unsafe { (*self.ptr).input_param.add(idx) };
+        let input = unsafe { self.fields().input_param.add(idx) };
         unsafe { (*input).size as usize }
     }
 
@@ -905,12 +1073,12 @@ impl Model {
     /// Returns 1 for int8/uint8, 2 for int16/uint16, 4 for float32, etc.
     pub fn output_bpp(&self, idx: usize) -> usize {
         let output = self.output_param(idx);
-        unsafe { (*output).bpp as usize }
+        output.bpp as usize
     }
 
     /// Get the bytes per pixel (element size) for an input tensor.
     pub fn input_bpp(&self, idx: usize) -> usize {
-        let input = unsafe { (*self.ptr).input_param.add(idx) };
+        let input = unsafe { self.fields().input_param.add(idx) };
         unsafe { (*input).bpp as usize }
     }
 
@@ -1001,7 +1169,7 @@ impl Model {
     pub fn output_info(&self, idx: usize) -> Result<OutputTensor, Error> {
         let output = self.output_param(idx);
 
-        let params = unsafe { (*output).postprocess_param };
+        let params = output.postprocess_param;
         unsafe {
             debug!(
                 "output_{} qn: {:?} scale: {:?} offset: {:?} is_signed: {:?}",
@@ -1015,34 +1183,32 @@ impl Model {
 
         unsafe {
             Ok(OutputTensor {
-                layer_id: (*output).layer_id,
-                blob_id: (*output).blob_id,
-                fused_parent_id: (*output).fused_parent_id,
-                layer_name: std::ffi::CStr::from_ptr((*output).layer_name)
+                layer_id: output.layer_id,
+                blob_id: output.blob_id,
+                fused_parent_id: output.fused_parent_id,
+                layer_name: std::ffi::CStr::from_ptr(output.layer_name)
                     .to_string_lossy()
                     .into_owned(),
-                blob_name: std::ffi::CStr::from_ptr((*output).blob_name)
+                blob_name: std::ffi::CStr::from_ptr(output.blob_name)
                     .to_string_lossy()
                     .into_owned(),
-                layer_fused_parent_name: std::ffi::CStr::from_ptr(
-                    (*output).layer_fused_parent_name,
-                )
-                .to_string_lossy()
-                .into_owned(),
-                layer_type: std::ffi::CStr::from_ptr((*output).layer_type)
+                layer_fused_parent_name: std::ffi::CStr::from_ptr(output.layer_fused_parent_name)
                     .to_string_lossy()
                     .into_owned(),
-                layout: std::ffi::CStr::from_ptr((*output).layout)
+                layer_type: std::ffi::CStr::from_ptr(output.layer_type)
                     .to_string_lossy()
                     .into_owned(),
-                size: (*output).size as usize,
-                width: (*output).width as usize,
-                height: (*output).height as usize,
-                nch: (*output).nch as usize,
-                bpp: (*output).bpp as usize,
-                num_classes: (*output).num_classes as usize,
-                layer_output_type: (*output).layer_output_type.try_into()?,
-                max_dynamic_id: (*output).max_dynamic_id,
+                layout: std::ffi::CStr::from_ptr(output.layout)
+                    .to_string_lossy()
+                    .into_owned(),
+                size: output.size as usize,
+                width: output.width as usize,
+                height: output.height as usize,
+                nch: output.nch as usize,
+                bpp: output.bpp as usize,
+                num_classes: output.num_classes as usize,
+                layer_output_type: output.layer_output_type.try_into()?,
+                max_dynamic_id: output.max_dynamic_id,
                 quant: OutputQuantization {
                     qn: (*params).qn,
                     offset: (*params).offset,
@@ -1053,7 +1219,23 @@ impl Model {
     }
 }
 
-/// Extract [`ModelTiming`] from a completed inference request.
+/// The memory to allocate for `memory` on a session that can (or cannot)
+/// pass file descriptors. Without fd passing, `None` becomes heap and an
+/// explicit `Shm` or `DmaBuf` is refused before anything is allocated.
+fn resolve_memory_for(
+    fd_passing: bool,
+    memory: Option<TensorMemory>,
+) -> Result<Option<TensorMemory>, Error> {
+    match memory {
+        None if !fd_passing => Ok(Some(TensorMemory::Mem)),
+        Some(TensorMemory::Shm | TensorMemory::DmaBuf) if !fd_passing => {
+            Err(Error::FdPassingUnavailable)
+        }
+        other => Ok(other),
+    }
+}
+
+/// Extract [`InferenceStats`] from a completed inference request.
 ///
 /// # Safety
 ///
@@ -1063,32 +1245,32 @@ impl Model {
 /// # Errors
 ///
 /// Returns [`Error::NullPointer`] if the `stats` field is null, which
-/// indicates the C library did not populate timing data (e.g., statistics
+/// indicates the C library did not populate statistics (e.g., statistics
 /// were not enabled).
-fn extract_timing(request: *mut dv_infer_request) -> Result<ModelTiming, Error> {
-    unsafe {
-        let timing_ptr = (*request).stats;
-        if timing_ptr.is_null() {
-            return Err(Error::NullPointer(
-                "dv_infer_request.stats is null — timing data unavailable".to_owned(),
-            ));
-        }
-        Ok(ModelTiming {
-            run_time: Duration::from_micros((*timing_ptr).inference_execution_time as u64),
-            input_time: Duration::from_micros((*timing_ptr).input_transfer_time as u64),
-            output_time: Duration::from_micros((*timing_ptr).output_transfer_time as u64),
-        })
+fn extract_stats(request: *mut dv_infer_request, abi: crate::Abi) -> Result<InferenceStats, Error> {
+    // SAFETY: `request` is a completed request from the library.
+    let stats = unsafe { (*request).stats };
+    if stats.is_null() {
+        return Err(Error::NullPointer(
+            "dv_infer_request.stats is null — inference statistics unavailable".to_owned(),
+        ));
     }
+    // SAFETY: `stats` is non-null and owned by the request.
+    Ok(crate::telemetry::inference_stats(unsafe { &*stats }, abi))
 }
 
 /// A pending asynchronous inference request.
 ///
 /// Created by [`Model::submit`]. Call [`wait`](Self::wait) to block until
-/// the NPU finishes and retrieve timing statistics.
+/// the NPU finishes and retrieve inference statistics.
 ///
 /// The underlying C request is freed automatically on drop via
-/// `dv_infer_free`. If the request has not completed when it is dropped,
-/// the C library cancels it.
+/// `dv_infer_free`. A request still pending when it is dropped is waited
+/// for first, for up to `MAX_DROP_WAITS` waits of [`DEFAULT_TIMEOUT_MS`]
+/// each (about 4 s), and then freed; freeing an in-flight request leaves
+/// the model unable to accept the next submit. If it is still pending after
+/// that, its shared-memory and DMA-BUF registrations are leaked rather than
+/// released.
 ///
 /// # Thread safety
 ///
@@ -1101,7 +1283,8 @@ fn extract_timing(request: *mut dv_infer_request) -> Result<ModelTiming, Error> 
 /// The `InferRequest` borrows the model's tensor buffers. The caller must
 /// keep the originating [`Model`] alive (and must not call
 /// [`allocate_tensors`](Model::allocate_tensors)) until this request is
-/// consumed by [`wait`](Self::wait) or dropped.
+/// consumed by [`wait`](Self::wait) or dropped. Shared-memory and DMA-BUF
+/// registrations are kept alive by the request itself.
 ///
 /// # Example
 ///
@@ -1116,17 +1299,20 @@ fn extract_timing(request: *mut dv_infer_request) -> Result<ModelTiming, Error> 
 ///
 /// // Do preprocessing for the next frame while NPU is busy...
 ///
-/// let timing = request.wait(DEFAULT_TIMEOUT_MS)?;
-/// println!("Request {id}: NPU={:?}", timing.run_time);
+/// let stats = request.wait(DEFAULT_TIMEOUT_MS)?;
+/// println!("Request {id}: NPU={:?}", stats.timing.run_time);
 /// # Ok::<(), ara2::Error>(())
 /// ```
 pub struct InferRequest {
     session: Arc<SessionInner>,
     ptr: *mut dv_infer_request,
+    /// Registrations of every tensor this request reads or writes; held so
+    /// dropping their owners cannot unregister them mid-inference.
+    _shm_guards: Vec<Arc<ShmRegistration>>,
     /// Keeps raw-pointer memory mappings alive until the request completes.
     /// For `RAW_POINTER` blobs the NPU references the mapped pointers
     /// throughout execution, so these guards must not be dropped until
-    /// after `wait()` or cancellation via `Drop`.
+    /// after `wait()` or the request's drop.
     _map_guards: Vec<HostView<'static, u8>>,
 }
 
@@ -1138,17 +1324,18 @@ pub struct InferRequest {
 unsafe impl Send for InferRequest {}
 
 impl InferRequest {
-    /// Block until this inference request completes and return timing.
+    /// Block until this inference request completes and return statistics.
     ///
     /// Consumes the request handle — the underlying C object is freed
-    /// after extracting timing information. Calling `wait` a second time
+    /// after extracting statistics. Calling `wait` a second time
     /// is not possible since `self` is moved.
     ///
-    /// # Cancellation on error
+    /// # On error
     ///
     /// Because `wait` takes `self` by value, any error (including timeout)
-    /// drops the `InferRequest`, which calls `dv_infer_free` and cancels
-    /// the in-flight request. If you need longer wait times, increase
+    /// drops the `InferRequest`. The drop blocks for up to about 4 s more
+    /// while it waits for the in-flight request to finish, then frees it.
+    /// If you need longer wait times, increase
     /// `timeout_ms` rather than retrying — the timeout applies per poll
     /// iteration, not cumulatively.
     ///
@@ -1161,7 +1348,8 @@ impl InferRequest {
     /// # Errors
     ///
     /// - [`Error::Ara2`] — the wait call itself failed (e.g., timeout
-    ///   expired). The request is cancelled on drop.
+    ///   expired). Dropping the request then waits up to about 4 s for it
+    ///   to finish before freeing it.
     /// - [`Error::InferenceFailed`] — the NPU reported a failure
     /// - [`Error::InferenceNotCompleted`] — the request reached an
     ///   unexpected terminal state (e.g., UNKNOWN)
@@ -1176,11 +1364,11 @@ impl InferRequest {
     /// # let mut model = endpoints[0].load_model_from_file("m.dvm".as_ref())?;
     /// # model.allocate_tensors(None)?;
     /// let request = model.submit()?;
-    /// let timing = request.wait(DEFAULT_TIMEOUT_MS)?;
-    /// println!("Inference took {:?}", timing.run_time);
+    /// let stats = request.wait(DEFAULT_TIMEOUT_MS)?;
+    /// println!("Inference took {:?}", stats.timing.run_time);
     /// # Ok::<(), ara2::Error>(())
     /// ```
-    pub fn wait(self, timeout_ms: i32) -> Result<ModelTiming, Error> {
+    pub fn wait(self, timeout_ms: i32) -> Result<InferenceStats, Error> {
         let mut completed: *mut dv_infer_request = std::ptr::null_mut();
         let mut list = [self.ptr];
 
@@ -1191,18 +1379,40 @@ impl InferRequest {
         // with the same timeout each iteration — the proxy tracks
         // elapsed time internally.
         loop {
-            let err = unsafe {
-                self.session.lib.dv_infer_wait_for_completion(
-                    self.session.ptr,
-                    list.as_mut_ptr(),
-                    1,
-                    timeout_ms,
-                    &mut completed,
-                )
-            };
-
-            if err != 0 {
-                return Err(err.into());
+            let session = &*self.session;
+            let (sp, lp) = (session.ptr, list.as_mut_ptr());
+            // SAFETY: `ptr` is valid until dv_infer_free in drop and `list`
+            // holds only that request.
+            unsafe {
+                match &session.vlib {
+                    VersionLib::V1_3(v) if v.dv_infer_wait_for_completion_s.is_ok() => {
+                        status_result(
+                            session,
+                            v.dv_infer_wait_for_completion_s(sp, lp, 1, timeout_ms, &mut completed)
+                                .into(),
+                        )?
+                    }
+                    VersionLib::V3_0(v) if v.dv_infer_wait_for_completion_e.is_ok() => {
+                        status_result(
+                            session,
+                            v.dv_infer_wait_for_completion_e(sp, lp, 1, timeout_ms, &mut completed)
+                                .into(),
+                        )?
+                    }
+                    // A forced ARA2_ABI can load a library lacking the detailed symbols.
+                    _ => {
+                        let code = session.lib.dv_infer_wait_for_completion(
+                            sp,
+                            lp,
+                            1,
+                            timeout_ms,
+                            &mut completed,
+                        );
+                        if code != 0 {
+                            return Err(session.status_error(code));
+                        }
+                    }
+                }
             }
 
             // Use the `completed` out-parameter to read status — this is
@@ -1217,7 +1427,7 @@ impl InferRequest {
             let status = unsafe { (*completed).status };
             match status {
                 DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_COMPLETED => {
-                    return extract_timing(completed);
+                    return extract_stats(completed, self.session.abi);
                     // Drop runs here, calling dv_infer_free
                 }
                 DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_FAILED => {
@@ -1267,14 +1477,67 @@ impl InferRequest {
         let mut req_id: u64 = 0;
         let err = unsafe { self.session.lib.dv_infer_get_req_id(self.ptr, &mut req_id) };
         if err != 0 {
-            return Err(err.into());
+            return Err(self.session.status_error(err));
         }
         Ok(req_id)
     }
 }
 
+/// Upper bound on `dv_infer_wait_for_completion` calls when a request that
+/// is still pending is dropped.
+const MAX_DROP_WAITS: usize = 4;
+
+impl InferRequest {
+    fn is_pending(&self) -> bool {
+        // SAFETY: `ptr` stays valid until dv_infer_free in `drop`; this is
+        // the same status read `wait()` performs.
+        let status = unsafe { (*self.ptr).status };
+        status == DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_QUEUED
+            || status == DV_INFERENCE_STATUS_DV_INFERENCE_STATUS_RUNNING
+    }
+}
+
 impl Drop for InferRequest {
     fn drop(&mut self) {
+        // The proxy may still be using the registered buffers of a request
+        // that has not finished, and unregistering them mid-flight crashes
+        // the proxy. A request with heap buffers must finish too: freeing
+        // it while queued leaves the model busy for the next submit. Give
+        // the request a bounded chance to finish; if it does not, leak any
+        // registrations rather than release them. The heap `_map_guards`
+        // drop with the request after dv_infer_free.
+        let mut list = [self.ptr];
+        let mut completed: *mut dv_infer_request = std::ptr::null_mut();
+        for _ in 0..MAX_DROP_WAITS {
+            if !self.is_pending() {
+                break;
+            }
+            // SAFETY: `ptr` is valid until dv_infer_free below and `list`
+            // holds only that request.
+            let err = unsafe {
+                self.session.lib.dv_infer_wait_for_completion(
+                    self.session.ptr,
+                    list.as_mut_ptr(),
+                    1,
+                    DEFAULT_TIMEOUT_MS,
+                    &mut completed,
+                )
+            };
+            if err != 0 {
+                break;
+            }
+        }
+        if !self._shm_guards.is_empty() && self.is_pending() {
+            let guards = std::mem::take(&mut self._shm_guards);
+            log::warn!(
+                "request did not finish within the drop timeout; leaking {} \
+                 shared-memory registrations so the proxy is not left using \
+                 unmapped buffers",
+                guards.len()
+            );
+            std::mem::forget(guards);
+        }
+        // SAFETY: `ptr` came from dv_infer_async and is freed exactly once.
         unsafe {
             self.session.lib.dv_infer_free(self.ptr);
         }
@@ -1296,19 +1559,17 @@ impl Drop for Model {
 /// from the model slot. Allocate more sets than pipeline slots so a decoder can
 /// hold some sets while the model keeps inferring into others.
 pub struct OutputSet {
-    #[allow(dead_code)] // keep-alive: holds the session so registered descriptors stay valid
     session: Arc<SessionInner>,
-    tensors: Vec<(Tensor<u8>, *mut dv_shm_descriptor)>,
+    tensors: Vec<BoundTensor>,
 }
-
-// Safety: Arc is Send+Sync; raw pointers are FFI-registered descriptors used
-// only through the session library handle.
-unsafe impl Send for OutputSet {}
 
 impl OutputSet {
     /// Reference to the output tensor at `idx`.
+    ///
+    /// A heap tensor without an fd when the set came from a TCP session; see
+    /// [`Model::allocate_tensors`].
     pub fn output_tensor(&self, idx: usize) -> &Tensor<u8> {
-        &self.tensors[idx].0
+        &self.tensors[idx].tensor
     }
 
     /// Number of output tensors in this set.
@@ -1331,19 +1592,17 @@ impl OutputSet {
 /// DMA-BUF from the model slot so any slot can read from any pool tensor,
 /// enabling full GPU zero-copy preprocessing alongside output rebinding.
 pub struct InputSet {
-    #[allow(dead_code)] // keep-alive: holds the session so registered descriptors stay valid
     session: Arc<SessionInner>,
-    tensors: Vec<(Tensor<u8>, *mut dv_shm_descriptor)>,
+    tensors: Vec<BoundTensor>,
 }
-
-// Safety: Arc is Send+Sync; raw pointers are FFI-registered descriptors used
-// only through the session library handle.
-unsafe impl Send for InputSet {}
 
 impl InputSet {
     /// Reference to the input tensor at `idx`.
+    ///
+    /// A heap tensor without an fd when the set came from a TCP session; see
+    /// [`Model::allocate_tensors`].
     pub fn input_tensor(&self, idx: usize) -> &Tensor<u8> {
-        &self.tensors[idx].0
+        &self.tensors[idx].tensor
     }
 
     /// Number of input tensors in this set.
@@ -1562,8 +1821,157 @@ impl TryFrom<DV_LAYER_OUTPUT_TYPE> for ModelOutputType {
     }
 }
 
+const _: () = {
+    fn assert_send_sync<T: Send + Sync>() {}
+    let _ = assert_send_sync::<OutputSet>;
+    let _ = assert_send_sync::<InputSet>;
+};
+
 #[cfg(test)]
 mod tests {
+    use super::{DEFAULT_TIMEOUT_MS, Model, ModelType};
+    use crate::{Abi, Error};
+    use edgefirst_tensor::{TensorMapTrait as _, TensorMemory, TensorTrait as _};
+
+    /// The fd-registration tests below need a session that can pass file
+    /// descriptors. On any other session they check the refusal instead.
+    fn fd_passing_or_refused(session: &crate::Session, model: &mut Model) -> bool {
+        if session.supports_fd_passing() {
+            return true;
+        }
+        assert!(matches!(
+            model.allocate_tensors(Some(TensorMemory::DmaBuf)),
+            Err(Error::FdPassingUnavailable)
+        ));
+        eprintln!("session cannot pass file descriptors; checked the refusal only");
+        false
+    }
+
+    /// Number of file descriptors the running proxy holds. The proxy keeps
+    /// one per registered buffer, so a leak shows up here.
+    fn proxy_fd_count() -> usize {
+        let proxy = crate::discover()
+            .expect("discover")
+            .into_iter()
+            .next()
+            .expect("a running proxy");
+        std::fs::read_dir(format!("/proc/{}/fd", proxy.pid))
+            .expect("reading the proxy's fds needs root")
+            .count()
+    }
+
+    #[test]
+    fn shm_registrations_are_released() {
+        let session = crate::tests::test_session();
+        let endpoint = session.list_endpoints().unwrap().remove(0);
+        let mut model = endpoint
+            .load_model_from_file(&crate::tests::test_model_path())
+            .unwrap();
+        if !fd_passing_or_refused(&session, &mut model) {
+            return;
+        }
+        model.allocate_tensors(Some(TensorMemory::DmaBuf)).unwrap();
+        model.run().unwrap();
+        let before = proxy_fd_count();
+
+        for _ in 0..50 {
+            model.allocate_tensors(Some(TensorMemory::DmaBuf)).unwrap();
+            model.run().unwrap();
+            drop(
+                model
+                    .allocate_output_set(Some(TensorMemory::DmaBuf))
+                    .unwrap(),
+            );
+            drop(model.allocate_input_set(Some(TensorMemory::Shm)).unwrap());
+        }
+        let after = proxy_fd_count();
+        eprintln!("proxy fds: before={before} after={after}");
+        assert!(
+            after <= before + 4,
+            "proxy fds grew from {before} to {after}"
+        );
+
+        // Heap tensors register nothing.
+        model.allocate_tensors(None).unwrap();
+        model.run().unwrap();
+        assert!(proxy_fd_count() <= after);
+    }
+
+    #[test]
+    fn dmabuf_request_dropped_before_completion_is_safe() {
+        let session = crate::tests::test_session();
+        let endpoint = session.list_endpoints().unwrap().remove(0);
+        let mut model = endpoint
+            .load_model_from_file(&crate::tests::test_model_path())
+            .unwrap();
+        if !fd_passing_or_refused(&session, &mut model) {
+            return;
+        }
+        let proxy_pid = crate::discover().unwrap().remove(0).pid;
+        model.allocate_tensors(Some(TensorMemory::DmaBuf)).unwrap();
+        model.run().unwrap();
+        let before = proxy_fd_count();
+
+        drop(model.submit().unwrap());
+        model.allocate_tensors(Some(TensorMemory::DmaBuf)).unwrap();
+        for _ in 0..10 {
+            model.run().unwrap();
+        }
+        let after = proxy_fd_count();
+        eprintln!("proxy fds: before={before} after={after}");
+        assert!(
+            after <= before + 4,
+            "proxy fds grew from {before} to {after}"
+        );
+        assert!(
+            std::path::Path::new(&format!("/proc/{proxy_pid}")).exists(),
+            "proxy exited"
+        );
+    }
+
+    #[test]
+    fn registration_outlives_dropped_set_while_pending() {
+        let session = crate::tests::test_session();
+        let endpoint = session.list_endpoints().unwrap().remove(0);
+        let mut model = endpoint
+            .load_model_from_file(&crate::tests::test_model_path())
+            .unwrap();
+        if !fd_passing_or_refused(&session, &mut model) {
+            return;
+        }
+        model.allocate_tensors(Some(TensorMemory::DmaBuf)).unwrap();
+        let outputs = model
+            .allocate_output_set(Some(TensorMemory::DmaBuf))
+            .unwrap();
+        let request = model.submit_with_output_set(&outputs).unwrap();
+        drop(outputs);
+        request
+            .wait(DEFAULT_TIMEOUT_MS)
+            .expect("inference completes after its output set is dropped");
+    }
+
+    #[test]
+    fn model_type_decodes_per_version() {
+        assert_eq!(ModelType::from_raw(1, Abi::V1_3), ModelType::Ara2Cnn);
+        assert_eq!(ModelType::from_raw(4, Abi::V3_0), ModelType::McsLlm);
+        assert_eq!(ModelType::from_raw(4, Abi::V1_3), ModelType::Other(4));
+    }
+
+    #[test]
+    fn model_information() {
+        let session = crate::tests::test_session();
+        let model = session.list_endpoints().unwrap()[0]
+            .load_model_from_file(&crate::tests::test_model_path())
+            .unwrap();
+        eprintln!(
+            "{:?} {:?} {:?}",
+            model.version(),
+            model.name(),
+            model.model_type()
+        );
+        assert_eq!(model.model_type(), ModelType::Ara2Cnn);
+        assert!(model.name().is_some());
+    }
 
     #[test]
     fn test_load_model_from_file() {
@@ -1623,8 +2031,11 @@ mod tests {
             .allocate_tensors(None)
             .expect("should allocate tensors");
 
-        let timing = model.run().expect("inference should succeed");
-        assert!(timing.run_time.as_micros() > 0, "run_time should be > 0");
+        let stats = model.run().expect("inference should succeed");
+        assert!(
+            stats.timing.run_time.as_micros() > 0,
+            "run_time should be > 0"
+        );
     }
 
     #[test]
@@ -1646,10 +2057,13 @@ mod tests {
         let _req_id = request.request_id().expect("should get request id");
 
         // Wait for completion
-        let timing = request
+        let stats = request
             .wait(super::DEFAULT_TIMEOUT_MS)
             .expect("wait should succeed");
-        assert!(timing.run_time.as_micros() > 0, "run_time should be > 0");
+        assert!(
+            stats.timing.run_time.as_micros() > 0,
+            "run_time should be > 0"
+        );
 
         // No in-flight requests after wait
         let count = session.inflight_count().expect("should get inflight count");
@@ -1671,13 +2085,176 @@ mod tests {
         drop(request);
 
         // Verify we can still run inference after dropping a request
-        let timing = model.run().expect("inference should succeed after drop");
-        assert!(timing.run_time.as_micros() > 0);
+        let stats = model.run().expect("inference should succeed after drop");
+        assert!(stats.timing.run_time.as_micros() > 0);
+    }
+
+    /// A wrong struct layout reads garbage rather than failing a call, so
+    /// check every model field we rely on for internal consistency, and
+    /// against the .dvm metadata where the file carries it.
+    #[test]
+    fn model_layout_reads_are_sane() {
+        let session = crate::tests::test_session();
+        let path = crate::tests::test_model_path();
+        let model = session.list_endpoints().unwrap()[0]
+            .load_model_from_file(&path)
+            .unwrap();
+
+        let (n_in, n_out) = (model.n_inputs(), model.n_outputs());
+        assert!((1..=16).contains(&n_in), "n_inputs = {n_in}");
+        assert!((1..=64).contains(&n_out), "n_outputs = {n_out}");
+        for i in 0..n_in {
+            let [c, h, w] = model.input_shape(i);
+            assert!(
+                c >= 1 && h >= 1 && w >= 1 && c <= 4096 && h <= 8192 && w <= 8192,
+                "input {i}: {c}x{h}x{w}"
+            );
+            assert!(
+                model.input_size(i) >= c * h * w,
+                "input {i} size {} < {c}*{h}*{w}",
+                model.input_size(i)
+            );
+        }
+        for i in 0..n_out {
+            let [c, h, w] = model.output_shape(i);
+            assert!(c * h * w >= 1, "output {i}: {c}x{h}x{w}");
+            assert!(
+                model.output_size(i) >= c * h * w * model.output_bpp(i).max(1) / 2,
+                "output {i} size"
+            );
+            let info = model.output_info(i).expect("output info");
+            assert!(!format!("{info:?}").is_empty());
+        }
+
+        // Metadata `size` is "WIDTHxHEIGHT"; input_shape is [C, H, W].
+        if let Ok(Some(meta)) = crate::read_metadata_from_file(&path) {
+            if let Some((w, h)) = meta.input.as_ref().and_then(|i| i.dimensions()) {
+                let [_, mh, mw] = model.input_shape(0);
+                assert_eq!(
+                    (mw, mh),
+                    (w as usize, h as usize),
+                    "input 0 vs .dvm metadata"
+                );
+            }
+            if let Some(c) = meta.input.as_ref().and_then(|i| i.input_channels) {
+                assert_eq!(
+                    model.input_shape(0)[0],
+                    c as usize,
+                    "input 0 channels vs .dvm metadata"
+                );
+            }
+        }
+    }
+
+    fn fd_memories() -> [TensorMemory; 2] {
+        [TensorMemory::DmaBuf, TensorMemory::Shm]
+    }
+
+    /// Over TCP every allocation path must refuse fd-backed tensors before
+    /// reaching the library; over UNIX they must work and match heap output.
+    #[test]
+    fn fd_tensors_follow_the_transport() {
+        let session = crate::tests::test_session();
+        let path = crate::tests::test_model_path();
+        let endpoint = session.list_endpoints().unwrap().remove(0);
+
+        if !session.supports_fd_passing() {
+            eprintln!("fd_tensors_follow_the_transport: TCP branch");
+            for memory in fd_memories() {
+                let mut model = endpoint.load_model_from_file(&path).unwrap();
+                assert!(matches!(
+                    model.allocate_tensors(Some(memory)),
+                    Err(Error::FdPassingUnavailable)
+                ));
+                assert!(matches!(
+                    model.allocate_input_set(Some(memory)),
+                    Err(Error::FdPassingUnavailable)
+                ));
+                assert!(matches!(
+                    model.allocate_output_set(Some(memory)),
+                    Err(Error::FdPassingUnavailable)
+                ));
+            }
+            let mut model = endpoint.load_model_from_file(&path).unwrap();
+            model.allocate_tensors(None).unwrap();
+            model.run().expect("heap inference over TCP");
+            return;
+        }
+
+        eprintln!("fd_tensors_follow_the_transport: UNIX branch");
+        let mut heap = endpoint.load_model_from_file(&path).unwrap();
+        heap.allocate_tensors(None).unwrap();
+        fill_input_pattern(&mut heap);
+        heap.run().unwrap();
+        for memory in fd_memories() {
+            let mut model = endpoint.load_model_from_file(&path).unwrap();
+            model
+                .allocate_tensors(Some(memory))
+                .unwrap_or_else(|e| panic!("{memory:?}: {e}"));
+            fill_input_pattern(&mut model);
+            model
+                .run()
+                .unwrap_or_else(|e| panic!("{memory:?} inference: {e}"));
+            for i in 0..model.n_outputs() {
+                assert_eq!(
+                    output_bytes(&model, i),
+                    output_bytes(&heap, i),
+                    "{memory:?} output {i}"
+                );
+            }
+            eprintln!("{memory:?}: {} outputs equal heap", model.n_outputs());
+        }
+    }
+
+    fn fill_input_pattern(model: &mut Model) {
+        for i in 0..model.n_inputs() {
+            let tensor = model.input_tensor(i);
+            let mut map = tensor.map().unwrap();
+            for (j, b) in map.as_mut_slice().iter_mut().enumerate() {
+                *b = (j % 251) as u8;
+            }
+        }
+    }
+
+    fn output_bytes(model: &Model, i: usize) -> Vec<u8> {
+        model.output_tensor(i).map().unwrap().as_slice().to_vec()
+    }
+
+    #[test]
+    fn inference_stats_are_populated_on_the_host_monotonic_clock() {
+        let session = crate::tests::test_session();
+        let mut model = session.list_endpoints().unwrap()[0]
+            .load_model_from_file(&crate::tests::test_model_path())
+            .unwrap();
+        model.allocate_tensors(None).unwrap();
+        let before = crate::monotonic_now();
+        let stats = model.run().unwrap();
+        let after = crate::monotonic_now();
+        eprintln!("{} {stats:?}", session.abi());
+        assert!(stats.timing.run_time > std::time::Duration::ZERO);
+        assert!(stats.clocks.sys_mhz > 0 && stats.clocks.dram_mhz > 0);
+        assert!(stats.hw_cycles > 0, "hardware cycle count missing");
+        let stamps = [
+            ("input", stats.input_start),
+            ("inference", stats.inference_start),
+            ("output", stats.output_start),
+        ];
+        if session.abi() != crate::Abi::V3_0 {
+            assert!(stamps.iter().all(|(_, t)| t.is_none()));
+            return;
+        }
+        for (name, t) in stamps {
+            let t = t.unwrap_or_else(|| panic!("{name} stamp missing"));
+            assert!(
+                before <= t && t <= after,
+                "{name} stamp {t:?} outside [{before:?}, {after:?}]"
+            );
+        }
     }
 }
 
 #[cfg(test)]
-mod quant_tests {
+mod offline_quant_tests {
     use super::*;
 
     #[test]
@@ -1795,5 +2372,42 @@ mod quant_tests {
         assert!(msg.contains("1024"));
         assert!(msg.contains("512"));
         assert!(msg.contains("mismatch"));
+    }
+}
+
+#[cfg(test)]
+mod offline_tests {
+    use super::resolve_memory_for;
+    use crate::Error;
+    use edgefirst_tensor::TensorMemory;
+
+    #[test]
+    fn memory_with_fd_passing_is_unchanged() {
+        for memory in [
+            None,
+            Some(TensorMemory::Mem),
+            Some(TensorMemory::Shm),
+            Some(TensorMemory::DmaBuf),
+        ] {
+            assert_eq!(resolve_memory_for(true, memory).unwrap(), memory);
+        }
+    }
+
+    #[test]
+    fn memory_without_fd_passing_defaults_to_heap_and_refuses_fds() {
+        assert_eq!(
+            resolve_memory_for(false, None).unwrap(),
+            Some(TensorMemory::Mem)
+        );
+        assert_eq!(
+            resolve_memory_for(false, Some(TensorMemory::Mem)).unwrap(),
+            Some(TensorMemory::Mem)
+        );
+        for memory in [TensorMemory::Shm, TensorMemory::DmaBuf] {
+            assert!(matches!(
+                resolve_memory_for(false, Some(memory)),
+                Err(Error::FdPassingUnavailable)
+            ));
+        }
     }
 }

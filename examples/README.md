@@ -23,6 +23,8 @@ in Python they are four wheels sharing the `edgefirst.` namespace.
 | `yolov8_live.rs` | Live camera inference (Rust + libcamera + wayland-client) |
 | `yolov8_live.py` | Live camera inference (Python + libcamera + pywayland) |
 | `yolov8.py` | Static image inference (Python) |
+| `telemetry.rs` | Telemetry report and sampling-cost measurement (Rust) |
+| `telemetry.py` | Telemetry report (Python) |
 
 ## Models
 
@@ -99,6 +101,29 @@ yolov8 yolov8n-seg-int16.dvm zidane.jpg --save --benchmark 30
 
 ---
 
+## telemetry -- Telemetry Report (Rust and Python)
+
+Prints everything the runtime reports: the DVAPI version and component versions, `Endpoint::info()`, `Endpoint::statistics()`, `is_busy()`, the model's version, name and type, and the full `InferenceStats` of one inference.
+Fields the loaded DVAPI version does not provide print as `None` or `n/a`, and calls it lacks (`is_busy()`) print a message saying so.
+
+The Rust example also measures the cost of sampling: it times `iterations` inferences alone, then again while a second thread calls `Endpoint::statistics()` every `sample_ms` milliseconds, and prints both frame rates and the call latency.
+It needs no `decoder` feature and no image.
+
+```bash
+# Cross-compile (from development host):
+cargo zigbuild --release --target aarch64-unknown-linux-gnu --example telemetry
+
+# On target:
+telemetry <model.dvm> [iterations] [sample_ms]    # defaults: 200 iterations, 100 ms
+python3 telemetry.py <model.dvm>
+```
+
+On DVAPI 3.0 the `input_start`, `inference_start` and `output_start` timestamps are on `CLOCK_MONOTONIC`, so they line up with a Perfetto trace taken on the same host.
+On DVAPI 1.x they are `None`.
+See [Availability by DVAPI version](../README.md#availability-by-dvapi-version) for which other fields are absent on which version.
+
+---
+
 ## yolov8_live -- Live Camera Inference (Rust)
 
 Captures NV12 or YUYV frames from a camera via libcamera, runs YOLOv8
@@ -144,7 +169,7 @@ export BINDGEN_EXTRA_CLANG_ARGS="--target=aarch64-poky-linux --sysroot=$SYSROOT 
 cargo build --release --target aarch64-unknown-linux-gnu --example yolov8_live
 ```
 
-### Run (imx95-frdm with on-board `os08a20` MIPI-CSI sensor)
+### Run (FRDM i.MX 95 with on-board `os08a20` MIPI-CSI sensor)
 
 ```bash
 export XDG_RUNTIME_DIR=/run/user/0
@@ -176,7 +201,7 @@ Only the `nxp/neo` pipeline exposes NV12, YUYV, NV16, UYVY, RGB, etc.
 | `--threshold` | 0.50 | Detection confidence threshold |
 | `--iou` | 0.45 | NMS IoU threshold |
 | `--color-mode` | `class` | Mask coloring: `class`, `instance`, or `track` |
-| `--socket` | `$ARA2_SOCKET`, else `/var/run/proxy.sock` | ARA-2 proxy UNIX socket path |
+| `--socket` | none: the proxy is found as `Session::connect()` does | ARA-2 proxy UNIX socket path |
 
 On i.MX95 with the Neo ISP, only `1920x1080` and `3840x2160` are supported
 capture sizes; other values will be silently adjusted.
@@ -201,7 +226,7 @@ pip install edgefirst-ara2 'edgefirst-decoder>=0.31' 'edgefirst-image>=0.31' \
 The `--system-site-packages` flag is required to pick up the libcamera
 Python bindings from system packages.
 
-### Run (imx95-frdm with on-board `os08a20` MIPI-CSI sensor)
+### Run (FRDM i.MX 95 with on-board `os08a20` MIPI-CSI sensor)
 
 ```bash
 export XDG_RUNTIME_DIR=/run/user/0
@@ -230,11 +255,11 @@ See the Rust `yolov8_live` section above for why
 | `--threshold` | 0.50 | Detection confidence threshold |
 | `--iou` | 0.45 | NMS IoU threshold |
 | `--color-mode` | `class` | Mask coloring: `class`, `instance`, or `track` |
-| `--socket` | `$ARA2_SOCKET`, else `/var/run/proxy.sock` | ARA-2 proxy UNIX socket path |
+| `--socket` | none: the proxy is found as `Session::connect()` does | ARA-2 proxy UNIX socket path |
 
 ---
 
-## Performance (measured on imx95-frdm)
+## Performance (measured on FRDM i.MX 95)
 
 ### yolov8n-seg (nano) at 1920x1080
 

@@ -9,6 +9,37 @@ use pyo3::prelude::*;
 pub enum Abi {
     V1_1,
     V1_3,
+    V3_0,
+}
+
+/// A component and the version the proxy reports for it.
+#[pyclass(module = "edgefirst_ara2", frozen, get_all, from_py_object)]
+#[derive(Clone)]
+pub struct ComponentVersion {
+    /// Component name, e.g. "proxy", "firmware", "client_lib",
+    /// or "product_type_N" for one this build does not name.
+    pub component: String,
+    /// Version as "major.minor.patch.patch_minor".
+    pub version: String,
+}
+
+impl From<ara2::ComponentVersion> for ComponentVersion {
+    fn from(v: ara2::ComponentVersion) -> Self {
+        ComponentVersion {
+            component: v.component.to_string(),
+            version: v.version.to_string(),
+        }
+    }
+}
+
+#[pymethods]
+impl ComponentVersion {
+    fn __repr__(&self) -> String {
+        format!(
+            "ComponentVersion(component={:?}, version={:?})",
+            self.component, self.version
+        )
+    }
 }
 
 impl From<ara2::Abi> for Abi {
@@ -16,9 +47,10 @@ impl From<ara2::Abi> for Abi {
         match abi {
             ara2::Abi::V1_1 => Abi::V1_1,
             ara2::Abi::V1_3 => Abi::V1_3,
+            ara2::Abi::V3_0 => Abi::V3_0,
             // ara2::Abi is #[non_exhaustive]; a generation added upstream
             // reaches Python as the newest one this build knows.
-            _ => Abi::V1_3,
+            _ => Abi::V3_0,
         }
     }
 }
@@ -29,6 +61,7 @@ impl Abi {
         match self {
             Abi::V1_1 => "1.1",
             Abi::V1_3 => "1.3",
+            Abi::V3_0 => "3.0",
         }
     }
 
@@ -113,6 +146,8 @@ pub struct DramStatistics {
     pub model_occupancy_size: u64,
     /// DRAM occupied by tensor buffers in bytes.
     pub tensor_occupancy_size: u64,
+    /// Largest contiguous free block in bytes; ``None`` before DVAPI 3.0.
+    pub largest_contiguous_free: Option<u64>,
 }
 
 impl From<ara2::DramStatistics> for DramStatistics {
@@ -124,6 +159,7 @@ impl From<ara2::DramStatistics> for DramStatistics {
             reserved_occupancy_size: s.reserved_occupancy_size,
             model_occupancy_size: s.model_occupancy_size,
             tensor_occupancy_size: s.tensor_occupancy_size,
+            largest_contiguous_free: s.largest_contiguous_free,
         }
     }
 }
@@ -142,20 +178,28 @@ impl DramStatistics {
 #[pyclass(module = "edgefirst_ara2", get_all, from_py_object)]
 #[derive(Clone, Copy, Debug)]
 pub struct ModelTiming {
-    /// NPU inference execution time in microseconds.
-    pub run_time_us: u64,
-    /// Input DMA transfer time in microseconds.
-    pub input_time_us: u64,
-    /// Output DMA transfer time in microseconds.
-    pub output_time_us: u64,
+    /// NPU inference execution time in seconds.
+    pub run_time: f64,
+    /// Input DMA transfer time in seconds.
+    pub input_time: f64,
+    /// Output DMA transfer time in seconds.
+    pub output_time: f64,
+}
+
+/// An optional value as Python would print it.
+fn opt<T: std::fmt::Debug>(v: &Option<T>) -> String {
+    match v {
+        Some(v) => format!("{v:?}"),
+        None => "None".to_string(),
+    }
 }
 
 impl From<ara2::ModelTiming> for ModelTiming {
     fn from(t: ara2::ModelTiming) -> Self {
         ModelTiming {
-            run_time_us: t.run_time.as_micros() as u64,
-            input_time_us: t.input_time.as_micros() as u64,
-            output_time_us: t.output_time.as_micros() as u64,
+            run_time: t.run_time.as_secs_f64(),
+            input_time: t.input_time.as_secs_f64(),
+            output_time: t.output_time.as_secs_f64(),
         }
     }
 }
@@ -164,8 +208,410 @@ impl From<ara2::ModelTiming> for ModelTiming {
 impl ModelTiming {
     fn __repr__(&self) -> String {
         format!(
-            "ModelTiming(run_time_us={}, input_time_us={}, output_time_us={})",
-            self.run_time_us, self.input_time_us, self.output_time_us
+            "ModelTiming(run_time={}, input_time={}, output_time={})",
+            self.run_time, self.input_time, self.output_time
+        )
+    }
+}
+
+/// Clock frequencies in MHz.
+#[pyclass(module = "edgefirst_ara2", frozen, get_all, from_py_object)]
+#[derive(Clone, Copy, Debug)]
+pub struct Clocks {
+    /// System core clock.
+    pub sys_mhz: i32,
+    /// DRAM clock.
+    pub dram_mhz: i32,
+    /// Neural processor clock; ``None`` where the library does not report it.
+    pub nnp_mhz: Option<i32>,
+    /// SBP clock; ``None`` where the library does not report it.
+    pub sbp_mhz: Option<i32>,
+}
+
+impl From<ara2::Clocks> for Clocks {
+    fn from(c: ara2::Clocks) -> Self {
+        Clocks {
+            sys_mhz: c.sys_mhz,
+            dram_mhz: c.dram_mhz,
+            nnp_mhz: c.nnp_mhz,
+            sbp_mhz: c.sbp_mhz,
+        }
+    }
+}
+
+#[pymethods]
+impl Clocks {
+    fn __repr__(&self) -> String {
+        format!(
+            "Clocks(sys_mhz={}, dram_mhz={}, nnp_mhz={}, sbp_mhz={})",
+            self.sys_mhz,
+            self.dram_mhz,
+            opt(&self.nnp_mhz),
+            opt(&self.sbp_mhz)
+        )
+    }
+}
+
+fn monotonic_secs(t: Option<ara2::MonotonicTime>) -> Option<f64> {
+    t.map(|t| t.as_duration().as_secs_f64())
+}
+
+/// Everything the runtime reports about one completed inference.
+///
+/// The ``*_start`` timestamps are seconds on ``CLOCK_MONOTONIC``, the clock
+/// ``time.monotonic()`` reads. They are ``None`` on DVAPI 1.x, whose runtime
+/// stamps with the wall clock.
+#[pyclass(module = "edgefirst_ara2", frozen, get_all, from_py_object)]
+#[derive(Clone, Copy, Debug)]
+pub struct InferenceStats {
+    /// Execution and transfer durations.
+    pub timing: ModelTiming,
+    /// Clocks the inference ran at.
+    pub clocks: Clocks,
+    /// Hardware cycles, including floating-point work.
+    pub hw_cycles: u32,
+    /// Hardware cycles spent on floating-point work.
+    pub fp_cycles: u32,
+    /// When the input transfer started.
+    pub input_start: Option<f64>,
+    /// When the inference entered the NNP queue.
+    pub inference_start: Option<f64>,
+    /// When the output transfer started.
+    pub output_start: Option<f64>,
+    /// Inference retries the proxy performed across this session.
+    pub retries_session_total: u32,
+    /// Retries of this inference.
+    pub retries_this_inference: u32,
+}
+
+impl From<ara2::InferenceStats> for InferenceStats {
+    fn from(s: ara2::InferenceStats) -> Self {
+        InferenceStats {
+            timing: s.timing.into(),
+            clocks: s.clocks.into(),
+            hw_cycles: s.hw_cycles,
+            fp_cycles: s.fp_cycles,
+            input_start: monotonic_secs(s.input_start),
+            inference_start: monotonic_secs(s.inference_start),
+            output_start: monotonic_secs(s.output_start),
+            retries_session_total: s.retries.session_total,
+            retries_this_inference: s.retries.this_inference,
+        }
+    }
+}
+
+#[pymethods]
+impl InferenceStats {
+    fn __repr__(&self) -> String {
+        format!(
+            "InferenceStats(run_time={}, hw_cycles={}, fp_cycles={}, \
+             retries_this_inference={})",
+            self.timing.run_time, self.hw_cycles, self.fp_cycles, self.retries_this_inference
+        )
+    }
+}
+
+/// Verbosity of the client library's own logging.
+#[pyclass(module = "edgefirst_ara2", eq, eq_int, from_py_object)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum LogLevel {
+    Trace,
+    Debug,
+    Info,
+    Warn,
+    Error,
+    Critical,
+    Off,
+}
+
+impl From<LogLevel> for ara2::LogLevel {
+    fn from(l: LogLevel) -> Self {
+        match l {
+            LogLevel::Trace => ara2::LogLevel::Trace,
+            LogLevel::Debug => ara2::LogLevel::Debug,
+            LogLevel::Info => ara2::LogLevel::Info,
+            LogLevel::Warn => ara2::LogLevel::Warn,
+            LogLevel::Error => ara2::LogLevel::Error,
+            LogLevel::Critical => ara2::LogLevel::Critical,
+            LogLevel::Off => ara2::LogLevel::Off,
+        }
+    }
+}
+
+#[pymethods]
+impl LogLevel {
+    fn __str__(&self) -> String {
+        format!("{:?}", self)
+    }
+
+    fn __repr__(&self) -> String {
+        format!("LogLevel.{:?}", self)
+    }
+}
+
+/// The kind of model, as the runtime reports it.
+///
+/// ``Other`` is a value this build does not know for the loaded version;
+/// the raw value is logged at warning level.
+#[pyclass(module = "edgefirst_ara2", eq, eq_int, from_py_object)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ModelType {
+    Ara1Cnn,
+    Ara2Cnn,
+    Ara2Llm,
+    Ara2LlmDynV2,
+    McsLlm,
+    Other,
+}
+
+impl From<ara2::ModelType> for ModelType {
+    fn from(t: ara2::ModelType) -> Self {
+        match t {
+            ara2::ModelType::Ara1Cnn => ModelType::Ara1Cnn,
+            ara2::ModelType::Ara2Cnn => ModelType::Ara2Cnn,
+            ara2::ModelType::Ara2Llm => ModelType::Ara2Llm,
+            ara2::ModelType::Ara2LlmDynV2 => ModelType::Ara2LlmDynV2,
+            ara2::ModelType::McsLlm => ModelType::McsLlm,
+            ara2::ModelType::Other(raw) => {
+                log::warn!("model reported type {raw}, which this version does not define");
+                ModelType::Other
+            }
+            _ => ModelType::Other,
+        }
+    }
+}
+
+#[pymethods]
+impl ModelType {
+    fn __str__(&self) -> String {
+        format!("{:?}", self)
+    }
+
+    fn __repr__(&self) -> String {
+        format!("ModelType.{:?}", self)
+    }
+}
+
+/// The host bus an endpoint is attached through.
+///
+/// ``Other`` is a host interface value this build does not recognise; the
+/// raw value is logged at warning level.
+#[pyclass(module = "edgefirst_ara2", eq, eq_int, from_py_object)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum InterfaceKind {
+    Pcie,
+    Usb,
+    Other,
+}
+
+impl From<ara2::InterfaceKind> for InterfaceKind {
+    fn from(k: ara2::InterfaceKind) -> Self {
+        match k {
+            ara2::InterfaceKind::Pcie => InterfaceKind::Pcie,
+            ara2::InterfaceKind::Usb => InterfaceKind::Usb,
+            ara2::InterfaceKind::Other(raw) => {
+                log::warn!(
+                    "endpoint reported host interface {raw}, which this build does not recognise"
+                );
+                InterfaceKind::Other
+            }
+            _ => InterfaceKind::Other,
+        }
+    }
+}
+
+#[pymethods]
+impl InterfaceKind {
+    fn __str__(&self) -> String {
+        format!("{:?}", self)
+    }
+
+    fn __repr__(&self) -> String {
+        format!("InterfaceKind.{:?}", self)
+    }
+}
+
+/// The ARA-2 chip an endpoint is built on.
+#[pyclass(module = "edgefirst_ara2", frozen, get_all, from_py_object)]
+#[derive(Clone, Debug)]
+pub struct ChipInfo {
+    /// Chip name, such as ``ARA-2``; ``None`` when the library reports none.
+    pub id: Option<String>,
+    /// Silicon revision; ``None`` when the library reports none.
+    pub revision: Option<String>,
+    /// Number of control processors.
+    pub control_processors: i32,
+    /// Number of neural processors.
+    pub neural_processors: i32,
+    /// L2 memory size in bytes.
+    pub l2_bytes: u32,
+}
+
+impl From<ara2::ChipInfo> for ChipInfo {
+    fn from(c: ara2::ChipInfo) -> Self {
+        ChipInfo {
+            id: c.id,
+            revision: c.revision,
+            control_processors: c.control_processors,
+            neural_processors: c.neural_processors,
+            l2_bytes: c.l2_bytes,
+        }
+    }
+}
+
+#[pymethods]
+impl ChipInfo {
+    fn __repr__(&self) -> String {
+        format!(
+            "ChipInfo(id={}, revision={}, control_processors={}, neural_processors={}, l2_bytes={})",
+            opt(&self.id),
+            opt(&self.revision),
+            self.control_processors,
+            self.neural_processors,
+            self.l2_bytes
+        )
+    }
+}
+
+/// The DRAM attached to an endpoint.
+#[pyclass(module = "edgefirst_ara2", frozen, get_all, from_py_object)]
+#[derive(Clone, Debug)]
+pub struct DramInfo {
+    /// Manufacturer name, when the runtime knows it.
+    pub vendor_name: Option<String>,
+}
+
+impl From<ara2::DramInfo> for DramInfo {
+    fn from(d: ara2::DramInfo) -> Self {
+        DramInfo {
+            vendor_name: d.vendor_name,
+        }
+    }
+}
+
+#[pymethods]
+impl DramInfo {
+    fn __repr__(&self) -> String {
+        format!("DramInfo(vendor_name={})", opt(&self.vendor_name))
+    }
+}
+
+/// Where an endpoint sits on the host.
+#[pyclass(module = "edgefirst_ara2", frozen, get_all, from_py_object)]
+#[derive(Clone, Debug)]
+pub struct Interface {
+    /// The host bus type.
+    pub kind: InterfaceKind,
+    /// Bus number.
+    pub bus: i32,
+    /// Device number.
+    pub device: i32,
+    /// Port number.
+    pub port: i32,
+    /// The device's sysfs directory; reported for PCIe only.
+    pub sysfs_path: Option<std::path::PathBuf>,
+}
+
+impl From<ara2::Interface> for Interface {
+    fn from(i: ara2::Interface) -> Self {
+        Interface {
+            kind: i.kind.into(),
+            bus: i.bus,
+            device: i.device,
+            port: i.port,
+            sysfs_path: i.sysfs_path,
+        }
+    }
+}
+
+#[pymethods]
+impl Interface {
+    fn __repr__(&self) -> String {
+        format!(
+            "Interface(kind={:?}, bus={}, device={}, port={})",
+            self.kind, self.bus, self.device, self.port
+        )
+    }
+}
+
+/// Static information about an endpoint's hardware.
+#[pyclass(module = "edgefirst_ara2", frozen, get_all, from_py_object)]
+#[derive(Clone, Debug)]
+pub struct EndpointInfo {
+    /// PCI-style device identifier.
+    pub device_id: u32,
+    /// Vendor identifier.
+    pub vendor_id: u32,
+    /// The ARA-2 chip, when the runtime reports it.
+    pub chip: Option<ChipInfo>,
+    /// The attached DRAM, when the runtime reports it.
+    pub dram: Option<DramInfo>,
+    /// How the endpoint is attached to the host, when the runtime reports it.
+    pub interface: Option<Interface>,
+}
+
+impl From<ara2::EndpointInfo> for EndpointInfo {
+    fn from(i: ara2::EndpointInfo) -> Self {
+        EndpointInfo {
+            device_id: i.device_id,
+            vendor_id: i.vendor_id,
+            chip: i.chip.map(Into::into),
+            dram: i.dram.map(Into::into),
+            interface: i.interface.map(Into::into),
+        }
+    }
+}
+
+#[pymethods]
+impl EndpointInfo {
+    fn __repr__(&self) -> String {
+        format!(
+            "EndpointInfo(device_id={:#x}, vendor_id={:#x})",
+            self.device_id, self.vendor_id
+        )
+    }
+}
+
+/// Live operational statistics for an endpoint.
+#[pyclass(module = "edgefirst_ara2", frozen, get_all, from_py_object)]
+#[derive(Clone, Debug)]
+pub struct EndpointStatistics {
+    /// Current operational state of the endpoint.
+    pub state: State,
+    /// Endpoint clocks.
+    pub clocks: Clocks,
+    /// Average core voltage across the measurement points, in volts.
+    /// DVAPI 1.3 and later; the DVAPI 1.1 runtime (Kinara runtime 1.2.1)
+    /// does not measure it and reports 0.0.
+    pub core_voltage_v: f32,
+    /// Average endpoint temperature across the measurement points, in
+    /// degrees Celsius.
+    pub temp_c: f32,
+    /// Soft resets the endpoint has performed.
+    pub soft_reset_count: u32,
+    /// DRAM usage statistics.
+    pub dram: DramStatistics,
+}
+
+impl From<ara2::EndpointStatistics> for EndpointStatistics {
+    fn from(s: ara2::EndpointStatistics) -> Self {
+        EndpointStatistics {
+            state: s.state.into(),
+            clocks: s.clocks.into(),
+            core_voltage_v: s.core_voltage_v,
+            temp_c: s.temp_c,
+            soft_reset_count: s.soft_reset_count,
+            dram: s.dram.into(),
+        }
+    }
+}
+
+#[pymethods]
+impl EndpointStatistics {
+    fn __repr__(&self) -> String {
+        format!(
+            "EndpointStatistics(state={:?}, temp_c={}, soft_reset_count={})",
+            self.state, self.temp_c, self.soft_reset_count
         )
     }
 }

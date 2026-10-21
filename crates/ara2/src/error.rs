@@ -1,5 +1,5 @@
 use crate::DvapiVersion;
-use ara2_sys::{DV_LAYER_OUTPUT_TYPE, dv_status_code};
+use ara2_sys::DV_LAYER_OUTPUT_TYPE;
 
 /// `#[non_exhaustive]` because the variant set is not fixed: `Error::Codec`
 /// exists only with the `codec` feature, and Cargo unifies features across the
@@ -36,6 +36,13 @@ pub enum Error {
     /// [`crate::ABI_OVERRIDE_ENV`] was set to something other than a
     /// recognised [`crate::Abi`]. Carries the offending value.
     AbiOverrideInvalid(String),
+    /// `ARA2_ABI` asked for a layout that contradicts the version the library reported.
+    AbiOverrideRejected {
+        /// The layout the override asked for.
+        forced: crate::Abi,
+        /// The version the library reported.
+        reported: DvapiVersion,
+    },
     /// A proxy configuration file could not be read.
     ProxyConfigUnreadable {
         /// The file that could not be read.
@@ -56,6 +63,16 @@ pub enum Error {
         /// The process it came from, when it came from [`crate::discover`].
         pid: Option<u32>,
     },
+    /// `ARA2_SOCKET` is not a usable endpoint. Carries the value.
+    InvalidSocketOverride(String),
+    /// No proxy endpoint could be found. Lists every candidate checked.
+    NoProxyFound {
+        /// Each candidate, in the order checked.
+        checked: Vec<String>,
+    },
+    /// Shared-memory or DMA-BUF tensors were requested on a TCP session,
+    /// which cannot pass file descriptors to the proxy.
+    FdPassingUnavailable,
     /// `/proc` could not be read, so running proxies cannot be found.
     ProcUnavailable {
         /// The path under `/proc` that could not be read.
@@ -63,12 +80,26 @@ pub enum Error {
         /// Why reading it failed.
         source: std::io::Error,
     },
-    /// The client library returned a `dv_status_code_t` indicating failure.
-    /// Codes are grouped by range: 100s hardware, 200s proxy, 300s client
-    /// library, 400s proxy transport, 500s device.
-    Ara2(dv_status_code),
-    /// A `dv_product_type_t` outside the set this build recognises.
-    UnknownProductType(i32),
+    /// The client library returned a failing status. `name` is the
+    /// library's own name for `code`; `detail` is present when the call
+    /// had a detailed-status variant (DVAPI 1.3 and later). Codes are
+    /// grouped by range: 100s hardware, 200s proxy, 300s client library,
+    /// 400s proxy transport, 500s device.
+    Ara2 {
+        /// The `dv_status_code_t` value.
+        code: i32,
+        /// The library's name for it, from `dv_stringify_status_code`.
+        name: String,
+        /// Component and severity, when the library provided them.
+        detail: Option<crate::StatusDetail>,
+    },
+    /// The loaded DVAPI version does not provide this feature.
+    Unsupported {
+        /// What was asked for.
+        feature: &'static str,
+        /// The loaded version.
+        abi: crate::Abi,
+    },
     /// A `dv_layer_output_type_t` outside the set this build recognises.
     UnknownLayerOutputType(DV_LAYER_OUTPUT_TYPE),
     /// A tensor layout string the crate cannot map to an axis order.
@@ -102,6 +133,24 @@ pub enum Error {
     /// An inference request had not completed before its timeout. Carries
     /// the request id, for correlation with proxy logs.
     InferenceNotCompleted(u32),
+    /// The client library could not parse a model file. The library reports
+    /// a model built for the other runtime generation exactly as it reports
+    /// a damaged file, so this adds what the file's format says about which
+    /// it is.
+    ModelLoadFailed {
+        /// The status the library returned, an [`Error::Ara2`].
+        status: Box<Error>,
+        /// The model file.
+        path: std::path::PathBuf,
+        /// The runtime generation the load was attempted on.
+        runtime: crate::Abi,
+        /// What the model's format says about this runtime.
+        compatibility: crate::ModelCompatibility,
+        /// The converter version recorded in the model's metadata.
+        converter_version: Option<String>,
+        /// The SDK version recorded in the model's metadata.
+        sdk_version: Option<String>,
+    },
 }
 
 impl From<std::io::Error> for Error {
@@ -120,12 +169,6 @@ impl From<edgefirst_codec::CodecError> for Error {
 impl From<libloading::Error> for Error {
     fn from(e: libloading::Error) -> Self {
         Error::Library(e)
-    }
-}
-
-impl From<dv_status_code> for Error {
-    fn from(e: dv_status_code) -> Self {
-        Error::Ara2(e)
     }
 }
 
@@ -172,16 +215,34 @@ impl std::fmt::Display for Error {
                 tried.join(", ")
             ),
             Error::UnsupportedDvapi { name, version } => match version {
-                Some(version) => write!(
-                    f,
-                    "{name} implements DVAPI {version}, which this build of ara2 has no \
-                     struct layout for; set {} to 1.1 or 1.3 to force one",
-                    crate::ABI_OVERRIDE_ENV
-                ),
+                Some(version) => {
+                    write!(
+                        f,
+                        "{name} implements DVAPI {version}, which this build of ara2 has \
+                         no struct layout for; declare it in a new \
+                         crates/ara2-sys/include/dvapi_v{}_{}.h and check it with \
+                         crates/ara2-sys/update.sh --verify against that SDK's headers",
+                        version.major, version.minor
+                    )?;
+                    let same_major = match version.major {
+                        1 => Some("1.1 or 1.3"),
+                        3 => Some("3.0"),
+                        _ => None,
+                    };
+                    if let Some(layouts) = same_major {
+                        write!(
+                            f,
+                            ", or set {} to a known layout of the same major version \
+                             ({layouts}) to try bringing it up",
+                            crate::ABI_OVERRIDE_ENV
+                        )?;
+                    }
+                    Ok(())
+                }
                 None => write!(
                     f,
                     "{name} would not report a DVAPI version (no usable \
-                     dv_get_client_lib_version); set {} to 1.1 or 1.3 to force one",
+                     dv_get_client_lib_version); set {} to 1.1, 1.3 or 3.0 to force one",
                     crate::ABI_OVERRIDE_ENV
                 ),
             },
@@ -202,6 +263,19 @@ impl std::fmt::Display for Error {
                 ),
                 None => f.write_str("no endpoint this client can reach was declared"),
             },
+            Error::InvalidSocketOverride(v) => write!(
+                f,
+                "{} is set to {v:?}; expected a socket path, unix:/path, or tcp:IPV4:PORT",
+                crate::SOCKET_OVERRIDE_ENV
+            ),
+            Error::NoProxyFound { checked } => {
+                write!(f, "no ARA-2 proxy found; checked {}", checked.join(", "))
+            }
+            Error::FdPassingUnavailable => f.write_str(
+                "this session is connected over TCP, which cannot pass file descriptors; \
+                 pass None (heap on TCP) or Some(TensorMemory::Mem), or configure \
+                 the proxy with interface_type: SOCKET for zero-copy tensors",
+            ),
             Error::ProcUnavailable { path, source } => write!(
                 f,
                 "could not read {} to look for a running proxy: {source}",
@@ -209,11 +283,32 @@ impl std::fmt::Display for Error {
             ),
             Error::AbiOverrideInvalid(value) => write!(
                 f,
-                "{} is set to {value:?}; expected 1.1 or 1.3",
+                "{} is set to {value:?}; expected 1.1, 1.3 or 3.0",
                 crate::ABI_OVERRIDE_ENV
             ),
-            Error::Ara2(e) => write!(f, "Ara2 error: {e:?}"),
-            Error::UnknownProductType(e) => write!(f, "Unknown product type: {e:?}"),
+            Error::AbiOverrideRejected { forced, reported } => write!(
+                f,
+                "{} forces DVAPI {forced}, but the library reports {reported}; forcing a \
+                 layout is only allowed for an unrecognised version of the same major release",
+                crate::ABI_OVERRIDE_ENV
+            ),
+            Error::Ara2 {
+                code,
+                name,
+                detail: None,
+            } => write!(f, "{name} ({code})"),
+            Error::Ara2 {
+                code,
+                name,
+                detail: Some(d),
+            } => write!(
+                f,
+                "{name} ({code}) from the {}, {} (sub-code {})",
+                d.component, d.severity, d.sub_code
+            ),
+            Error::Unsupported { feature, abi } => {
+                write!(f, "{feature} is not available with DVAPI {abi}")
+            }
             Error::UnknownLayerOutputType(e) => write!(f, "Unknown layer output type: {e:?}"),
             Error::UnsupportedLayout(e) => write!(f, "Unsupported layout: {e:?}"),
             Error::UnsupportedTypeSize(e) => write!(f, "Unsupported type size: {e:?}"),
@@ -234,6 +329,53 @@ impl std::fmt::Display for Error {
             Error::InferenceFailed => write!(f, "asynchronous inference failed on the NPU"),
             Error::InferenceNotCompleted(status) => {
                 write!(f, "inference not completed (status={status})")
+            }
+            Error::ModelLoadFailed {
+                status,
+                path,
+                runtime,
+                compatibility,
+                converter_version,
+                sdk_version,
+            } => {
+                write!(f, "{status}: ")?;
+                let file = path.display();
+                match compatibility {
+                    crate::ModelCompatibility::Mismatch { model_format, .. } => {
+                        let built_for = crate::dvm_format::format_runtime_major(*model_format)
+                            .map_or_else(|| "another".to_owned(), |m| format!("DVAPI {m}.x"));
+                        write!(
+                            f,
+                            "{file} is model format {model_format} (built for {built_for} runtimes"
+                        )?;
+                        match (converter_version, sdk_version) {
+                            (Some(cv), Some(sdk)) => {
+                                write!(f, "; converted by ara2-converter {cv} with SDK {sdk}")?
+                            }
+                            (Some(cv), None) => write!(f, "; converted by ara2-converter {cv}")?,
+                            (None, Some(sdk)) => write!(f, "; converted with SDK {sdk}")?,
+                            (None, None) => {}
+                        }
+                        write!(
+                            f,
+                            "), but this runtime is DVAPI {runtime}; reconvert it with a \
+                             converter built on the DVAPI {}.x SDK",
+                            runtime.major()
+                        )
+                    }
+                    crate::ModelCompatibility::Matching { model_format } => write!(
+                        f,
+                        "the client library could not parse {file} although its model \
+                         format {model_format} matches this DVAPI {runtime} runtime; the file may \
+                         be damaged"
+                    ),
+                    crate::ModelCompatibility::Unknown => write!(
+                        f,
+                        "the client library could not parse {file}; it may have been built \
+                         for a different runtime generation than this DVAPI {runtime} \
+                         runtime, or it may be damaged"
+                    ),
+                }
             }
         }
     }
@@ -256,5 +398,83 @@ impl std::error::Error for Error {
             Error::Json(e) => Some(e),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod offline_tests {
+    use super::*;
+    use crate::{Abi, ModelCompatibility};
+
+    fn failed(
+        compatibility: ModelCompatibility,
+        converter_version: Option<&str>,
+        sdk_version: Option<&str>,
+    ) -> String {
+        Error::ModelLoadFailed {
+            status: Box::new(Error::Ara2 {
+                code: 520,
+                name: "DV_MODEL_LOAD_FAILURE".to_owned(),
+                detail: None,
+            }),
+            path: "/models/m.dvm".into(),
+            runtime: Abi::V3_0,
+            compatibility,
+            converter_version: converter_version.map(str::to_owned),
+            sdk_version: sdk_version.map(str::to_owned),
+        }
+        .to_string()
+    }
+
+    #[test]
+    fn offline_mismatch_hint_names_both_generations() {
+        let mismatch = ModelCompatibility::Mismatch {
+            model_format: 2,
+            runtime: Abi::V3_0,
+        };
+        assert_eq!(
+            failed(mismatch, None, None),
+            "DV_MODEL_LOAD_FAILURE (520): /models/m.dvm is model format 2 (built for \
+             DVAPI 1.x runtimes), but this runtime is DVAPI 3.0; reconvert it with a converter \
+             built on the DVAPI 3.x SDK"
+        );
+        let m = failed(mismatch, Some("1.2.0"), Some("r1.2.1"));
+        assert!(
+            m.contains(
+                "(built for DVAPI 1.x runtimes; converted by ara2-converter 1.2.0 with SDK r1.2.1)"
+            ),
+            "{m}"
+        );
+        assert!(failed(mismatch, None, Some("r1.2.1")).contains("; converted with SDK r1.2.1)"));
+    }
+
+    #[test]
+    fn offline_matching_hint_points_at_damage() {
+        let m = failed(
+            ModelCompatibility::Matching { model_format: 2 },
+            Some("1"),
+            None,
+        );
+        assert!(m.starts_with("DV_MODEL_LOAD_FAILURE (520): "), "{m}");
+        assert!(
+            m.contains("format 2 matches this DVAPI 3.0 runtime; the file may be damaged"),
+            "{m}"
+        );
+        assert!(
+            !m.contains("reconvert") && !m.contains("ara2-converter"),
+            "{m}"
+        );
+    }
+
+    #[test]
+    fn offline_unknown_hint_names_both_causes() {
+        let m = failed(ModelCompatibility::Unknown, None, None);
+        assert!(
+            m.ends_with(
+                "could not parse /models/m.dvm; it may have been built for a different runtime \
+                 generation than this DVAPI 3.0 runtime, or it may be damaged"
+            ),
+            "{m}"
+        );
     }
 }

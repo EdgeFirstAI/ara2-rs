@@ -3,7 +3,7 @@
 
 use crate::error::to_py_err;
 use crate::model::Model;
-use crate::types::{DramStatistics, State};
+use crate::types::{DramStatistics, EndpointInfo, EndpointStatistics, State};
 use pyo3::prelude::*;
 use std::path::PathBuf;
 
@@ -34,6 +34,34 @@ impl Endpoint {
         Ok(DramStatistics::from(stats))
     }
 
+    /// Live operational statistics: state, clocks, voltage, temperature,
+    /// soft resets and DRAM.
+    ///
+    /// Returns:
+    ///     EndpointStatistics: Current statistics
+    fn statistics(&self) -> PyResult<EndpointStatistics> {
+        Ok(self.0.statistics().map_err(to_py_err)?.into())
+    }
+
+    /// Static information about the endpoint's hardware.
+    ///
+    /// Returns:
+    ///     EndpointInfo: Chip, DRAM and host-interface details
+    fn info(&self) -> PyResult<EndpointInfo> {
+        Ok(self.0.info().map_err(to_py_err)?.into())
+    }
+
+    /// Whether an inference is running or queued on the endpoint right now.
+    ///
+    /// Returns:
+    ///     bool: ``True`` while the endpoint is busy
+    ///
+    /// Raises:
+    ///     UnsupportedError: If the loaded runtime does not report busyness
+    fn is_busy(&self) -> PyResult<bool> {
+        self.0.is_busy().map_err(to_py_err)
+    }
+
     /// Load a neural network model from a file.
     ///
     /// Args:
@@ -41,6 +69,11 @@ impl Endpoint {
     ///
     /// Returns:
     ///     Model: Loaded model ready for inference
+    ///
+    /// Raises:
+    ///     HardwareError: If the client library could not parse the file
+    ///         (code 520), with ``compatibility`` and ``model_format`` set
+    ///         and a message saying whether to reconvert the model
     fn load_model(&self, model_path: PathBuf) -> PyResult<Model> {
         let model = self
             .0

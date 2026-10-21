@@ -46,21 +46,74 @@ pyo3::create_exception!(
     Ara2Error,
     "The metadata inside a .dvm archive could not be read."
 );
+pyo3::create_exception!(
+    edgefirst_ara2,
+    UnsupportedError,
+    Ara2Error,
+    "The loaded DVAPI version does not provide the requested feature."
+);
 
 /// Convert an `ara2::Error` into the appropriate Python exception.
+///
+/// Every exception carries `code`, `name`, `sub_code`, `component`,
+/// `severity`, `model_format` and `compatibility` attributes (defaulted to
+/// `None` on `Ara2Error` by [`register`]). `code` and `name` are set for a
+/// status error, the next three when the library also gave a detailed
+/// status, and the last two for a model the library could not parse.
 pub fn to_py_err(err: ara2::Error) -> PyErr {
     let msg = err.to_string();
-    match &err {
+    // A model load failure is raised as its status would be, with the
+    // compatibility finding added to the message and attributes.
+    let (status, compatibility) = match &err {
+        ara2::Error::ModelLoadFailed {
+            status,
+            compatibility,
+            ..
+        } => (status.as_ref(), Some(*compatibility)),
+        other => (other, None),
+    };
+    let py_err = exception_for(status, msg);
+    let (code, name, detail) = match status {
+        ara2::Error::Ara2 { code, name, detail } => (Some(*code), Some(name.as_str()), *detail),
+        _ => (None, None, None),
+    };
+    let model_format = compatibility.and_then(|c| c.model_format());
+    let compatibility = compatibility.map(|c| match c {
+        ara2::ModelCompatibility::Mismatch { .. } => "mismatch",
+        ara2::ModelCompatibility::Matching { .. } => "matching",
+        _ => "unknown",
+    });
+    Python::attach(|py| {
+        let value = py_err.value(py);
+        // Setting an attribute on a fresh exception instance cannot fail
+        // short of memory exhaustion; the message carries the same
+        // information either way.
+        let _ = value.setattr("code", code);
+        let _ = value.setattr("name", name);
+        let _ = value.setattr("sub_code", detail.map(|d| d.sub_code));
+        let _ = value.setattr("component", detail.map(|d| d.component.to_string()));
+        let _ = value.setattr("severity", detail.map(|d| d.severity.to_string()));
+        let _ = value.setattr("model_format", model_format);
+        let _ = value.setattr("compatibility", compatibility);
+    });
+    py_err
+}
+
+fn exception_for(err: &ara2::Error, msg: String) -> PyErr {
+    match err {
         ara2::Error::Library(_)
         | ara2::Error::LibraryNotFound { .. }
         | ara2::Error::UnsupportedDvapi { .. }
-        | ara2::Error::AbiOverrideInvalid(_) => LibraryError::new_err(msg),
+        | ara2::Error::AbiOverrideInvalid(_)
+        | ara2::Error::AbiOverrideRejected { .. } => LibraryError::new_err(msg),
         ara2::Error::Io(_) => ProxyError::new_err(msg),
         ara2::Error::ProxyConfigUnreadable { .. }
         | ara2::Error::ProxyConfigInvalid { .. }
         | ara2::Error::NoProxyEndpoint { .. }
+        | ara2::Error::NoProxyFound { .. }
+        | ara2::Error::InvalidSocketOverride(_)
         | ara2::Error::ProcUnavailable { .. } => ProxyError::new_err(msg),
-        ara2::Error::Ara2(code) => {
+        ara2::Error::Ara2 { code, .. } => {
             let code = *code;
             if code >= 500 {
                 HardwareError::new_err(msg)
@@ -78,7 +131,8 @@ pub fn to_py_err(err: ara2::Error) -> PyErr {
                 Ara2Error::new_err(msg)
             }
         }
-        ara2::Error::UnknownProductType(_) => HardwareError::new_err(msg),
+        ara2::Error::FdPassingUnavailable => TensorError::new_err(msg),
+        ara2::Error::Unsupported { .. } => UnsupportedError::new_err(msg),
         ara2::Error::UnknownLayerOutputType(_)
         | ara2::Error::UnsupportedLayout(_)
         | ara2::Error::UnsupportedTypeSize(_) => ModelError::new_err(msg),
@@ -88,6 +142,14 @@ pub fn to_py_err(err: ara2::Error) -> PyErr {
         }
         ara2::Error::Zip(_) | ara2::Error::Json(_) => MetadataError::new_err(msg),
         ara2::Error::UnsupportedQmode(_) => Ara2Error::new_err(msg),
+        ara2::Error::TensorSizeMismatch { .. } => TensorError::new_err(msg),
+        ara2::Error::InferenceFailed | ara2::Error::InferenceNotCompleted(_) => {
+            ModelError::new_err(msg)
+        }
+        ara2::Error::ModelLoadFailed { status, .. } => exception_for(status, msg),
+        // Reached by `ara2::Error::Codec`, which exists only when something
+        // else in the build enables ara2's `codec` feature (this crate does
+        // not, so it cannot name the variant), and by variants added later.
         #[allow(unreachable_patterns)]
         _ => Ara2Error::new_err(msg),
     }
@@ -95,6 +157,20 @@ pub fn to_py_err(err: ara2::Error) -> PyErr {
 
 /// Register all exception types on the Python module.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // Class-level defaults, so an exception raised without going through
+    // `to_py_err` still has every attribute the stubs promise.
+    let base = m.py().get_type::<Ara2Error>();
+    for attr in [
+        "code",
+        "name",
+        "sub_code",
+        "component",
+        "severity",
+        "model_format",
+        "compatibility",
+    ] {
+        base.setattr(attr, m.py().None())?;
+    }
     m.add("Ara2Error", m.py().get_type::<Ara2Error>())?;
     m.add("LibraryError", m.py().get_type::<LibraryError>())?;
     m.add("HardwareError", m.py().get_type::<HardwareError>())?;
@@ -102,5 +178,6 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("ModelError", m.py().get_type::<ModelError>())?;
     m.add("TensorError", m.py().get_type::<TensorError>())?;
     m.add("MetadataError", m.py().get_type::<MetadataError>())?;
+    m.add("UnsupportedError", m.py().get_type::<UnsupportedError>())?;
     Ok(())
 }

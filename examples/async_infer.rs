@@ -54,12 +54,12 @@ fn main() {
     );
 
     // ── Warm-up ─────────────────────────────────────────────────────
-    let timing = model.run().expect("Warm-up inference failed");
+    let stats = model.run().expect("Warm-up inference failed");
     println!(
         "Warm-up: inference={:.2}ms, input_xfer={:.2}ms, output_xfer={:.2}ms",
-        timing.run_time.as_secs_f64() * 1000.0,
-        timing.input_time.as_secs_f64() * 1000.0,
-        timing.output_time.as_secs_f64() * 1000.0,
+        stats.timing.run_time.as_secs_f64() * 1000.0,
+        stats.timing.input_time.as_secs_f64() * 1000.0,
+        stats.timing.output_time.as_secs_f64() * 1000.0,
     );
     println!();
 
@@ -83,7 +83,7 @@ fn main() {
         let request = model.submit().expect("Submit failed");
         // In a real pipeline, you would do preprocessing of the next
         // frame here while the NPU is busy.
-        let _timing = request.wait(DEFAULT_TIMEOUT_MS).expect("Wait failed");
+        let _stats = request.wait(DEFAULT_TIMEOUT_MS).expect("Wait failed");
     }
     let async_elapsed = start.elapsed();
     println!(
@@ -107,12 +107,12 @@ fn main() {
         black_box(dummy);
         let cpu_time = cpu_start.elapsed();
 
-        let timing = request.wait(DEFAULT_TIMEOUT_MS).expect("Wait failed");
+        let stats = request.wait(DEFAULT_TIMEOUT_MS).expect("Wait failed");
         if i == 0 {
             println!(
                 "  (first iter: cpu_work={:.2}ms, npu={:.2}ms)",
                 cpu_time.as_secs_f64() * 1000.0,
-                timing.run_time.as_secs_f64() * 1000.0,
+                stats.timing.run_time.as_secs_f64() * 1000.0,
             );
         }
     }

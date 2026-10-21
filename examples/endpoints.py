@@ -30,10 +30,11 @@ def main() -> None:
 
     The function performs three steps:
 
-    1. **Connect** — creates a ``Session`` via the default UNIX socket
-       (``/var/run/proxy.sock``).
+    1. **Connect** — creates a ``Session`` with ``Session.connect()``, which
+       uses ``ARA2_SOCKET`` if set, otherwise a known socket path, otherwise
+       a running proxy over UNIX or TCP.
     2. **Versions** — queries the proxy for component version strings
-       (proxy, firmware, driver, libaraclient).
+       (proxy, client library, firmware).
     3. **Endpoints** — lists each NPU endpoint with its operational
        state (Idle, Active, Fault, ...) and DRAM statistics (total,
        free, model occupancy, tensor occupancy).
@@ -44,7 +45,7 @@ def main() -> None:
     print(f"edgefirst-ara2 v{ara2.__version__}")
     print()
 
-    # ── 1. Connect to the ARA-2 proxy via UNIX socket ────────────────
+    # ── 1. Connect to the ARA-2 proxy ─────────────────────────────────
     try:
         session = ara2.Session.connect()
         print(f"Connected via {session.socket_type} socket")
@@ -56,8 +57,8 @@ def main() -> None:
     try:
         versions = session.versions()
         print("Component versions:")
-        for component, version in sorted(versions.items()):
-            print(f"  {component}: {version}")
+        for v in versions:
+            print(f"  {v.component}: {v.version}")
         print()
     except ara2.Ara2Error as e:
         print(f"Failed to get versions: {e}")

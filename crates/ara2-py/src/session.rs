@@ -3,9 +3,9 @@
 
 use crate::endpoint::Endpoint;
 use crate::error::to_py_err;
-use crate::types::Abi;
+use crate::types::{Abi, ComponentVersion, LogLevel};
 use pyo3::prelude::*;
-use std::{collections::HashMap, net::Ipv4Addr, path::PathBuf, str::FromStr};
+use std::{net::Ipv4Addr, path::PathBuf, str::FromStr};
 
 /// ARA-2 session for communicating with the proxy.
 ///
@@ -32,8 +32,8 @@ impl Session {
 
 #[pymethods]
 impl Session {
-    /// Create a session connected to the ARA-2 proxy over its UNIX socket,
-    /// at the path `socket_path()` resolves.
+    /// Create a session connected to the ARA-2 proxy at the endpoint
+    /// `proxy_endpoint()` resolves (UNIX socket or TCP).
     ///
     /// This is the recommended way to connect. Use
     /// `create_via_unix_socket` directly when the path must be hardcoded
@@ -43,7 +43,8 @@ impl Session {
     ///     Session: A new session connected to the proxy
     ///
     /// Raises:
-    ///     ProxyError: If the socket does not exist or the proxy is not running
+    ///     ProxyError: If no proxy endpoint is found, or the connection to
+    ///         the endpoint fails
     #[staticmethod]
     fn connect() -> PyResult<Self> {
         Ok(Session(Some(ara2::Session::connect().map_err(to_py_err)?)))
@@ -109,12 +110,40 @@ impl Session {
         )))
     }
 
-    /// Get version information for all components.
+    /// Versions of the components currently running.
     ///
     /// Returns:
-    ///     dict: Dictionary mapping component names to version strings
-    fn versions(&self) -> PyResult<HashMap<String, String>> {
-        self.inner()?.versions().map_err(to_py_err)
+    ///     list[ComponentVersion]: one entry per running component
+    fn versions(&self) -> PyResult<Vec<ComponentVersion>> {
+        Ok(self
+            .inner()?
+            .versions()
+            .map_err(to_py_err)?
+            .into_iter()
+            .map(Into::into)
+            .collect())
+    }
+
+    /// Every component version the proxy supports; may list a component
+    /// more than once.
+    ///
+    /// Returns:
+    ///     list[ComponentVersion]: supported component versions
+    fn supported_versions(&self) -> PyResult<Vec<ComponentVersion>> {
+        Ok(self
+            .inner()?
+            .supported_versions()
+            .map_err(to_py_err)?
+            .into_iter()
+            .map(Into::into)
+            .collect())
+    }
+
+    /// True for UNIX-socket sessions, which can use shared-memory and
+    /// DMA-BUF tensors; False over TCP.
+    #[getter]
+    fn supports_fd_passing(&self) -> PyResult<bool> {
+        Ok(self.inner()?.supports_fd_passing())
     }
 
     /// List all available endpoints.
@@ -163,6 +192,17 @@ impl Session {
     #[getter]
     fn dvapi_version(&self) -> PyResult<Option<String>> {
         Ok(self.inner()?.dvapi_version().map(|v| v.to_string()))
+    }
+
+    /// Set the client library's log verbosity. DVAPI 1.3 and later.
+    ///
+    /// Args:
+    ///     level: The verbosity to use
+    ///
+    /// Raises:
+    ///     UnsupportedError: If the loaded library does not support it
+    fn set_log_level(&self, level: LogLevel) -> PyResult<()> {
+        self.inner()?.set_log_level(level.into()).map_err(to_py_err)
     }
 
     /// Close this Python session handle.

@@ -22,7 +22,7 @@ DEFAULT_SOCKET: str
 Matches ``interface_socket_file`` in NXP's rt-sdk-ara2
 ``proxy_config.yaml``, and is the first entry in :data:`SOCKET_PATHS`.
 Override at runtime with the ``ARA2_SOCKET`` environment variable -- see
-:func:`socket_path` and :meth:`Session.connect`.
+:func:`proxy_endpoint` and :meth:`Session.connect`.
 """
 
 SOCKET_PATHS: list[str]
@@ -33,15 +33,18 @@ NXP's rt-sdk-ara2 configures ``/var/run/proxy.sock``, and the Kinara
 runtime meta-kinara packages configures ``/var/run/ara2.sock``.
 """
 
-def socket_path() -> str:
-    """Resolve the ARA-2 proxy socket path.
+def proxy_endpoint() -> ProxyEndpoint:
+    """Resolve the endpoint :meth:`Session.connect` will open.
 
     Returns ``ARA2_SOCKET`` if it is set, otherwise the first entry in
-    :data:`SOCKET_PATHS` that exists, otherwise :data:`DEFAULT_SOCKET`.
-    :meth:`Session.connect` resolves through this function and then makes
-    a single connection attempt; this is exposed separately for callers
-    that need the path as a string, such as the default value of a CLI
-    flag.
+    :data:`SOCKET_PATHS` that exists, otherwise a running proxy (UNIX
+    before TCP). :meth:`Session.connect` resolves through this function and
+    then makes a single connection attempt; this is exposed separately for
+    callers that need to know where it will connect, such as the default
+    value of a CLI flag.
+
+    Raises:
+        ProxyError: If no proxy endpoint can be found.
     """
     ...
 
@@ -50,9 +53,28 @@ def socket_path() -> str:
 # =============================================================================
 
 class Ara2Error(RuntimeError):
-    """Base exception for all ARA-2 errors."""
+    """Base exception for all ARA-2 errors.
 
-    ...
+    Every instance has the attributes below. When the client library
+    returned a failing status, ``code`` (the ``dv_status_code_t`` value) and
+    ``name`` (the library's name for it) are set. On DVAPI 1.3 and later,
+    calls with a detailed-status variant also set ``sub_code``,
+    ``component`` (e.g. ``"proxy"``) and ``severity`` (e.g.
+    ``"retryable"``). When the client library could not parse a model file
+    (``DV_MODEL_LOAD_FAILURE``), ``compatibility`` says whether the model's
+    format suits the runtime generation (``"mismatch"``, ``"matching"`` or
+    ``"unknown"``) and ``model_format`` is the format read from the file
+    (2 or 3), and the message says what to do about it. Attributes that do not
+    apply are ``None``.
+    """
+
+    code: int | None
+    name: str | None
+    sub_code: int | None
+    component: str | None
+    severity: str | None
+    model_format: int | None
+    compatibility: Literal["mismatch", "matching", "unknown"] | None
 
 class LibraryError(Ara2Error):
     """Failed to load the ARA-2 client library.
@@ -71,6 +93,15 @@ class HardwareError(Ara2Error):
 
 class ProxyError(Ara2Error):
     """Proxy connection or communication error."""
+
+    ...
+
+class UnsupportedError(Ara2Error):
+    """The loaded DVAPI version does not provide the requested feature.
+
+    Raised by ``Endpoint.is_busy()`` and ``Session.set_log_level()`` on
+    runtimes that lack them.
+    """
 
     ...
 
@@ -104,6 +135,8 @@ class Abi:
     """DVAPI 1.1.x, shipped by the Kinara ARA-2 runtime meta-kinara packages."""
     V1_3: Abi
     """DVAPI 1.3.x, shipped by NXP's rt-sdk-ara2 as ``imx-nxp-ara2``."""
+    V3_0: Abi
+    """DVAPI 3.0.x, shipped by the arart r3.0 runtime."""
 
     def __eq__(self, other: object) -> bool: ...
     def __int__(self) -> int: ...
@@ -113,10 +146,10 @@ class Abi:
 class State:
     """Endpoint operational state returned by ``Endpoint.check_status()``.
 
-    The members are the union of both DVAPI generations. DVAPI 1.3 reuses
-    values 4 and 5 for names 1.1 does not have, so ``ActiveBoosted`` and
-    ``ThermalInactive`` are only reported under 1.1, and
-    ``ThermalActiveSlow`` and ``FailSafe`` only under 1.3.
+    The members are the union of all three DVAPI generations. DVAPI 1.3 and
+    3.0 reuse values 4 and 5 for names 1.1 does not have, so ``ActiveBoosted``
+    and ``ThermalInactive`` are only reported under 1.1, and
+    ``ThermalActiveSlow`` and ``FailSafe`` only under 1.3 and 3.0.
     ``Session.abi`` reports which library is loaded.
     """
 
@@ -166,6 +199,56 @@ class ModelOutputType:
     def __str__(self) -> str: ...
     def __repr__(self) -> str: ...
 
+class LogLevel:
+    """Verbosity of the client library's own logging."""
+
+    Trace: LogLevel
+    Debug: LogLevel
+    Info: LogLevel
+    Warn: LogLevel
+    Error: LogLevel
+    Critical: LogLevel
+    Off: LogLevel
+
+    def __eq__(self, other: object) -> bool: ...
+    def __int__(self) -> int: ...
+    def __str__(self) -> str: ...
+    def __repr__(self) -> str: ...
+
+class ModelType:
+    """The kind of model, as the runtime reports it.
+
+    ``McsLlm`` is reported by DVAPI 3.0 only. ``Other`` is a value this
+    build does not know for the loaded version; the raw value is logged at
+    warning level."""
+
+    Ara1Cnn: ModelType
+    Ara2Cnn: ModelType
+    Ara2Llm: ModelType
+    Ara2LlmDynV2: ModelType
+    McsLlm: ModelType
+    Other: ModelType
+
+    def __eq__(self, other: object) -> bool: ...
+    def __int__(self) -> int: ...
+    def __str__(self) -> str: ...
+    def __repr__(self) -> str: ...
+
+class InterfaceKind:
+    """The host bus an endpoint is attached through.
+
+    ``Other`` is a host interface value this build does not recognise; the
+    raw value is logged at warning level."""
+
+    Pcie: InterfaceKind
+    Usb: InterfaceKind
+    Other: InterfaceKind
+
+    def __eq__(self, other: object) -> bool: ...
+    def __int__(self) -> int: ...
+    def __str__(self) -> str: ...
+    def __repr__(self) -> str: ...
+
 # =============================================================================
 # Data Classes
 # =============================================================================
@@ -188,16 +271,131 @@ class DramStatistics:
     """DRAM occupied by loaded models in bytes."""
     tensor_occupancy_size: int
     """DRAM occupied by tensor buffers in bytes."""
+    largest_contiguous_free: int | None
+    """Largest contiguous free block in bytes; ``None`` before DVAPI 3.0."""
 
 class ModelTiming:
-    """Timing information from a model inference run."""
+    """Timing information from a model inference run.
 
-    run_time_us: int
-    """NPU inference execution time in microseconds."""
-    input_time_us: int
-    """Input DMA transfer time in microseconds."""
-    output_time_us: int
-    """Output DMA transfer time in microseconds."""
+    Durations are float seconds, like ``time.monotonic()`` differences,
+    and keep the runtime's sub-microsecond precision.
+    """
+
+    run_time: float
+    """NPU inference execution time in seconds."""
+    input_time: float
+    """Input DMA transfer time in seconds."""
+    output_time: float
+    """Output DMA transfer time in seconds."""
+
+class Clocks:
+    """Clock frequencies in MHz."""
+
+    sys_mhz: int
+    """System core clock."""
+    dram_mhz: int
+    """DRAM clock."""
+    nnp_mhz: int | None
+    """Neural processor clock; ``None`` where the library does not report it."""
+    sbp_mhz: int | None
+    """SBP clock; ``None`` where the library does not report it."""
+
+class InferenceStats:
+    """Everything the runtime reports about one completed inference.
+
+    Returned by :meth:`Model.run` and :meth:`InferRequest.wait`.
+
+    The ``*_start`` timestamps are seconds on ``CLOCK_MONOTONIC``, the
+    clock ``time.monotonic()`` reads. They are ``None`` on DVAPI 1.x,
+    whose runtime stamps with the wall clock.
+    """
+
+    timing: ModelTiming
+    """Execution and transfer durations."""
+    clocks: Clocks
+    """Clocks the inference ran at."""
+    hw_cycles: int
+    """Hardware cycles, including floating-point work."""
+    fp_cycles: int
+    """Hardware cycles spent on floating-point work."""
+    input_start: float | None
+    """When the input transfer started."""
+    inference_start: float | None
+    """When the inference entered the NNP queue."""
+    output_start: float | None
+    """When the output transfer started."""
+    retries_session_total: int
+    """Inference retries the proxy performed across this session."""
+    retries_this_inference: int
+    """Retries of this inference."""
+
+class EndpointStatistics:
+    """Live operational statistics for an endpoint."""
+
+    state: State
+    """Current operational state of the endpoint."""
+    clocks: Clocks
+    """Endpoint clocks."""
+    core_voltage_v: float
+    """Average core voltage across the measurement points, in volts.
+
+    DVAPI 1.3 and later; the DVAPI 1.1 runtime (Kinara runtime 1.2.1) does
+    not measure it and reports 0.0.
+    """
+    temp_c: float
+    """Average endpoint temperature across the measurement points, in °C."""
+    soft_reset_count: int
+    """Soft resets the endpoint has performed."""
+    dram: DramStatistics
+    """DRAM usage statistics."""
+
+class ChipInfo:
+    """The ARA-2 chip an endpoint is built on."""
+
+    id: str | None
+    """Chip name, such as ``"ARA-2"``; ``None`` when the library reports none."""
+    revision: str | None
+    """Silicon revision; ``None`` when the library reports none."""
+    control_processors: int
+    """Number of control processors."""
+    neural_processors: int
+    """Number of neural processors."""
+    l2_bytes: int
+    """L2 memory size in bytes."""
+
+class DramInfo:
+    """The DRAM attached to an endpoint."""
+
+    vendor_name: str | None
+    """Manufacturer name, when the runtime knows it."""
+
+class Interface:
+    """Where an endpoint sits on the host."""
+
+    kind: InterfaceKind
+    """The host bus type."""
+    bus: int
+    """Bus number."""
+    device: int
+    """Device number."""
+    port: int
+    """Port number."""
+    sysfs_path: os.PathLike[str] | None
+    """The device's sysfs directory; reported for PCIe only."""
+
+class EndpointInfo:
+    """Static information about an endpoint's hardware."""
+
+    device_id: int
+    """PCI-style device identifier."""
+    vendor_id: int
+    """Vendor identifier."""
+    chip: ChipInfo | None
+    """The ARA-2 chip, when the runtime reports it."""
+    dram: DramInfo | None
+    """The attached DRAM, when the runtime reports it."""
+    interface: Interface | None
+    """How the endpoint is attached to the host, when the runtime reports it."""
 
 class InputQuantization:
     """Input tensor quantization parameters.
@@ -410,6 +608,22 @@ def discover() -> list[Proxy]:
     """
     ...
 
+class ComponentVersion:
+    """A component and the version the proxy reports for it."""
+
+    @property
+    def component(self) -> str:
+        """Component name, e.g. ``"proxy"``, ``"firmware"``, ``"client_lib"``.
+
+        ``"product_type_N"`` for a component this build does not name.
+        """
+        ...
+
+    @property
+    def version(self) -> str:
+        """Version as ``"major.minor.patch.patch_minor"``."""
+        ...
+
 class Session:
     """ARA-2 session for communicating with the proxy.
 
@@ -429,16 +643,18 @@ class Session:
 
     @staticmethod
     def connect() -> Session:
-        """Create a session connected to the proxy over its UNIX socket.
+        """Create a session connected to the proxy.
 
-        Connects at the path :func:`socket_path` resolves: ``ARA2_SOCKET``
-        if set, otherwise the first entry in :data:`SOCKET_PATHS` that
-        exists. This is the recommended way to connect; use
+        Connects to the endpoint :func:`proxy_endpoint` resolves:
+        ``ARA2_SOCKET`` if set, otherwise the first entry in
+        :data:`SOCKET_PATHS` that exists, otherwise a running proxy. This
+        is the recommended way to connect; use
         :meth:`create_via_unix_socket` when the path must be hardcoded or
         is chosen some other way.
 
         Raises:
-            ProxyError: If the socket does not exist or the proxy is not running.
+            ProxyError: If no proxy endpoint is found, or the connection
+                to the endpoint fails.
         """
         ...
 
@@ -490,11 +706,28 @@ class Session:
         """
         ...
 
-    def versions(self) -> dict[str, str]:
-        """Get version information for all components.
+    def versions(self) -> list[ComponentVersion]:
+        """Versions of the components currently running.
 
         Returns:
-            Dictionary mapping component names to version strings.
+            One :class:`ComponentVersion` per running component.
+        """
+        ...
+
+    def supported_versions(self) -> list[ComponentVersion]:
+        """Every component version the proxy supports.
+
+        May list a component more than once.
+        """
+        ...
+
+    @property
+    def supports_fd_passing(self) -> bool:
+        """Whether the session can use shared-memory and DMA-BUF tensors.
+
+        True for UNIX-socket sessions; False over TCP, where tensors live
+        in heap memory with no file descriptor, so the tensor fd accessors
+        raise ``TensorError`` and data is copied instead.
         """
         ...
 
@@ -531,6 +764,14 @@ class Session:
 
         ``None`` if the library would not report one. This is the
         interface version, not the version of the SDK it was packaged in.
+        """
+        ...
+
+    def set_log_level(self, level: LogLevel) -> None:
+        """Set the client library's log verbosity. DVAPI 1.3 and later.
+
+        Raises:
+            UnsupportedError: If the loaded library does not support it.
         """
         ...
 
@@ -576,15 +817,39 @@ class Endpoint:
         """Get DRAM statistics for the endpoint."""
         ...
 
+    def statistics(self) -> EndpointStatistics:
+        """Live statistics: state, clocks, voltage, temperature, soft
+        resets and DRAM."""
+        ...
+
+    def info(self) -> EndpointInfo:
+        """Static information about the endpoint's hardware."""
+        ...
+
+    def is_busy(self) -> bool:
+        """Whether an inference is running or queued on the endpoint now.
+
+        Raises:
+            UnsupportedError: If the loaded runtime lacks the call.
+        """
+        ...
+
     def load_model(self, model_path: str | os.PathLike[str]) -> Model:
         """Load a neural network model from a .dvm file.
 
         Args:
             model_path: Path to the compiled model file (.dvm)
 
+        The file's model format is read first, and a model built for the
+        other runtime generation is logged as a warning before loading.
+
         Raises:
-            ModelError: If the file is not a valid DVM or is incompatible.
-            HardwareError: If the endpoint has insufficient DRAM.
+            HardwareError: If the client library could not parse the file
+                (code 520, ``DV_MODEL_LOAD_FAILURE``), with
+                ``compatibility`` and ``model_format`` set and a message
+                saying whether to reconvert the model; or if the endpoint
+                has insufficient DRAM.
+            Ara2Error: Or one of its subclasses, for any other failure.
         """
         ...
 
@@ -600,7 +865,7 @@ class Model:
         with endpoint.load_model("model.dvm") as model:
             model.allocate_tensors("dma")
             model.set_input_tensor(0, input_data)
-            timing = model.run()
+            stats = model.run()
             output = model.get_output_tensor(0)
 
     For zero-copy preprocessing with edgefirst-image::
@@ -624,21 +889,36 @@ class Model:
 
         Args:
             memory: Memory type — ``"dma"``, ``"shm"``, ``"mem"``, or
-                    ``None`` (auto-select, tries DMA first). Use ``"dma"``
-                    for zero-copy workflows with edgefirst-image.
+                    ``None`` (auto-select, tries DMA first; heap on a TCP
+                    session, which cannot pass file descriptors). Use
+                    ``"dma"`` for zero-copy workflows with edgefirst-image.
+
+        Over TCP the tensors are heap memory without a file descriptor, so
+        ``input_tensor_fd()`` and ``output_tensor_fd()`` raise
+        ``TensorError``. Check ``Session.supports_fd_passing`` and copy
+        data with ``set_input_tensor()`` and ``get_output_tensor()`` instead.
         """
         ...
 
-    def set_timeout_ms(self, timeout_ms: int) -> None:
-        """Set the inference timeout in milliseconds (default: 1000)."""
+    def set_timeout(self, timeout: float) -> None:
+        """Set the ``run()`` timeout in seconds (default: 1.0).
+
+        The timeout is rounded up to whole milliseconds.
+
+        Raises:
+            ValueError: If ``timeout`` is negative, not finite, or too large.
+        """
         ...
 
-    def run(self) -> ModelTiming:
+    def run(self) -> InferenceStats:
         """Run inference on the model.
+
+        Returns:
+            InferenceStats: Timing, clocks, cycle counts and timestamps.
 
         Raises:
             TensorError: If tensors have not been allocated.
-            ModelError: If inference times out (increase with ``set_timeout_ms``).
+            ModelError: If inference times out (increase with ``set_timeout``).
             HardwareError: If the NPU is in a fault or thermal state.
         """
         ...
@@ -772,7 +1052,8 @@ class Model:
 
         Raises:
             IndexError: If index is out of range.
-            TensorError: If tensors are not allocated or use system memory.
+            TensorError: If tensors are not allocated or use system memory
+                (always the case over TCP).
         """
         ...
 
@@ -789,7 +1070,8 @@ class Model:
 
         Raises:
             IndexError: If index is out of range.
-            TensorError: If tensors are not allocated or use system memory.
+            TensorError: If tensors are not allocated or use system memory
+                (always the case over TCP).
         """
         ...
 
@@ -802,6 +1084,23 @@ class Model:
         ...
 
     # -- Introspection --
+
+    @property
+    def version(self) -> str:
+        """Model format version the model was compiled to, as
+        ``"major.minor.patch.patch_minor"``: 2.0.0.0 for DVAPI 1.x runtimes,
+        3.0.0.0 for 3.x. Its major is what ``read_model_format()`` returns."""
+        ...
+
+    @property
+    def name(self) -> str | None:
+        """Name given when the model was loaded, if any."""
+        ...
+
+    @property
+    def model_type(self) -> ModelType:
+        """The kind of model the runtime reports."""
+        ...
 
     @property
     def n_inputs(self) -> int:
@@ -878,26 +1177,28 @@ class InferRequest:
     """A pending asynchronous inference request.
 
     Created by :meth:`Model.submit`. Call :meth:`wait` to block until
-    the NPU finishes and retrieve timing information. The GIL is released
+    the NPU finishes and retrieve its statistics. The GIL is released
     during ``wait()`` so other Python threads can run concurrently.
 
     The underlying request is freed automatically when the object is
-    garbage-collected or when ``wait()`` returns.
+    garbage-collected or when ``wait()`` returns. Dropping or
+    garbage-collecting a request that was never waited on blocks while it
+    finishes, for up to about 4 s.
 
     Example::
 
         request = model.submit()
         # ... preprocess next frame while NPU is busy ...
-        timing = request.wait()
-        print(f"NPU inference: {timing.run_time_us} us")
+        stats = request.wait()
+        print(f"NPU inference: {stats.timing.run_time * 1e3:.2f} ms")
 
     Warning:
         Do not call ``model.allocate_tensors()`` while an InferRequest
         is still pending — the NPU is reading/writing the tensor buffers.
     """
 
-    def wait(self, timeout_ms: int = 1000) -> ModelTiming:
-        """Block until the inference completes and return timing.
+    def wait(self, timeout: float = 1.0) -> InferenceStats:
+        """Block until the inference completes and return its statistics.
 
         The GIL is released during the wait, allowing other Python
         threads to run concurrently.
@@ -906,13 +1207,15 @@ class InferRequest:
         ``Ara2Error``.
 
         Args:
-            timeout_ms: Maximum wait time in milliseconds (default: 1000).
-                        Increase for large models.
+            timeout: Maximum wait time in seconds (default: 1.0), rounded
+                up to whole milliseconds. Increase for large models.
 
         Returns:
-            ModelTiming: Timing information for the completed inference.
+            InferenceStats: Timing, clocks, cycle counts and timestamps for
+            the completed inference.
 
         Raises:
+            ValueError: If ``timeout`` is negative, not finite, or too large.
             Ara2Error: If the request was already consumed, inference
                        failed, or the wait timed out.
         """
@@ -952,6 +1255,23 @@ def read_labels(path: str | os.PathLike[str]) -> list[str]:
 
 def has_metadata(path: str | os.PathLike[str]) -> bool:
     """Check if a DVM file has embedded metadata."""
+    ...
+
+def read_model_format(path: str | os.PathLike[str]) -> int | None:
+    """Read the model format a DVM file was compiled to.
+
+    Converters built on the DVAPI 1.x SDKs write format 2 and those built
+    on the DVAPI 3.0 SDK write format 3. Format 2 models
+    load on DVAPI 1.x runtimes only, format 3 on DVAPI 3.x only. Only the
+    parts of the file that hold the format are read.
+
+    Returns:
+        The format, or ``None`` when the file's structure is not
+        recognised (it is not then guessed at).
+
+    Raises:
+        MetadataError: If the file cannot be read.
+    """
     ...
 
 class DvmMetadata:
@@ -1164,8 +1484,8 @@ class Ara2Info:
     """Kinara-specific metadata from the ``ara2`` section of ``edgefirst.json``.
 
     Exposes ARA-2 / Kinara-specific fields carried in the DVM's
-    EdgeFirst metadata. Currently only the quantization mode is
-    surfaced, but more fields may be added in future releases.
+    EdgeFirst metadata: the quantization mode and the conversion
+    provenance. Every field is ``None`` when the metadata does not carry it.
     """
 
     @property
@@ -1176,6 +1496,22 @@ class Ara2Info:
         ``qmode`` field in its ``ara2`` section.
         """
         ...
+    @property
+    def converter_version(self) -> str | None:
+        """Version of the converter that produced the model.
+
+        Read from ``converter_version``, or from ``version`` where a
+        converter wrote that instead.
+        """
+        ...
+    @property
+    def sdk_version(self) -> str | None:
+        """Version of the Kinara SDK the converter was built on."""
+        ...
+    @property
+    def dvm_format(self) -> int | None:
+        """Model format the converter recorded (2 for DVAPI 1.x runtimes, 3 for 3.x)."""
+        ...
 
 __all__ = [
     "__version__",
@@ -1183,13 +1519,14 @@ __all__ = [
     "DEFAULT_SOCKET",
     "SOCKET_PATHS",
     # Functions
-    "socket_path",
+    "proxy_endpoint",
     "discover",
     # Exceptions
     "Ara2Error",
     "LibraryError",
     "HardwareError",
     "ProxyError",
+    "UnsupportedError",
     "ModelError",
     "TensorError",
     "MetadataError",
@@ -1197,9 +1534,20 @@ __all__ = [
     "Abi",
     "State",
     "ModelOutputType",
+    "LogLevel",
+    "ModelType",
+    "InterfaceKind",
     # Data classes
+    "ComponentVersion",
     "DramStatistics",
     "ModelTiming",
+    "Clocks",
+    "InferenceStats",
+    "EndpointStatistics",
+    "ChipInfo",
+    "DramInfo",
+    "Interface",
+    "EndpointInfo",
     "InputQuantization",
     "InputPreprocess",
     "OutputQuantization",
@@ -1216,6 +1564,7 @@ __all__ = [
     "read_metadata",
     "read_labels",
     "has_metadata",
+    "read_model_format",
     "DvmMetadata",
     "Ara2Info",
     "DatasetInfo",

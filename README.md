@@ -63,7 +63,7 @@ See [`crates/ara2-py/README.md`](crates/ara2-py/README.md) for the Python API re
 
 ```rust
 use ara2::Session;
-use edgefirst_tensor::{TensorMemory, TensorTrait as _};
+use edgefirst_tensor::TensorTrait as _;
 
 // Connect to the ARA-2 proxy service
 let session = Session::connect()?;
@@ -73,13 +73,14 @@ let endpoints = session.list_endpoints()?;
 let endpoint = &endpoints[0];
 println!("Endpoint state: {:?}", endpoint.check_status()?);
 
-// Load a compiled model (.dvm) and allocate DMA tensors
+// Load a compiled model (.dvm) and allocate tensors. `None` picks the best
+// memory the platform offers (DMA-BUF where available), or heap over TCP.
 let mut model = endpoint.load_model_from_file("model.dvm".as_ref())?;
-model.allocate_tensors(Some(TensorMemory::DmaBuf))?;
+model.allocate_tensors(None)?;
 
 // Run inference
-let timing = model.run()?;
-println!("NPU inference: {:?}", timing.run_time);
+let stats = model.run()?;
+println!("NPU inference: {:?}", stats.timing.run_time);
 # Ok::<(), ara2::Error>(())
 ```
 
@@ -124,8 +125,8 @@ model.allocate_tensors()
 request = model.submit()
 
 # CPU work here... the GIL is NOT held during wait()
-timing = request.wait()
-print(f"NPU inference: {timing.run_time_us} µs")
+stats = request.wait()
+print(f"NPU inference: {stats.timing.run_time * 1e3:.2f} ms")
 ```
 
 See the [`async_infer`](examples/async_infer.rs) example for a complete
@@ -133,31 +134,116 @@ benchmark comparing synchronous vs. asynchronous inference, and
 [`async_pipeline`](examples/async_pipeline.rs) for pipelined inference
 with a circular buffer of DMA-BUF tensor sets (2x+ throughput improvement).
 
+## Telemetry
+
+`Model::run()` and `InferRequest::wait()` return an `InferenceStats`: the `timing` durations (sub-microsecond precision), the `clocks` the inference ran at, `hw_cycles` and `fp_cycles`, `retries`, and the `input_start`, `inference_start` and `output_start` timestamps.
+The timestamps are `MonotonicTime` values on `CLOCK_MONOTONIC`, comparable with `ara2::monotonic_now()` and with a Perfetto trace taken on the same host.
+Only the DVAPI 3.0 runtime stamps on `CLOCK_MONOTONIC`; DVAPI 1.x stamps the wall clock, so the timestamps are `None` there rather than a value on the wrong clock.
+
+```rust
+use ara2::Session;
+
+let session = Session::connect()?;
+let endpoint = &session.list_endpoints()?[0];
+
+let info = endpoint.info()?;                  // static: chip, DRAM vendor, host interface
+let stats = endpoint.statistics()?;           // sampled: clocks, voltage, temperature, DRAM
+let busy = endpoint.is_busy()?;               // an inference is running or queued
+
+let mut model = endpoint.load_model_from_file("model.dvm".as_ref())?;
+model.allocate_tensors(None)?;
+let run = model.run()?;
+println!("{} cycles at {} MHz", run.hw_cycles, run.clocks.sys_mhz);
+if let Some(start) = run.inference_start {
+    println!("queued at {:?}", start.as_duration());
+}
+# Ok::<(), ara2::Error>(())
+```
+
+`Endpoint::statistics()` reports the endpoint state, `Clocks` (system, DRAM, NNP and SBP), core voltage, temperature, soft-reset count and DRAM usage. The DVAPI 1.1 runtime reports the core voltage as 0.0; DVAPI 1.3 and later measure it.
+`Endpoint::info()` reports the device and vendor identifiers, the chip, the DRAM vendor name and the host interface.
+Each field a runtime does not populate is `None`, never zero.
+The inference timestamps (`input_start`, `inference_start`, `output_start`) are on `CLOCK_MONOTONIC`, and so line up with Perfetto, on DVAPI 3.0 only.
+
+Per-model statistics, inference queue statistics, the endpoint power state and power-state control are not exposed, because the runtime does not yet report or apply them reliably.
+
+### Availability by DVAPI version
+
+`None` means the field is absent on that version; an error means the call returns `Error::Unsupported`.
+The DVAPI 1.3 column was observed on an i.MX 95 board (runtime 1.3.2.0).
+DVAPI 1.1 follows the runtime's declared layout and has not been re-measured for this release.
+The DVAPI 3.0 column was observed on an i.MX 95 board (runtime 3.0.0.0, firmware 0.128.11).
+
+| Item | 1.1 | 1.3 | 3.0 |
+|------|-----|-----|-----|
+| `InferenceStats` timing, cycles, retries | yes | yes | yes |
+| `InferenceStats` `input_start`, `inference_start`, `output_start` | `None` | `None` | `CLOCK_MONOTONIC` |
+| `Clocks` `nnp_mhz`, `sbp_mhz` | `None` | yes | yes |
+| `DramStatistics::largest_contiguous_free` | `None` | `None` | yes |
+| `Endpoint::is_busy()` | yes | yes | yes |
+| `Session::set_log_level()` | error | yes | yes |
+
+## Control
+
+**Log level.**
+`Session::set_log_level(LogLevel)` sets the client library's own logging on DVAPI 1.3 and 3.0, and returns `Error::Unsupported` on 1.1.
+
+### Cost of sampling
+
+`Endpoint::statistics()` is a round trip to the proxy.
+The `telemetry` example measures its cost by timing the same inference loop alone and while a second thread samples every 100 ms.
+On the DVAPI 1.3 board (i.MX 95 with `yolov8n-det-int16`, 200 iterations, three runs) inference ran at 126.8, 126.3 and 125.8 fps alone and 125.7, 126.4 and 126.0 fps while sampling, so sampling every 100 ms made no measurable difference.
+A `statistics()` call took 1.05 to 1.11 ms on average and at most 1.5 ms.
+On the DVAPI 3.0 board (i.MX 95, proxy over TCP, a 3.0-compiled detection model, three runs) inference ran at 29.9, 29.9 and 29.8 fps alone and 30.0, 29.9 and 29.9 fps while sampling, again no measurable difference.
+A `statistics()` call took 7.4 to 10.0 ms on average and at most 40 ms there.
+
 ## Runtime Requirements
 
-Requires a `libaraclient` implementing DVAPI 1.1 or 1.3. The following must
-be present on the target system:
+Requires a `libaraclient` implementing DVAPI 1.1, 1.3 or 3.0. The following must be present on the target system:
 
-- **`libaraclient`** — Kinara client library. Both DVAPI generations in
-  circulation are supported: 1.3, from NXP's `imx-nxp-ara2` package
-  (rt-sdk-ara2), and 1.1, from the Kinara ARA-2 runtime that
-  [meta-kinara](https://github.com/EdgeFirstAI/meta-kinara) packages.
-  [`open_library`](crates/ara2/src/lib.rs) probes the loaded library with
-  `dv_get_client_lib_version` and adapts, since the two differ in struct
-  layout. The library's name has also differed in every packaging so far
-  and there is no soname to rely on, so the architecture-suffixed name for
-  the target is tried first (`libaraclient_aarch64.so`,
-  `libaraclient_x86_64.so`), then `libaraclient.so` and
-  `libaraclient.so.1`. Set `ARA2_ABI` to `1.1` or `1.3` to force a layout
-  if a target reports a version this build does not recognise.
-- **The proxy service** — provides NPU access, must be running before
-  connecting. It is `rt-sdk-ara2.service` listening on
-  `/var/run/proxy.sock` under NXP's packaging, and `ara2.service`
-  listening on `/var/run/ara2.sock` under meta-kinara's.
-  `Session::connect()` tries both — see
-  [`SOCKET_PATHS`](crates/ara2/src/lib.rs) — or set `ARA2_SOCKET` to pin
-  one explicitly.
+- **`libaraclient`** — Kinara client library. Three DVAPI generations are in circulation and all are supported:
+
+  | Packaging | DVAPI | Typical proxy transport |
+  |-----------|-------|-------------------------|
+  | Kinara ARA-2 runtime 1.2.1, packaged by [meta-kinara](https://github.com/EdgeFirstAI/meta-kinara) | 1.1 | UNIX `/var/run/ara2.sock` |
+  | NXP `imx-nxp-ara2` (rt-sdk-ara2 2.1.1) | 1.3 | UNIX `/var/run/proxy.sock` |
+  | Kinara arart r3.0 | 3.0 | TCP `127.0.0.1:5000` (sample config); UNIX with `interface_type: "SOCKET"` |
+
+  [`open_library`](crates/ara2/src/lib.rs) probes the loaded library with `dv_get_client_lib_version` and reads every version-specific struct at that version's layout; 3.0 moves fields within `dv_model`, so no one layout serves all three. A proxy accepts only clients of its own DVAPI version, so a system carries one library. Models are compiled for one runtime generation too: see [Model compatibility](#model-compatibility). The library's name has also differed in every packaging so far and there is no soname to rely on, so the architecture-suffixed name for the target is tried first (`libaraclient_aarch64.so`, `libaraclient_x86_64.so`), then `libaraclient.so` and `libaraclient.so.1`.
+- **The proxy service** — provides NPU access, must be running before connecting. It is `rt-sdk-ara2.service` under NXP's packaging and `ara2.service` under meta-kinara's.
 - **ARA-2 hardware** — PCIe accelerator card visible via `lspci`
+
+### Model compatibility
+
+A `.dvm` is compiled for one runtime generation. Converters built on the DVAPI 1.x SDKs write model format 2, which loads on DVAPI 1.x runtimes only (verified on 1.1 and 1.3); converters built on the DVAPI 3.0 SDK write format 3, which loads on DVAPI 3.x only. The client library rejects a model of the other generation with `DV_MODEL_LOAD_FAILURE` (520) and logs only that it could not parse the file, exactly as it does for a damaged one.
+
+`ara2::read_model_format` and `read_model_format_from_file` read the format from a model without loading it (the file reader reads only the parts that hold it), returning `None` when the file's structure is not recognised. `ModelCompatibility::new(format, session.abi())` compares it with the runtime. `Endpoint::load_model_from_file` does both before loading, logs a warning for a model of the other generation, and turns a `DV_MODEL_LOAD_FAILURE` into `Error::ModelLoadFailed`, which keeps the library's status and says which case applies:
+
+```text
+DV_MODEL_LOAD_FAILURE (520): yolov8n-det-int16.dvm is model format 2 (built for DVAPI 1.x runtimes; converted by ara2-converter 2.5.0), but this runtime is DVAPI 3.0; reconvert it with a converter built on the DVAPI 3.x SDK
+```
+
+When the format matches the runtime the message says the file may be damaged, and when the format cannot be read it names both causes. The converter and SDK versions come from the `ara2` section of the embedded `edgefirst.json` when present (`Ara2Info::converter_version`, `sdk_version`, `dvm_format`).
+
+### Connecting
+
+`Session::connect()` chooses one endpoint by inspection and makes a single connection attempt. It takes the first of:
+
+1. `ARA2_SOCKET`, if set: a UNIX socket path (`/var/run/proxy.sock`), `unix:/path`, or `tcp:IPV4:PORT` (`tcp:127.0.0.1:5000`).
+2. The first existing path in [`SOCKET_PATHS`](crates/ara2/src/lib.rs) (`/var/run/proxy.sock`, `/var/run/ara2.sock`).
+3. A running proxy found by `ara2::discover()`, taking a UNIX endpoint over a TCP one.
+
+`ara2::proxy_endpoint()` reports the endpoint `connect()` would open without opening it; when nothing is found the error lists what was checked.
+
+Only a UNIX socket can pass file descriptors. On a TCP session (`Session::supports_fd_passing()` is false), `allocate_tensors(None)` and the input/output set allocators default to heap memory, and an explicit `TensorMemory::Shm` or `TensorMemory::DmaBuf` fails with `Error::FdPassingUnavailable` before any call reaches the library. Inference works on both transports; zero-copy DMA-BUF needs UNIX. Tensors the client allocates over TCP are heap memory with no file descriptor, so `clone_fd()` on them fails and they cannot be passed to the HAL by fd: check `tensor.memory()` (or `session.supports_fd_passing()`) and copy through `map()` instead, as the `yolov8` examples do. `connect()` logs a warning when it selects a TCP endpoint. For r3.0, setting `interface_type: "SOCKET"` and `interface_socket_file` in the proxy configuration gives a UNIX socket with fd passing.
+
+### Versions
+
+`Session::versions()` returns the component versions actually running (client library, proxy, firmware and so on), one entry per component. `Session::supported_versions()` returns every version the proxy declares support for, and may list a component several times (r3.0 lists four firmware versions).
+
+### Forcing a layout
+
+`ARA2_ABI` (`1.1`, `1.3` or `3.0`) forces a layout, for bringing up a library reporting a version this build does not recognise. It is refused with `Error::AbiOverrideRejected` when it contradicts the version the library reports: a recognised version other than the forced one, or an unrecognised version with a different major version. Forcing the version the library already reports is accepted, as is any force when the version probe failed. So forcing `3.0` on a future 3.1 library works, and forcing `1.3` on a 3.0 library does not. A refusal stops the library search rather than trying the next name.
 
 ## Building
 
@@ -211,6 +297,8 @@ physical buffers with no CPU copies in the data path.
 | [`async_infer.py`](examples/async_infer.py) | Python — Same async benchmark via `edgefirst-ara2` |
 | [`async_pipeline.rs`](examples/async_pipeline.rs) | Rust — Pipelined inference with circular DMA-BUF buffer ring (2x+ speedup) |
 | [`async_pipeline.py`](examples/async_pipeline.py) | Python — Same pipeline demo via `edgefirst-ara2` |
+| [`telemetry.rs`](examples/telemetry.rs) | Rust — Print everything the runtime reports and measure the cost of sampling endpoint statistics |
+| [`telemetry.py`](examples/telemetry.py) | Python — The same report via `edgefirst-ara2` |
 | [`endpoints.py`](examples/endpoints.py) | Python — Connect, list endpoints, check status |
 | [`test_dvm_metadata.rs`](examples/test_dvm_metadata.rs) | Rust — Read and display DVM model metadata |
 

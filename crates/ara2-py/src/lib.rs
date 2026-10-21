@@ -11,12 +11,14 @@ pub mod types;
 
 use pyo3::prelude::*;
 
-/// Resolves the ARA-2 proxy socket path: `ARA2_SOCKET` if set, otherwise
-/// the first entry in `SOCKET_PATHS` that exists, otherwise
-/// `DEFAULT_SOCKET`.
+/// Resolves the endpoint `Session.connect()` will open: `ARA2_SOCKET` if
+/// set, otherwise the first entry in `SOCKET_PATHS` that exists, otherwise
+/// a running proxy (UNIX before TCP).
 #[pyfunction]
-fn socket_path() -> String {
-    ara2::socket_path()
+fn proxy_endpoint() -> PyResult<discover::ProxyEndpoint> {
+    ara2::proxy_endpoint()
+        .map(discover::ProxyEndpoint)
+        .map_err(error::to_py_err)
 }
 
 /// EdgeFirst ARA-2 Python Library
@@ -29,7 +31,7 @@ fn socket_path() -> String {
 ///     >>> endpoints = session.list_endpoints()
 ///     >>> model = endpoints[0].load_model("model.dvm")
 ///     >>> model.allocate_tensors("dma")
-///     >>> timing = model.run()
+///     >>> stats = model.run()
 #[pymodule(name = "edgefirst_ara2")]
 fn init(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Version
@@ -53,8 +55,19 @@ fn init(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Type classes
     m.add_class::<types::Abi>()?;
     m.add_class::<types::State>()?;
+    m.add_class::<types::ComponentVersion>()?;
     m.add_class::<types::DramStatistics>()?;
     m.add_class::<types::ModelTiming>()?;
+    m.add_class::<types::Clocks>()?;
+    m.add_class::<types::InferenceStats>()?;
+    m.add_class::<types::LogLevel>()?;
+    m.add_class::<types::ModelType>()?;
+    m.add_class::<types::InterfaceKind>()?;
+    m.add_class::<types::ChipInfo>()?;
+    m.add_class::<types::DramInfo>()?;
+    m.add_class::<types::Interface>()?;
+    m.add_class::<types::EndpointInfo>()?;
+    m.add_class::<types::EndpointStatistics>()?;
     m.add_class::<types::InputQuantization>()?;
     m.add_class::<types::InputPreprocess>()?;
     m.add_class::<types::OutputQuantization>()?;
@@ -77,9 +90,10 @@ fn init(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(metadata::read_metadata, m)?)?;
     m.add_function(wrap_pyfunction!(metadata::read_labels, m)?)?;
     m.add_function(wrap_pyfunction!(metadata::has_metadata, m)?)?;
+    m.add_function(wrap_pyfunction!(metadata::read_model_format, m)?)?;
 
     // Session helpers
-    m.add_function(wrap_pyfunction!(socket_path, m)?)?;
+    m.add_function(wrap_pyfunction!(proxy_endpoint, m)?)?;
     m.add_function(wrap_pyfunction!(discover::discover, m)?)?;
 
     Ok(())

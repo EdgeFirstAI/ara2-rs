@@ -73,6 +73,7 @@ import edgefirst.decoder as ef_decoder
 import edgefirst.image as ef_image
 import edgefirst.tensor as ef_tensor
 import edgefirst_ara2 as ara2
+import numpy as np
 
 # Camera capture via native libcamera Python bindings
 try:
@@ -430,6 +431,27 @@ def output_dtype(bpp: int, signed: bool) -> str:
     if bpp == 1:
         return "int8" if signed else "uint8"
     return "int16" if signed else "uint16"
+
+
+def copy_to_input(model: ara2.Model, image: ef_tensor.Tensor) -> None:
+    """Copy a preprocessed image into the model's heap input tensor."""
+    size = model.input_size(0)
+    # The array views the mapping, so it must be consumed before the map is
+    # released at the end of the `with` block.
+    with image.map("read") as view:
+        data = np.asarray(view).reshape(-1).view(np.uint8)
+        if data.size < size:
+            data = np.concatenate([data, np.zeros(size - data.size, np.uint8)])
+        model.set_input_tensor(0, data[:size])
+
+
+def copy_from_outputs(
+    model: ara2.Model, outputs: list[ef_tensor.Tensor], shapes: list[list[int]]
+) -> None:
+    """Copy the model's heap output tensors into the tensors the decoder reads."""
+    for i, (out, shape) in enumerate(zip(outputs, shapes)):
+        raw = model.get_output_tensor(i).reshape(-1)
+        out.from_numpy(raw[: math.prod(shape)].reshape(shape))
 
 
 def strip_trailing_ones(raw) -> list[int]:
@@ -798,7 +820,10 @@ def main() -> None:
         choices=["class", "instance", "track"],
         help="Segmentation mask color assignment (default: class)",
     )
-    ap.add_argument("--socket", default=ara2.socket_path())
+    ap.add_argument(
+        "--socket",
+        help="UNIX socket path (default: locate the proxy as Session.connect does)",
+    )
     args = ap.parse_args()
 
     cam_w, cam_h = args.width, args.height
@@ -831,7 +856,10 @@ def main() -> None:
             )
 
     # ── 3. Connect to ARA-2 and load model ───────────────────────────────
-    session = ara2.Session.create_via_unix_socket(args.socket)
+    if args.socket:
+        session = ara2.Session.create_via_unix_socket(args.socket)
+    else:
+        session = ara2.Session.connect()
     endpoints = session.list_endpoints()
     if not endpoints:
         sys.exit("No ARA-2 endpoints found.  Is rt-sdk-ara2.service running?")
@@ -845,7 +873,8 @@ def main() -> None:
     )
 
     with endpoint.load_model(args.model) as model:
-        model.allocate_tensors("dma")
+        # DMA-BUF needs a session that can pass file descriptors (UNIX).
+        model.allocate_tensors("dma" if session.supports_fd_passing else None)
         c, h, w = model.input_shape(0)
         input_dim = float(max(w, h))
         iq = model.input_quants(0)
@@ -869,33 +898,47 @@ def main() -> None:
         # ── 5. Setup image processor and model I/O tensors ───────────────
         processor = ef_image.ImageProcessor()
 
-        input_fd = model.input_tensor_fd(0)
-        try:
-            model_input = processor.import_image(
-                input_fd,
-                w,
-                h,
-                ef_image.PixelFormat.PlanarRgb,
-                dtype="int8" if iq.is_signed else "uint8",
+        # With fd-backed model tensors the GPU writes the model input and the
+        # decoder reads the model outputs in place. Heap tensors (a TCP
+        # session) cannot be imported, so preprocessing goes to a HAL image
+        # and both directions are copied around each inference.
+        fd_backed = model.input_tensor_memory(0) in ("dma", "shm")
+        in_dtype = "int8" if iq.is_signed else "uint8"
+        if fd_backed:
+            input_fd = model.input_tensor_fd(0)
+            try:
+                model_input = processor.import_image(
+                    input_fd,
+                    w,
+                    h,
+                    ef_image.PixelFormat.PlanarRgb,
+                    dtype=in_dtype,
+                )
+            finally:
+                os.close(input_fd)
+        else:
+            print("Model tensors are heap memory: copying input and outputs")
+            model_input = processor.create_image(
+                w, h, ef_image.PixelFormat.PlanarRgb, dtype=in_dtype, access="read"
             )
-        finally:
-            os.close(input_fd)
 
         letterbox_norm = compute_letterbox(cam_w, cam_h, w, h)
         pad_color = (114, 114, 114, 255)
 
         output_tensors = []
         for i in range(model.n_outputs):
-            fd = model.output_tensor_fd(i)
-            output_tensors.append(
-                ef_tensor.Tensor.from_fd(
-                    fd,
-                    shapes[i],
-                    output_dtype(
-                        model.output_info(i).bpp, model.output_quants(i).is_signed
-                    ),
-                )
+            dtype = output_dtype(
+                model.output_info(i).bpp, model.output_quants(i).is_signed
             )
+            if fd_backed:
+                fd = model.output_tensor_fd(i)
+                output_tensors.append(ef_tensor.Tensor.from_fd(fd, shapes[i], dtype))
+            else:
+                output_tensors.append(
+                    ef_tensor.Tensor(
+                        shapes[i], dtype=dtype, mem=ef_tensor.TensorMemory.MEM
+                    )
+                )
 
         # ── 6. Output canvas for draw_onto ──────────────────────────────
         # Single RGBA canvas.  The HAL calls glFinish() before returning
@@ -990,7 +1033,11 @@ def main() -> None:
             model_input,
             letterbox=pad_color,
         )
+        if not fd_backed:
+            copy_to_input(model, model_input)
         model.run()
+        if not fd_backed:
+            copy_from_outputs(model, output_tensors, shapes)
         decoder.draw_onto(
             processor,
             output_tensors,
@@ -1045,9 +1092,13 @@ def main() -> None:
                 model_input,
                 letterbox=pad_color,
             )
+            if not fd_backed:
+                copy_to_input(model, model_input)
             t3 = time.monotonic()
 
             model.run()
+            if not fd_backed:
+                copy_from_outputs(model, output_tensors, shapes)
             t4 = time.monotonic()
 
             # An int8 *segmentation* model needs edgefirst-image and

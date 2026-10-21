@@ -3,14 +3,26 @@
 
 use crate::error::{self, to_py_err};
 use crate::types::{
-    InputPreprocess, InputQuantization, InputTensorInfo, ModelTiming, OutputQuantization,
-    OutputTensorInfo,
+    InferenceStats, InputPreprocess, InputQuantization, InputTensorInfo, ModelType,
+    OutputQuantization, OutputTensorInfo,
 };
 use edgefirst_tensor::{TensorMapTrait as _, TensorMemory, TensorTrait as _};
 use numpy::IntoPyArray as _;
 use numpy::ndarray::{ArrayD, IxDyn};
 use pyo3::prelude::*;
 use std::os::fd::IntoRawFd as _;
+
+/// Converts a timeout in seconds to the whole milliseconds DVAPI takes.
+fn timeout_ms(seconds: f64) -> PyResult<i32> {
+    let ms = (seconds * 1000.0).ceil();
+    if !(0.0..=f64::from(i32::MAX)).contains(&ms) {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "timeout must be between 0 and {} seconds, got {seconds}",
+            i32::MAX / 1000
+        )));
+    }
+    Ok(ms as i32)
+}
 
 /// Convert a tensor error to a Python TensorError exception.
 fn tensor_err(e: impl std::fmt::Display) -> PyErr {
@@ -125,12 +137,17 @@ impl Model {
         Ok(())
     }
 
-    /// Set the inference timeout in milliseconds.
+    /// Set the inference timeout used by ``run()``.
     ///
     /// Args:
-    ///     timeout_ms: Timeout in milliseconds (default: 1000)
-    fn set_timeout_ms(&mut self, timeout_ms: i32) -> PyResult<()> {
-        self.inner_mut()?.set_timeout_ms(timeout_ms);
+    ///     timeout: Timeout in seconds (default: 1.0), rounded up to whole
+    ///         milliseconds
+    ///
+    /// Raises:
+    ///     ValueError: If ``timeout`` is negative, not finite, or too large
+    fn set_timeout(&mut self, timeout: f64) -> PyResult<()> {
+        let ms = timeout_ms(timeout)?;
+        self.inner_mut()?.set_timeout_ms(ms);
         Ok(())
     }
 
@@ -140,14 +157,15 @@ impl Model {
     /// this method.
     ///
     /// Returns:
-    ///     ModelTiming: Timing information for the inference run
+    ///     InferenceStats: Timing, clocks, cycle counts and timestamps for
+    ///         the inference run
     ///
     /// Raises:
     ///     TensorError: If tensors have not been allocated
-    fn run(&mut self) -> PyResult<ModelTiming> {
+    fn run(&mut self) -> PyResult<InferenceStats> {
         self.check_allocated()?;
-        let timing = self.inner_mut()?.run().map_err(to_py_err)?;
-        Ok(ModelTiming::from(timing))
+        let stats = self.inner_mut()?.run().map_err(to_py_err)?;
+        Ok(stats.into())
     }
 
     // ========================================================================
@@ -457,6 +475,26 @@ impl Model {
     // Introspection
     // ========================================================================
 
+    /// The model format version the model was compiled to, as
+    /// "major.minor.patch.patch_minor": 2.0.0.0 for DVAPI 1.x runtimes,
+    /// 3.0.0.0 for 3.x. Its major is what read_model_format() returns.
+    #[getter]
+    fn version(&self) -> PyResult<String> {
+        Ok(self.inner_ref()?.version().to_string())
+    }
+
+    /// The name given when the model was loaded, or ``None``.
+    #[getter]
+    fn name(&self) -> PyResult<Option<String>> {
+        Ok(self.inner_ref()?.name())
+    }
+
+    /// The kind of model the runtime reports.
+    #[getter]
+    fn model_type(&self) -> PyResult<ModelType> {
+        Ok(self.inner_ref()?.model_type().into())
+    }
+
     /// Number of input tensors.
     #[getter]
     fn n_inputs(&self) -> PyResult<usize> {
@@ -656,7 +694,7 @@ fn memory_type_str(memory: TensorMemory) -> &'static str {
 /// A pending asynchronous inference request.
 ///
 /// Created by :meth:`Model.submit`. Call :meth:`wait` to block until the
-/// NPU finishes and retrieve timing information. The GIL is released
+/// NPU finishes and retrieve its statistics. The GIL is released
 /// during ``wait()`` so other Python threads can run.
 ///
 /// The underlying request is freed automatically when the object is
@@ -666,7 +704,7 @@ fn memory_type_str(memory: TensorMemory) -> &'static str {
 ///
 ///     request = model.submit()
 ///     # ... pre-process next frame while NPU is busy ...
-///     timing = request.wait()
+///     stats = request.wait()
 #[pyclass(module = "edgefirst_ara2", unsendable)]
 pub struct InferRequest {
     inner: Option<ara2::InferRequest>,
@@ -678,28 +716,32 @@ pub struct InferRequest {
 
 #[pymethods]
 impl InferRequest {
-    /// Block until the inference completes and return timing.
+    /// Block until the inference completes and return its statistics.
     ///
     /// The GIL is released during the wait so other Python threads can
     /// proceed concurrently.
     ///
     /// Args:
-    ///     timeout_ms: Maximum wait time in milliseconds (default: 1000)
+    ///     timeout: Maximum wait time in seconds (default: 1.0), rounded up
+    ///         to whole milliseconds
     ///
     /// Returns:
-    ///     ModelTiming: Timing information for the completed inference
+    ///     InferenceStats: Timing, clocks, cycle counts and timestamps for
+    ///         the completed inference
     ///
     /// Raises:
+    ///     ValueError: If ``timeout`` is negative, not finite, or too large
     ///     Ara2Error: If the request has already been consumed, or
     ///                inference failed on the NPU
-    #[pyo3(signature = (timeout_ms=1000))]
-    fn wait(&mut self, py: Python<'_>, timeout_ms: i32) -> PyResult<ModelTiming> {
+    #[pyo3(signature = (timeout=1.0))]
+    fn wait(&mut self, py: Python<'_>, timeout: f64) -> PyResult<InferenceStats> {
+        let timeout_ms = timeout_ms(timeout)?;
         let req = self
             .inner
             .take()
             .ok_or_else(|| error::Ara2Error::new_err("inference request already consumed"))?;
-        let timing = py.detach(|| req.wait(timeout_ms).map_err(to_py_err))?;
-        Ok(ModelTiming::from(timing))
+        let stats = py.detach(|| req.wait(timeout_ms).map_err(to_py_err))?;
+        Ok(stats.into())
     }
 
     /// Get the proxy-assigned request ID for log correlation.

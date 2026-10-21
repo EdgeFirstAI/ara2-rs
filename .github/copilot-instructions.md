@@ -9,6 +9,20 @@ bindings to `libaraclient`, dlopen'd by trying each name in
 `ara2::LIBRARY_NAMES` (NXP has shipped it as `libaraclient_aarch64.so`,
 `libaraclient_x86_64.so`, and `libaraclient.so.1` across SDK drops).
 
+Three DVAPI versions are supported: 1.1 (Kinara runtime 1.2.1, packaged by meta-kinara), 1.3 (NXP rt-sdk-ara2 2.1.1) and 3.0 (arart r3.0). Their struct layouts differ (3.0 inserts `hw_cycles` mid-`dv_model`), so the loaded library's version is probed once per session as an `ara2::Abi` and every version-specific struct is read at that version's layout.
+
+### DVAPI layouts
+
+- `ara2-sys` declares the API itself in `crates/ara2-sys/include/`: `dvapi_common.h` (crate root; version-specific structs opaque) and `dvapi_v1_1.h`, `dvapi_v1_3.h`, `dvapi_v3_0.h` (modules `v1_1`, `v1_3`, `v3_0`, each struct in full). No SDK header is committed; our headers carry the Au-Zone Apache-2.0 SPDX header.
+- In our headers: every enumerator has an explicit `= value`; every prototype is on one line; inside `dvapi_v*.h`, version-specific structs are referenced by `struct tag`, never by their `_t` typedef (which names the opaque common type).
+- **Only `crates/ara2/src/raw.rs` reads version-specific structs**, through `with_layout!`. Nowhere else may dereference a `dv_model`, `dv_endpoint_statistics` or similar.
+- After editing a header, run `crates/ara2-sys/update.sh`, then `update.sh --verify <1.1|1.3|3.0> <sdk-include-dir>` for every affected version (see TESTING.md), and update the pins in `crates/ara2-sys/src/lib.rs`.
+- `ARA2_ABI` is refused (`Error::AbiOverrideRejected`, and the library search stops there) when it contradicts the reported version: a different recognised version, or an unrecognised version of another major. Forcing the recognised version itself, forcing when the probe failed, and forcing the same major over an unrecognised minor are accepted.
+
+### Connection
+
+`Session::connect()` resolves one endpoint and makes one attempt (a failed attempt can poison the 1.1 client): `ARA2_SOCKET` (`/path`, `unix:/path`, `tcp:IPV4:PORT`), then the first existing `SOCKET_PATHS` entry, then `discover()` preferring UNIX over TCP. `ara2::proxy_endpoint()` reports the choice without connecting. TCP sessions cannot pass file descriptors: `supports_fd_passing()` is false, `None` memory allocates heap, and explicit `Shm`/`DmaBuf` fails with `Error::FdPassingUnavailable`.
+
 ### Workspace Structure
 
 | Crate | Purpose | Publish Target |
@@ -20,12 +34,16 @@ bindings to `libaraclient`, dlopen'd by trying each name in
 ### Key Types
 
 ```
-Session → Endpoint → Model → run() → ModelTiming
+Session → Endpoint → Model → run() → InferenceStats
 ```
 
-- **Session**: Connection to the ARA-2 proxy via UNIX or TCP socket. Arc-based, cheaply cloneable.
+- **Session**: Connection to the ARA-2 proxy via UNIX or TCP socket (fd-backed tensors need UNIX). Arc-based, cheaply cloneable.
 - **Endpoint**: A single ARA-2 NPU device. Check status, DRAM stats, load models.
 - **Model**: A loaded DVM neural network. Allocate tensors, set inputs, run inference, read outputs.
+
+### Telemetry
+
+`telemetry.rs` holds the telemetry types. A counter is exposed only if at least one runtime populates it on hardware, and a field the loaded DVAPI version lacks is `None`, never zero. Fields that exist in only some layouts are read through the `VersionFields` trait in `raw.rs` (defaults return `None`; the layouts that have the field override). Calls that exist in only some versions (`is_busy`, `set_log_level`) return `Error::Unsupported` elsewhere. Per-model statistics, queue statistics, the endpoint power state and power-state control are not exposed, because the runtime does not yet report or apply them reliably. Inference timestamps are `Some` only on DVAPI 3.0, the one runtime that stamps `CLOCK_MONOTONIC`. See ARCHITECTURE.md.
 
 ### Ownership Model
 
@@ -112,9 +130,19 @@ maturin build --release --features pyo3/abi3-py311
 All tests require an NXP i.MX + ARA-2 PCIe system with:
 
 1. `libaraclient` installed and accessible under one of `ara2::LIBRARY_NAMES`
-2. Proxy service running: `systemctl status rt-sdk-ara2`
+2. Proxy service running (`rt-sdk-ara2`, `ara2`, or the board's r3.0 unit)
 3. ARA-2 device visible: `lspci | grep -i kinara`
-4. Proxy socket available: `ls -la /var/run/proxy.sock`
+4. Proxy endpoint reachable: `Session::connect()` finds it, or set `ARA2_SOCKET`
+
+### Board matrix
+
+| Board and runtime | DVAPI | Library | Proxy |
+|-------------------|-------|---------|-------|
+| i.MX 8M Plus FRDM with Kinara runtime 1.2.1 | 1.1 | system | UNIX `/var/run/ara2.sock` |
+| i.MX 95 board with NXP rt-sdk-ara2 2.1.1 | 1.3 | `/usr/lib/libaraclient_aarch64.so` | UNIX `/var/run/proxy.sock` |
+| i.MX 95 FRDM with arart r3.0 | 3.0 | `LD_LIBRARY_PATH=/opt/ara2/art/linux/aarch64/lib` | TCP `127.0.0.1:5000` by default |
+
+Ask the user before using a shared test board, and before changing a board's proxy service or configuration; restore any such change afterwards. On an r3.0 install whose unit runs chip bring-up before the proxy, restarting the unit or warm-rebooting the board fails on an already-initialised chip; a proxy configuration change needs a power cycle. Run the hardware suite with `--test-threads=1`. Install Python wheels on boards into a virtual environment, never the system Python.
 
 ### Running Tests
 
@@ -137,16 +165,22 @@ cargo nextest run -p ara2
 | Category | Hardware | Env Vars | Notes |
 |----------|----------|----------|-------|
 | `dvm_metadata` | No | None | Pure data parsing tests |
+| `offline` | No | None | Hardware-free logic; name new host-only tests `offline` (or put them in `offline_tests`) so CI runs them |
 | `session` | Yes | None | Needs the proxy running |
 | `endpoint` | Yes | None | Needs the proxy + NPU |
 | `model` | Yes | `ARA2_TEST_MODEL` | Needs a compiled .dvm file |
+| `telemetry` | Yes | `ARA2_TEST_MODEL` | Statistics, info, busyness and per-version `None` handling; Python: `TestTelemetry` in `tests/test.py` |
 
 ### Environment Variables
 
 | Variable | Description |
 |----------|-------------|
-| `ARA2_SOCKET` | Proxy socket path; overrides `DEFAULT_SOCKET` for `Session::connect()` |
+| `ARA2_SOCKET` | Pins the proxy endpoint for `Session::connect()`: a socket path, `unix:/path` or `tcp:IPV4:PORT` |
+| `ARA2_ABI` | Forces a layout (`1.1`, `1.3`, `3.0`) under the same-major rule |
+| `ARA2_SDK_V1_1` / `_V1_3` / `_V3_0`, `ARA2_SDK_REQUIRE` | SDK include directories for `ara2-sys`'s `verify_sdk` test |
 | `ARA2_TEST_MODEL` | Path to a `.dvm` model file for model tests |
+| `ARA2_TEST_FOREIGN_MODEL` | Path to a `.dvm` built for the other runtime generation, for the load-failure test |
+| `ARA2_TEST_FORMAT_FILES` | `path=format` pairs for the offline real-file format test |
 | `RUST_LOG` | Log level: `debug`, `info`, `warn`, `error` |
 
 ## On-Target Debugging
@@ -208,12 +242,12 @@ The `Error` enum in `crates/ara2/src/error.rs` covers all error types. Follow th
 - Add a variant to `Error`
 - Add a `From<T>` impl
 - Add a `Display` match arm
-- FFI errors use `From<dv_status_code>` converting non-zero return codes
+- A non-zero DVAPI status becomes `Error::Ara2` through `SessionInner::status_error` (or `status::status_error_from` before a session exists), which names it with the library's `dv_stringify_status_code`. There is no `From<dv_status_code>` conversion.
 
 ### Unsafe Code
 
 All unsafe blocks are in the FFI layer. When adding new FFI calls:
-1. Add the C function signature to `crates/ara2-sys/src/ffi.rs` (generated by bindgen)
+1. Declare the C prototype in `crates/ara2-sys/include/` (common header if identical in every version, else each `dvapi_v*.h`), regenerate with `update.sh`, and verify against the SDKs
 2. Wrap in a safe Rust function in the appropriate module
 3. Check return codes and convert to `Error`
 4. Document the safety invariant in a `// Safety:` comment
@@ -258,7 +292,7 @@ Three rules are not negotiable, because the shared workflows assume them:
   so `ara2-py` reaches it, and pyo3 refuses to configure a cross build without
   an interpreter for the target. Nothing is executed; naming the version is
   enough.
-- **`nextest-args` carries `-E 'test(dvm_metadata)'`.** Every other test needs
+- **`nextest-args` carries `-E 'test(dvm_metadata) | test(offline) | binary(verify_sdk)'`.** `verify_sdk` skips each SDK check when no SDK is set, so only its parser tests run. Every other test needs
   an ARA-2 NPU and a running proxy. They are deliberately not
   `#[ignore]`d, because on a target they are the point of the suite.
 - **No `clippy-args` override.** `codec` and `decoder` are off by default, so

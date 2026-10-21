@@ -4,15 +4,18 @@ This document describes how to test the ARA-2 client library.
 
 ## Overview
 
-Most tests require ARA-2 hardware and a running proxy service. Only the
-DVM metadata tests can run on any machine.
+Most tests require ARA-2 hardware and a running proxy service. Tests that run anywhere are named `dvm_metadata` or `offline` (module `offline_tests`), which is what CI selects.
 
 | Category | Hardware | Env Vars | Description |
 |----------|----------|----------|-------------|
 | `dvm_metadata` | No | None | Pure data parsing — runs in CI |
-| `session` | Yes | None | Proxy connection tests |
+| `offline` | No | None | ABI selection, `ARA2_SOCKET` parsing, endpoint choice, struct reads per version, status and version mapping — runs in CI |
+| `session` | Yes | None | Proxy connection, transport, versions, status names |
 | `endpoint` | Yes | None | NPU endpoint enumeration and status |
-| `model` | Yes | `ARA2_TEST_MODEL` | Model loading, tensor allocation, inference |
+| `model` | Yes | `ARA2_TEST_MODEL` | Model loading, layout sanity, tensor allocation, fd passing, inference |
+| `verify_sdk` (ara2-sys) | No | `ARA2_SDK_V*` | Declarations against SDK headers — skipped without an SDK |
+
+A new test that needs no hardware must be named `offline` (or sit in an `offline_tests` module) for CI to run it.
 
 ## Prerequisites (on-target)
 
@@ -20,19 +23,19 @@ DVM metadata tests can run on any machine.
    ```bash
    lspci | grep -i kinara
    ```
-2. **Proxy service** running (`rt-sdk-ara2.service` on EdgeFirst Yocto
-   images shipping NXP's rt-sdk-ara2 integration):
-   ```bash
-   systemctl status rt-sdk-ara2
-   ```
-3. **Proxy socket** available:
-   ```bash
-   ls -la /var/run/proxy.sock
-   ```
-4. **Client library** installed (one of `ara2::LIBRARY_NAMES`):
-   ```bash
-   ls /usr/lib/libaraclient_aarch64.so
-   ```
+2. **Proxy service** running: `rt-sdk-ara2.service` under NXP's packaging, `ara2.service` under meta-kinara's, or whatever unit the board's r3.0 install uses.
+3. **Proxy endpoint** reachable. `Session::connect()` finds it without configuration (see the README's "Connecting"); set `ARA2_SOCKET` to pin one.
+4. **Client library** installed (one of `ara2::LIBRARY_NAMES`), on `LD_LIBRARY_PATH` if it is not in a system directory.
+
+## Board matrix
+
+| Board and runtime | DVAPI | Library | Proxy transport | Coverage |
+|-------------------|-------|---------|-----------------|----------|
+| i.MX 8M Plus FRDM with Kinara runtime 1.2.1 | 1.1 | system | UNIX `/var/run/ara2.sock` | Full suite and Python tests |
+| i.MX 95 board with NXP rt-sdk-ara2 2.1.1 | 1.3 | `/usr/lib/libaraclient_aarch64.so` | UNIX `/var/run/proxy.sock` | Full suite and Python tests |
+| i.MX 95 FRDM with arart r3.0 | 3.0 | `LD_LIBRARY_PATH=/opt/ara2/art/linux/aarch64/lib` | TCP `127.0.0.1:5000` by default, UNIX with `interface_type: "SOCKET"` | Full suite and Python tests over TCP |
+
+Run the hardware suite single-threaded, since the tests share one NPU.
 
 ## Running Tests
 
@@ -62,6 +65,90 @@ curl -LO https://huggingface.co/EdgeFirst/yolov8-det/resolve/main/ara240/yolov8n
 curl -LO https://huggingface.co/EdgeFirst/yolov8-seg/resolve/main/ara240/yolov8n-seg-int16.dvm
 ```
 
+### Transport and fd-passing tests
+
+These tests check their own expectations against the transport the session is on, so the same suite passes over UNIX and TCP:
+
+- `session::tests::connect_uses_the_resolved_transport` — `Session::connect()` lands on the transport `ara2::proxy_endpoint()` resolved, and `supports_fd_passing()` matches it.
+- `model::tests::fd_tensors_follow_the_transport` — over TCP, `TensorMemory::DmaBuf` and `TensorMemory::Shm` fail with `Error::FdPassingUnavailable` in `allocate_tensors`, `allocate_input_set` and `allocate_output_set`, and heap inference runs. Over UNIX, DMA-BUF and SHM inference on a fixed input pattern produce outputs byte-identical to heap inference. With `--nocapture` it prints which branch it took.
+- `model::tests::shm_registrations_are_released`, `dmabuf_request_dropped_before_completion_is_safe`, `registration_outlives_dropped_set_while_pending` — exercise shared-memory registration over UNIX; over TCP they check the refusal and stop.
+- `model::tests::model_layout_reads_are_sane` — every model field read through the version layout is in range and consistent, and input 0 matches the `.dvm` metadata's size and channels where the file has them. A wrong layout reads garbage here rather than failing a call.
+
+To cover both branches on one board, run the suite once per transport. On an r3.0 board whose proxy listens on TCP, switch its configuration to a UNIX socket temporarily, with the board owner's agreement.
+
+Where the proxy's unit runs chip bring-up before starting the proxy (as the r3.0 install on the i.MX 95 FRDM does), apply each configuration change with a power cycle. That bring-up only succeeds on a cold chip: `systemctl restart` and a warm reboot both leave the chip initialised, the bring-up fails, and the proxy stays down until the board is powered off and on.
+
+```bash
+cp /opt/ara2/proxy_run.yaml /opt/ara2/proxy_run.yaml.tcp-backup
+# In the proxy: section set
+#     interface_type: "SOCKET"
+#     interface_socket_file: ["/var/run/proxy.sock"]
+poweroff                      # then cut and restore board power
+# After boot, wait for: systemctl is-active <proxy unit> && test -S /var/run/proxy.sock
+# Run the suite with no ARA2_SOCKET; connect() must pick /var/run/proxy.sock.
+mv /opt/ara2/proxy_run.yaml.tcp-backup /opt/ara2/proxy_run.yaml
+poweroff                      # then cut and restore board power
+# After boot: systemctl is-active <proxy unit>
+grep ':1388' /proc/net/tcp    # port 5000 listening again
+```
+
+On an install whose unit does no chip bring-up and only starts the proxy, `systemctl restart <proxy unit>` in place of each power cycle is enough.
+
+### SDK verifier
+
+`crates/ara2-sys/tests/verify_sdk.rs` checks ara2-sys's declarations against SDK headers. Point it at each SDK's include directory (the one holding `dvapi.h`):
+
+```bash
+ARA2_SDK_V1_1=<runtime-1.2.1>/art/linux/x86/include \
+ARA2_SDK_V1_3=<imx-nxp-ara2-2.1.1>/usr/include/sdk_ara \
+ARA2_SDK_V3_0=<arart-r3.0>/arart-r3.0-x86/x86/include \
+ARA2_SDK_REQUIRE=all cargo test -p ara2-sys --test verify_sdk
+```
+
+Or one version at a time with `crates/ara2-sys/update.sh --verify <1.1|1.3|3.0> <dir>`, which also prints what the SDK declares that ara2-sys does not. Unset versions are skipped unless `ARA2_SDK_REQUIRE` names them.
+
+### Model format tests
+
+`dvm_format` and `error` have offline tests over synthetic buffers. Two hardware tests cover the format check: `model_format_matches_loaded_version` (needs `ARA2_TEST_MODEL`) checks that the format read from the file equals the major version of `Model::version()` after loading, and `foreign_model_load_explains_mismatch` loads `ARA2_TEST_FOREIGN_MODEL`, a model built for the other runtime generation than the board's, and expects `Error::ModelLoadFailed` with a `Mismatch` and status 520. It skips when the variable is unset. `tests/test.py` has the same pair in `TestModelFormat`.
+
+```bash
+ARA2_TEST_MODEL=<model for this runtime> ARA2_TEST_FOREIGN_MODEL=<model for the other one> \
+  cargo test -p ara2 -- model_format foreign_model --test-threads=1
+```
+
+`ARA2_TEST_FORMAT_FILES` runs the reader over real files without hardware, as comma-separated `path=format` pairs (`none` where the format should be unrecognised):
+
+```bash
+ARA2_TEST_FORMAT_FILES=yolov8n-det-int16.dvm=2,truncated.dvm=none \
+  cargo test -p ara2 offline_real_files_when_given -- --nocapture
+```
+
+### Python tests
+
+`tests/test.py` covers the Python bindings, including `TestTelemetry`, which needs `ARA2_TEST_MODEL` and skips without it. It is plain `unittest`, so `python test.py` works without pytest. Install the wheel into a virtual environment on the target rather than the system Python:
+
+```bash
+uvx maturin build --release -m crates/ara2-py/Cargo.toml \
+  --target aarch64-unknown-linux-gnu --zig --features pyo3/abi3-py311
+scp target/wheels/edgefirst_ara2-*aarch64*.whl tests/test.py <target>:ara2-rs-test/
+ssh <target> 'cd ~/ara2-rs-test && python3 -m venv venv && . venv/bin/activate && \
+  pip install --force-reinstall edgefirst_ara2-*.whl && ARA2_TEST_MODEL=<model.dvm> python3 test.py'
+```
+
+### Telemetry tests and measurement
+
+The telemetry tests check each field against what the loaded DVAPI version populates: timestamps `None` on 1.x, `largest_contiguous_free` `None` before 3.0 and within the free size on 3.0, and `is_busy()` and `set_log_level()` succeeding where the runtime has them. Run them with the hardware tests (`ARA2_TEST_MODEL` set, single-threaded).
+
+The `telemetry` example is the measurement procedure. It prints the full report, then times the inference loop alone and while a second thread samples `Endpoint::statistics()` every `sample_ms`:
+
+```bash
+cargo zigbuild --release --target aarch64-unknown-linux-gnu -p ara2 --example telemetry
+scp target/aarch64-unknown-linux-gnu/release/examples/telemetry <target>:ara2-rs-test/
+ssh <target> 'cd ~/ara2-rs-test && ./telemetry <model.dvm> 200 100'
+```
+
+Measured on the DVAPI 1.3 board (i.MX 95, `yolov8n-det-int16`), three runs: 126.8, 126.3 and 125.8 fps alone against 125.7, 126.4 and 126.0 fps while sampling every 100 ms, with a `statistics()` call taking 1.05 to 1.11 ms on average and at most 1.5 ms. On the DVAPI 1.1 board (i.MX 8M Plus, `yolov8n-det-int16`), three runs: 112.1, 111.3 and 110.5 fps alone against 111.1, 111.0 and 111.9 fps while sampling, with a `statistics()` call taking 1.14 to 1.38 ms on average and at most 2.6 ms. On the DVAPI 3.0 board (i.MX 95, proxy over TCP, a 3.0-compiled detection model), three runs: 29.9, 29.9 and 29.8 fps alone against 30.0, 29.9 and 29.9 fps while sampling, with a `statistics()` call taking 7.4 to 10.0 ms on average and at most 40 ms. A model compiled for DVAPI 1.3 fails to load on 3.0 with `DV_MODEL_LOAD_FAILURE`, reported as `Error::ModelLoadFailed` with a `Mismatch`.
+
 ### With nextest
 
 ```bash
@@ -79,6 +166,12 @@ RUST_LOG=debug cargo test -p ara2 -- --nocapture
 | Variable | Description |
 |----------|-------------|
 | `ARA2_TEST_MODEL` | Path to a `.dvm` model file for model tests |
+| `ARA2_TEST_FOREIGN_MODEL` | Path to a `.dvm` built for the other runtime generation than the board's, for the load-failure test |
+| `ARA2_TEST_FORMAT_FILES` | `path=format` pairs (`none` for unrecognised) for the offline real-file format test |
+| `ARA2_SOCKET` | Pins the proxy endpoint: a UNIX socket path, `unix:/path` or `tcp:IPV4:PORT` |
+| `ARA2_ABI` | Forces a struct layout (`1.1`, `1.3`, `3.0`); see the README for when it is honoured |
+| `ARA2_SDK_V1_1`, `ARA2_SDK_V1_3`, `ARA2_SDK_V3_0` | SDK include directories for `verify_sdk` |
+| `ARA2_SDK_REQUIRE` | Versions `verify_sdk` must not skip (comma-separated, or `all`) |
 | `RUST_LOG` | Log level: `debug`, `info`, `warn`, `error` |
 
 ## Running Examples on Target
@@ -261,12 +354,10 @@ The GitHub Actions workflows run the following checks:
 
 | Workflow | What runs |
 |----------|-----------|
-| `test.yml` | `cargo fmt --all -- --check`, `cargo clippy --workspace --exclude ara2-py --all-targets -- -D warnings`, `cargo nextest run -p ara2 -E 'test(dvm_metadata)'` |
-| `build.yml` | Release build for x86_64 and aarch64 |
-| `python.yml` | Python wheel build with maturin + zig |
+| `ci.yml` | `cargo fmt`, clippy with and without `ara2/codec,ara2/decoder`, `cargo nextest run --workspace -E 'test(dvm_metadata) \| test(offline) \| binary(verify_sdk)'`, builds and Python wheels |
+| `nightly.yml` | The same test selection on a schedule |
 
-Hardware-dependent tests (`session`, `endpoint`, `model`) do not run in
-CI — they require a self-hosted runner with ARA-2 hardware.
+Hardware-dependent tests (`session`, `endpoint`, `model`) do not run in CI — they require ARA-2 hardware. The SDK verifier does not run either, as no SDK is available there; run it by hand when an SDK changes.
 
 ## Debugging
 
