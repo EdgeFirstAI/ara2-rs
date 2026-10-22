@@ -46,10 +46,10 @@ ara2-sys.workspace = true
 edgefirst-codec = { workspace = true, optional = true }
 edgefirst-decoder = { workspace = true, optional = true }
 # The workspace entry drops edgefirst-image's defaults, whose `codec` would
-# otherwise pull edgefirst-codec into every build of this crate. `opengl` and
-# `static` are the rest of that default set, re-listed so the GPU conversion
-# engines and the statically linked tensor backend stay on.
-edgefirst-image = { workspace = true, features = ["opengl", "static"] }
+# otherwise pull edgefirst-codec into every build of this crate. `opengl` is
+# the rest of that default set, re-listed so the GPU conversion engines stay
+# on.
+edgefirst-image = { workspace = true, features = ["opengl"] }
 edgefirst-tensor.workspace = true
 libcamera = { workspace = true, optional = true }
 libc.workspace = true
@@ -63,7 +63,7 @@ serde_json = "1.0"
 serde_yaml_ng = "0.10"
 wayland-client = { workspace = true, optional = true }
 wayland-protocols = { workspace = true, optional = true }
-zip = { version = "8.6", default-features = false }
+zip = { version = "9.0", default-features = false }
 
 [dev-dependencies]
 clap.workspace = true

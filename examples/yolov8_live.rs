@@ -67,7 +67,7 @@ use edgefirst_decoder::{
     configs::{self, DecoderType, QuantTuple},
 };
 use edgefirst_image::{
-    ColorMode, Crop, Flip, ImageProcessor, ImageProcessorTrait as _, MaskOverlay, Rotation,
+    ColorMode, ConvertOptions, ImageProcessor, ImageProcessorTrait as _, MaskOverlay,
 };
 use edgefirst_tensor::{
     CpuAccess, DType, PixelFormat, PlaneDescriptor, TensorDyn, TensorMapTrait as _, TensorMemory,
@@ -1026,7 +1026,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )?
     };
 
-    let letterbox = Crop::letterbox([114, 114, 114, 255]);
+    let letterbox = ConvertOptions::new().letterbox([114, 114, 114, 255]);
 
     let output_tensors: Vec<TensorDyn> = (0..n_outputs)
         .map(|i| {
@@ -1052,13 +1052,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Allocate a DMA-BUF-backed RGBA canvas at camera resolution. This is
     // the final render target: draw_masks composites the camera frame with
     // detection overlays into this buffer, which is then submitted to Wayland.
+    // The CPU mask renderer reads and writes it, hence `ReadWrite`.
     let mut canvas = processor.create_image(
         cam_w,
         cam_h,
         PixelFormat::Rgba,
         DType::U8,
         None,
-        CpuAccess::None,
+        CpuAccess::ReadWrite,
     )?;
     let canvas_fd = canvas.clone_fd()?;
     let canvas_raw_fd = canvas_fd.as_raw_fd();
@@ -1174,7 +1175,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         req.reuse(ReuseFlag::REUSE_BUFFERS);
         cam.queue_request(req).map_err(|(_, e)| e)?;
 
-        processor.convert(src, &mut model_input, Rotation::None, Flip::None, letterbox)?;
+        processor.convert(src, &mut model_input, Some(letterbox))?;
         if !fd_backed {
             copy_to_input(&mut model, &model_input)?;
         }
@@ -1185,7 +1186,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let overlay = MaskOverlay::default()
             .with_background(src)
-            .with_letterbox_crop(&letterbox, cam_w, cam_h, in_w, in_h)
+            .with_convert_options(&letterbox, cam_w, cam_h, in_w, in_h)
             .with_color_mode(color_mode);
         processor.draw_masks(&decoder, &output_refs, &mut canvas, overlay)?;
 
@@ -1246,7 +1247,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         cam.queue_request(req).map_err(|(_, e)| e)?;
         let t2 = Instant::now();
 
-        processor.convert(src, &mut model_input, Rotation::None, Flip::None, letterbox)?;
+        processor.convert(src, &mut model_input, Some(letterbox))?;
         if !fd_backed {
             copy_to_input(&mut model, &model_input)?;
         }
@@ -1260,7 +1261,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let overlay = MaskOverlay::default()
             .with_background(src)
-            .with_letterbox_crop(&letterbox, cam_w, cam_h, in_w, in_h)
+            .with_convert_options(&letterbox, cam_w, cam_h, in_w, in_h)
             .with_color_mode(color_mode);
         let detections = processor.draw_masks(&decoder, &output_refs, &mut canvas, overlay)?;
         let t5 = Instant::now();

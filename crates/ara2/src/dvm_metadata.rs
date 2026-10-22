@@ -547,7 +547,9 @@ pub fn has_metadata(data: &[u8]) -> bool {
         Err(_) => return false,
     };
 
-    archive.file_names().any(|n| n == METADATA_FILENAME)
+    archive
+        .file_names()
+        .any(|n| n.is_ok_and(|n| n == METADATA_FILENAME))
 }
 
 /// Read metadata from a DVM file path.

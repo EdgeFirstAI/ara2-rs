@@ -327,9 +327,9 @@ checksum = "37b2a672a2cb129a2e41c10b1224bb368f9f37a2b16b612598138befd7b37eb5"
 
 [[package]]
 name = "cc"
-version = "1.8.0"
+version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6651c9ed80effdc7db0ff72512157f901af5e3549e341e24b1dd4887d836d838"
+checksum = "877bf67ac8e52449eb2f9e98a344ea163beb70dd1f9eebe3cc5357dcfeaee4df"
 dependencies = [
  "find-msvc-tools",
  "jobserver",
@@ -444,9 +444,9 @@ checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 
 [[package]]
 name = "crc32fast"
-version = "1.5.2"
+version = "1.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "01a7799fd6b852db0e61728dde9a204c423b44d689dbd432522543614b490e78"
+checksum = "0ba106e844045ddc02c20768ac4b0b7cb45f2cc2ecbd833ac9f5dacb183c2055"
 dependencies = [
  "cfg-if",
 ]
@@ -585,9 +585,9 @@ dependencies = [
 
 [[package]]
 name = "edgefirst-codec"
-version = "0.35.0"
+version = "0.36.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1f684b224ef0ee2d567df4e65221a54f8fd41d9d6297f6a2671a4b3ad5908e19"
+checksum = "eebd35f1ae16fd6a775bf5c29357800ddd3ecf617fe453c00468db24be23e2d5"
 dependencies = [
  "edgefirst-tensor",
  "edgefirst-v4l2",
@@ -601,9 +601,9 @@ dependencies = [
 
 [[package]]
 name = "edgefirst-decoder"
-version = "0.35.0"
+version = "0.36.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0f367c4a1cb89e44d2c886414c15bf2ff9f2a8187b7818ac3f2a648c61558b95"
+checksum = "dc66d56fe55e1770deafc21e193d3a8636bae15828173d0dbd0c1c4f68d27705"
 dependencies = [
  "argminmax",
  "edgefirst-decoder-abi",
@@ -622,15 +622,15 @@ dependencies = [
 
 [[package]]
 name = "edgefirst-decoder-abi"
-version = "0.35.0"
+version = "0.36.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9613517f7c7ca0ad0734d6cd208c01b6ae2e424234f1673b8574304a982194d8"
+checksum = "3e78bcc54052aa39e22df161e2575b03387f86208d86119e42a271e26b811b34"
 
 [[package]]
 name = "edgefirst-egl"
-version = "0.35.0"
+version = "0.36.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "31f84cafa37f70a8bdb9221919cbd3447c6ba5917431efd9358db5f6f615f6bc"
+checksum = "e2b1a561e196307348294948911ae098f640a25d33ef457cebb8d1c97b5efb33"
 dependencies = [
  "libc",
  "libloading 0.9.0",
@@ -661,18 +661,18 @@ dependencies = [
 
 [[package]]
 name = "edgefirst-gl"
-version = "0.35.0"
+version = "0.36.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7deac63fec3db897830ead340d0ef47f69a71e2016a8eb5c2c5a7113d8724716"
+checksum = "125f4b1f9e07b96868d2408f1e5c7e01da6d3597512605142e16f56e7663c47a"
 dependencies = [
  "gl_generator",
 ]
 
 [[package]]
 name = "edgefirst-image"
-version = "0.35.0"
+version = "0.36.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c906912a73c8df30cff4f1b5d5fd0e4c2c528c229bcded8a36d24f1c2b60f450"
+checksum = "19b6e35eafcb32e135fbe1fc24a2d17f574dfe21833589a90e07b911071a3dd9"
 dependencies = [
  "dma-heap",
  "drm-fourcc",
@@ -702,12 +702,13 @@ dependencies = [
 
 [[package]]
 name = "edgefirst-tensor"
-version = "0.35.0"
+version = "0.36.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e754f24cc13a57f1d7d0ac23b6b06ce4cde6b87da89953af6dfd9a7170a025c9"
+checksum = "830d1d46cd53bf3f96ae3cb636288b307f126b30ce546152ecc249a23cec3ece"
 dependencies = [
  "dma-heap",
  "edgefirst-tensor-abi",
+ "edgefirst-tensor-ffi",
  "half",
  "libc",
  "libloading 0.9.0",
@@ -723,15 +724,24 @@ dependencies = [
 
 [[package]]
 name = "edgefirst-tensor-abi"
-version = "0.35.0"
+version = "0.36.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "143f778ccbfc2c91227040bbf2c5508533dfbd8962f51651dd1131069654cedc"
+checksum = "f668e09f2d2b017d5b39e41a645e4fca9fe42568919666d0a8391955fedab35d"
+
+[[package]]
+name = "edgefirst-tensor-ffi"
+version = "0.36.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6021267f303754545eab832e997f4ad0e7dc9b1e23088cd432db5d79572ebbce"
+dependencies = [
+ "edgefirst-tensor-abi",
+]
 
 [[package]]
 name = "edgefirst-v4l2"
-version = "0.2.1"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b3cbfafbad776ecf3df5357ceb945d7f39bb67cf65a3aa92d3b48db722ded028"
+checksum = "ec730dcf678b52005889adae2de18b0acd898eb1b729b1b2cd357535057123ef"
 dependencies = [
  "libc",
  "nix",
@@ -777,9 +787,9 @@ dependencies = [
 
 [[package]]
 name = "equivalent"
-version = "1.0.2"
+version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
+checksum = "00d174d5400e5e8fd687ad1049e2f578285fa914201b1af7e8b112a4546bd826"
 
 [[package]]
 name = "errno"
@@ -825,9 +835,9 @@ dependencies = [
 
 [[package]]
 name = "find-msvc-tools"
-version = "0.1.14"
+version = "0.1.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aedcfb3409746eddb02b9e19ebda1c3394f759a152e48ee875a0844d1b955484"
+checksum = "1c66915cc5391097de7a2b0b972e8505aa33c0df401fd3a6811dbdb32881ba48"
 
 [[package]]
 name = "four-char-code"
@@ -1068,9 +1078,9 @@ checksum = "7a79a3332a6609480d7d0c9eab957bca6b455b91bb84e66d19f5ff66294b85b8"
 
 [[package]]
 name = "libc"
-version = "0.2.190"
+version = "0.2.191"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce5d3ddc6d3fa000eb1536d85e147bfe31aacaba692ed6a876f95cb7c855be78"
+checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
 
 [[package]]
 name = "libcamera"
@@ -2114,9 +2124,9 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "1.53.2"
+version = "1.54.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e95f91fcc7a621e8b030f6aa23c71fe9838ae2fb4d8118b75602a328f5144044"
+checksum = "b52fd3255258d26fac7264ab5a76b53c13367136dc011d3d6ad4f8ed070396a3"
 dependencies = [
  "pin-project-lite",
 ]
@@ -2171,9 +2181,9 @@ dependencies = [
 
 [[package]]
 name = "typed-path"
-version = "0.12.3"
+version = "0.12.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8e28f89b80c87b8fb0cf04ab448d5dd0dd0ade2f8891bae878de66a75a28600e"
+checksum = "54ec2755506471f54baf5e4bb5499d8e510cc1caf271270e778a736bd2d7336c"
 
 [[package]]
 name = "unicode-ident"
@@ -2546,18 +2556,18 @@ dependencies = [
 
 [[package]]
 name = "zerocopy"
-version = "0.8.62"
+version = "0.8.63"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "86502bf56ac7c77571a32e2647bb2a15894565e981fb2a48d7bde2d91c965a9d"
+checksum = "e5fe1f8f1b06191a00962174c61aa5005e0bb391a6d80d07e24d115c01a92ed8"
 dependencies = [
  "zerocopy-derive",
 ]
 
 [[package]]
 name = "zerocopy-derive"
-version = "0.8.62"
+version = "0.8.63"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5457206954b06561e2608c7e19cf58b1926586d999c246eebe4502f7e2039d1a"
+checksum = "863ad3ac83293fb4d740aedbfdc9240dd8d1a50c1099acd76ce80ce7c7230c7f"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2566,13 +2576,14 @@ dependencies = [
 
 [[package]]
 name = "zip"
-version = "8.6.0"
+version = "9.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d04a6b5381502aa6087c94c669499eb1602eb9c5e8198e534de571f7154809b"
+checksum = "6e04976da629d3b04204ba8105b396a193af8ad2583b2c79bfb3ab8af580a11e"
 dependencies = [
  "crc32fast",
  "indexmap",
  "memchr",
+ "nix",
  "typed-path",
 ]
 
