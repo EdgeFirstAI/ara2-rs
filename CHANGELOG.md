@@ -64,7 +64,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ModelTiming` keeps the runtime's sub-microsecond precision instead of truncating to whole microseconds.
 - `EndpointStatistics::core_voltage_v` documents that the DVAPI 1.1 runtime reports 0.0; DVAPI 1.3 and later report the measured voltage.
 - Models must be compiled for the runtime generation they run on: a model compiled for DVAPI 1.3 fails to load on 3.0 with `DV_MODEL_LOAD_FAILURE` (documented).
-- `zip` 9, and for the Python bindings `pyo3` and `numpy` 0.30. The wheel is still built for the Python 3.11+ stable ABI.
+- `zip` 9.
 - Dependencies updated to their latest semver-compatible releases.
 
 ### Removed
