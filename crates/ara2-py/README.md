@@ -306,16 +306,17 @@ if info.interface is not None:
     print(info.interface.kind)
 
 stats = endpoint.statistics()
-print(f"{stats.temp_c:.1f} C, NNP {stats.clocks.nnp_mhz} MHz, "
-      f"{stats.dram.free_size} B DRAM free")
+print(
+    f"{stats.temp_c:.1f} C, NNP {stats.clocks.nnp_mhz} MHz, "
+    f"{stats.dram.free_size} B DRAM free"
+)
 print(endpoint.is_busy())
 
 model = endpoint.load_model("model.dvm")
 model.allocate_tensors()
 before = time.monotonic()
 run = model.run()
-print(f"{run.timing.run_time * 1e3:.2f} ms, {run.hw_cycles} cycles, "
-      f"{model.model_type}")
+print(f"{run.timing.run_time * 1e3:.2f} ms, {run.hw_cycles} cycles, {model.model_type}")
 if run.inference_start is not None:
     print(f"queued {run.inference_start - before:.6f} s after submit")
 ```
