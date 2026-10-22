@@ -697,7 +697,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let image_bytes = std::fs::read(&args.image)?;
     let mut processor = ImageProcessor::new()?;
 
-    // Decode JPEG into a pre-allocated DMA tensor for GPU access.
+    // Decode JPEG into a pre-allocated DMA tensor for GPU access. The decode
+    // writes it and a CPU convert or overlay background reads it, so it is
+    // declared `ReadWrite` for when no GPU backend takes the work.
     let info = peek_info(&image_bytes)?;
     let (img_w, img_h) = (info.width, info.height);
     println!("Image: {img_w}x{img_h}");
@@ -707,7 +709,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         PixelFormat::Rgba,
         DType::U8,
         None,
-        CpuAccess::Write,
+        CpuAccess::ReadWrite,
     )?;
     let mut img_decoder = ImageDecoder::new();
     src.load_image(&mut img_decoder, &image_bytes)?;

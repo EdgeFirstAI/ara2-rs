@@ -1052,13 +1052,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Allocate a DMA-BUF-backed RGBA canvas at camera resolution. This is
     // the final render target: draw_masks composites the camera frame with
     // detection overlays into this buffer, which is then submitted to Wayland.
+    // The CPU mask renderer reads and writes it, hence `ReadWrite`.
     let mut canvas = processor.create_image(
         cam_w,
         cam_h,
         PixelFormat::Rgba,
         DType::U8,
         None,
-        CpuAccess::None,
+        CpuAccess::ReadWrite,
     )?;
     let canvas_fd = canvas.clone_fd()?;
     let canvas_raw_fd = canvas_fd.as_raw_fd();
