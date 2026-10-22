@@ -67,7 +67,7 @@ use edgefirst_decoder::{
     configs::{self, DecoderType, QuantTuple},
 };
 use edgefirst_image::{
-    ColorMode, Crop, Flip, ImageProcessor, ImageProcessorTrait as _, MaskOverlay, Rotation,
+    ColorMode, ConvertOptions, ImageProcessor, ImageProcessorTrait as _, MaskOverlay,
 };
 use edgefirst_tensor::{
     CpuAccess, DType, PixelFormat, PlaneDescriptor, TensorDyn, TensorMapTrait as _, TensorMemory,
@@ -1026,7 +1026,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )?
     };
 
-    let letterbox = Crop::letterbox([114, 114, 114, 255]);
+    let letterbox = ConvertOptions::new().letterbox([114, 114, 114, 255]);
 
     let output_tensors: Vec<TensorDyn> = (0..n_outputs)
         .map(|i| {
@@ -1174,7 +1174,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         req.reuse(ReuseFlag::REUSE_BUFFERS);
         cam.queue_request(req).map_err(|(_, e)| e)?;
 
-        processor.convert(src, &mut model_input, Rotation::None, Flip::None, letterbox)?;
+        processor.convert(src, &mut model_input, Some(letterbox))?;
         if !fd_backed {
             copy_to_input(&mut model, &model_input)?;
         }
@@ -1185,7 +1185,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let overlay = MaskOverlay::default()
             .with_background(src)
-            .with_letterbox_crop(&letterbox, cam_w, cam_h, in_w, in_h)
+            .with_convert_options(&letterbox, cam_w, cam_h, in_w, in_h)
             .with_color_mode(color_mode);
         processor.draw_masks(&decoder, &output_refs, &mut canvas, overlay)?;
 
@@ -1246,7 +1246,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         cam.queue_request(req).map_err(|(_, e)| e)?;
         let t2 = Instant::now();
 
-        processor.convert(src, &mut model_input, Rotation::None, Flip::None, letterbox)?;
+        processor.convert(src, &mut model_input, Some(letterbox))?;
         if !fd_backed {
             copy_to_input(&mut model, &model_input)?;
         }
@@ -1260,7 +1260,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let overlay = MaskOverlay::default()
             .with_background(src)
-            .with_letterbox_crop(&letterbox, cam_w, cam_h, in_w, in_h)
+            .with_convert_options(&letterbox, cam_w, cam_h, in_w, in_h)
             .with_color_mode(color_mode);
         let detections = processor.draw_masks(&decoder, &output_refs, &mut canvas, overlay)?;
         let t5 = Instant::now();

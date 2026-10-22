@@ -51,6 +51,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Python: times are `float` seconds throughout. `ModelTiming` has `run_time`, `input_time` and `output_time` instead of the integer microsecond `run_time_us`, `input_time_us` and `output_time_us`; `Model.set_timeout(timeout)` replaces `set_timeout_ms(timeout_ms)`, and `InferRequest.wait(timeout=1.0)` replaces `wait(timeout_ms=1000)`. A negative, non-finite or out-of-range timeout raises `ValueError`.
 - A model load failing with `DV_MODEL_LOAD_FAILURE` returns `Error::ModelLoadFailed`, carrying the `Error::Ara2` status, instead of `Error::Ara2`.
 - `Ara2Info` is `#[non_exhaustive]`.
+- **EdgeFirst HAL 0.36.** `edgefirst-tensor`, `edgefirst-image`, `edgefirst-codec` and `edgefirst-decoder` move from 0.35 to 0.36. `Model` exposes `edgefirst_tensor::Tensor` and `TensorMemory`, and the `decoder` feature exposes `edgefirst_decoder` types, so a crate using `ara2` must take the same HAL minor release. HAL 0.36 enforces each tensor's declared `CpuAccess`, now `ReadWrite` by default: a CPU map outside the declaration fails with `CpuAccessDenied` instead of logging a warning. `ara2` allocates its model tensors with the default and maps them `ReadWrite`. Callers of `edgefirst-image` pass `Option<ConvertOptions>` to `convert` in place of rotation, flip and crop, and `MaskOverlay::with_letterbox_crop` is now `with_convert_options`. `ara2` no longer enables `edgefirst-image`'s `static` feature, which HAL 0.36 removes.
 
 ### Changed
 
@@ -63,6 +64,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ModelTiming` keeps the runtime's sub-microsecond precision instead of truncating to whole microseconds.
 - `EndpointStatistics::core_voltage_v` documents that the DVAPI 1.1 runtime reports 0.0; DVAPI 1.3 and later report the measured voltage.
 - Models must be compiled for the runtime generation they run on: a model compiled for DVAPI 1.3 fails to load on 3.0 with `DV_MODEL_LOAD_FAILURE` (documented).
+- `zip` 9, and for the Python bindings `pyo3` and `numpy` 0.30. The wheel is still built for the Python 3.11+ stable ABI.
+- Dependencies updated to their latest semver-compatible releases.
 
 ### Removed
 

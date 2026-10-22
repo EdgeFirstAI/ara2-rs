@@ -72,8 +72,8 @@ use edgefirst_decoder::{
     configs::{self, DecoderType, DimName, QuantTuple},
 };
 use edgefirst_image::{
-    ColorMode, Crop, Flip, ImageProcessor, ImageProcessorTrait as _, MaskOverlay, MaskResolution,
-    Rotation, save_jpeg,
+    ColorMode, ConvertOptions, ImageProcessor, ImageProcessorTrait as _, MaskOverlay,
+    MaskResolution, save_jpeg,
 };
 use edgefirst_tensor::{
     CpuAccess, DType, PixelFormat, PlaneDescriptor, TensorDyn, TensorMapTrait as _, TensorMemory,
@@ -756,9 +756,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Letterbox: fit src into model input preserving aspect ratio with gray padding.
-    let letterbox = Crop::letterbox([114, 114, 114, 255]);
+    let letterbox = ConvertOptions::new().letterbox([114, 114, 114, 255]);
     let letterbox_norm = MaskOverlay::default()
-        .with_letterbox_crop(&letterbox, img_w, img_h, in_w, in_h)
+        .with_convert_options(&letterbox, img_w, img_h, in_w, in_h)
         .letterbox;
 
     // ── 5. Pre-allocate render canvas ───────────────────────────────────
@@ -797,7 +797,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let output_refs: Vec<&TensorDyn> = output_tensors.iter().collect();
 
     // ── 6. Warmup ────────────────────────────────────────────────────────
-    processor.convert(&src, &mut dst, Rotation::None, Flip::None, letterbox)?;
+    processor.convert(&src, &mut dst, Some(letterbox))?;
     if !fd_backed {
         copy_to_input(&mut model, &dst)?;
     }
@@ -805,7 +805,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // ── 7. Inference ─────────────────────────────────────────────────────
     let t_pre = Instant::now();
-    processor.convert(&src, &mut dst, Rotation::None, Flip::None, letterbox)?;
+    processor.convert(&src, &mut dst, Some(letterbox))?;
     if !fd_backed {
         copy_to_input(&mut model, &dst)?;
     }
@@ -850,7 +850,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // overlay quad, composited over the background image on the canvas.
     let overlay = MaskOverlay::default()
         .with_background(&src)
-        .with_letterbox_crop(&letterbox, img_w, img_h, in_w, in_h)
+        .with_convert_options(&letterbox, img_w, img_h, in_w, in_h)
         .with_color_mode(color_mode);
     let t_draw = Instant::now();
     processor.draw_decoded_masks(&mut canvas, &detections, &masks, overlay)?;
@@ -910,7 +910,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // → draw sequence so all steady-state paths are warm.
         {
             let mut warmup_boxes = Vec::with_capacity(100);
-            processor.convert(&src, &mut dst, Rotation::None, Flip::None, letterbox)?;
+            processor.convert(&src, &mut dst, Some(letterbox))?;
             if !fd_backed {
                 copy_to_input(&mut model, &dst)?;
             }
@@ -933,7 +933,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
             let overlay = MaskOverlay::default()
                 .with_background(&src)
-                .with_letterbox_crop(&letterbox, img_w, img_h, in_w, in_h)
+                .with_convert_options(&letterbox, img_w, img_h, in_w, in_h)
                 .with_color_mode(color_mode);
             processor.draw_decoded_masks(&mut canvas, &warmup_boxes, &masks, overlay)?;
         }
@@ -956,7 +956,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         for _ in 0..n {
             // Preprocess: GPU letterbox-resize src → NPU input tensor (DMA-BUF).
             let t0 = Instant::now();
-            processor.convert(&src, &mut dst, Rotation::None, Flip::None, letterbox)?;
+            processor.convert(&src, &mut dst, Some(letterbox))?;
             if !fd_backed {
                 copy_to_input(&mut model, &dst)?;
             }
@@ -993,7 +993,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // MaskOverlay is a lightweight builder with no heap allocation.
             let overlay = MaskOverlay::default()
                 .with_background(&src)
-                .with_letterbox_crop(&letterbox, img_w, img_h, in_w, in_h)
+                .with_convert_options(&letterbox, img_w, img_h, in_w, in_h)
                 .with_color_mode(color_mode);
             processor.draw_decoded_masks(&mut canvas, &boxes, &masks, overlay)?;
             let t5 = Instant::now();

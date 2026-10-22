@@ -18,13 +18,13 @@ ara2 = { version = "0.22.0", path = "crates/ara2" }
 ara2-sys = { version = "0.22.0", path = "crates/ara2-sys" }
 clap = { version = "4.6", features = ["derive"] }
 criterion = "0.8"
-edgefirst-codec = "0.35"
-edgefirst-decoder = "0.35"
+edgefirst-codec = "0.36"
+edgefirst-decoder = "0.36"
 # `default-features = false` so a member can pick edgefirst-image's feature
 # set; its default set turns on `codec`, which would pull edgefirst-codec
-# into the client library. Members re-list `opengl` and `static`.
-edgefirst-image = { version = "0.35", default-features = false }
-edgefirst-tensor = "0.35"
+# into the client library. Members re-list `opengl`.
+edgefirst-image = { version = "0.36", default-features = false }
+edgefirst-tensor = "0.36"
 libcamera = "0.7"
 wayland-client = { version = "0.31", default-features = false }
 wayland-protocols = { version = "0.32", features = ["unstable", "client"] }
@@ -32,9 +32,9 @@ libc = "0.2"
 libloading = "0.9"
 log = { version = "0.4", features = ["release_max_level_debug"] }
 ndarray = { version = "0.17", features = ["rayon"] }
-numpy = { version = "0.29", default-features = false }
-pyo3 = "0.29"
-pyo3-build-config = "0.29"
+numpy = { version = "0.30", default-features = false }
+pyo3 = "0.30"
+pyo3-build-config = "0.30"
 
 [profile.release]
 opt-level = 3

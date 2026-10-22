@@ -188,7 +188,7 @@ loading images from disk are application concerns, so the examples and
 benches take those crates as their own dependencies and `cargo tree -e normal
 -p ara2` reaches neither. The `codec` and `decoder` features exist only for
 callers that want those crates' types in `ara2`'s own API. `edgefirst-image`
-is taken with `default-features = false` plus `opengl` and `static` for the
+is taken with `default-features = false` plus `opengl` for the
 same reason — its default set turns on `codec`, which would pull
 `edgefirst-codec` back in transitively.
 

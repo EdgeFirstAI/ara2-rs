@@ -1,7 +1,7 @@
 use ara2::Session;
 use criterion::{Criterion, criterion_group, criterion_main};
 use edgefirst_codec::{ImageDecoder, ImageLoad as _, peek_info};
-use edgefirst_image::{Crop, Flip, G2DProcessor, ImageProcessorTrait as _, Rotation};
+use edgefirst_image::{G2DProcessor, ImageProcessorTrait as _};
 use edgefirst_tensor::{CpuAccess, PixelFormat, Tensor, TensorDyn, TensorMemory, TensorTrait as _};
 use std::{env, path::Path};
 
@@ -64,13 +64,7 @@ fn model_benchmark(c: &mut Criterion) {
                 .with_format(PixelFormat::Rgba)
                 .expect("Failed to create destination tensor image");
             converter
-                .convert(
-                    &tensor,
-                    &mut dst,
-                    Rotation::None,
-                    Flip::None,
-                    Crop::default(),
-                )
+                .convert(&tensor, &mut dst, None)
                 .expect("Failed to convert image");
         });
     });

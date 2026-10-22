@@ -50,7 +50,7 @@ concurrency:
 
 jobs:
   publish:
-    uses: EdgeFirstAI/.github/.github/workflows/publish-rust.yml@9e296f92996b38683c684b9091ed59cb27562770  # v2.3.0
+    uses: EdgeFirstAI/.github/.github/workflows/publish-rust.yml@c7876194b9fe9f7f72daf0efadaf32d7dff1b257  # v2.3.1
     with:
       tag: ${{ inputs.tag }}
       build-workflow: release.yml
@@ -92,7 +92,7 @@ jobs:
       # carries a version other than the built one: a PyPI version is
       # immutable. artifact-version, not version: a release candidate whose
       # manifests still carry the base version built files with that version.
-      - uses: EdgeFirstAI/.github/.github/actions/stage-pypi@9e296f92996b38683c684b9091ed59cb27562770  # v2.3.0
+      - uses: EdgeFirstAI/.github/.github/actions/stage-pypi@c7876194b9fe9f7f72daf0efadaf32d7dff1b257  # v2.3.1
         with:
           distribution: edgefirst-ara2
           version: ${{ needs.publish.outputs.artifact-version }}
@@ -105,7 +105,7 @@ jobs:
         # where uploading would consume the immutable version the final release
         # needs. The shared workflow decides; this job only obeys.
         if: ${{ needs.publish.outputs.publish-registries == 'true' }}
-        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086  # v1.14.3
         with:
           packages-dir: dist
           # A retry after a partial upload must not fail on the files that
