@@ -469,6 +469,24 @@ impl FrameCache {
     }
 }
 
+/// The overlay background for a camera frame. GL composites the frame's
+/// native NV12 or YUYV layout directly. G2D and the CPU copy the background
+/// byte-for-byte, so they need it in the canvas's RGBA format: when `rgba` is
+/// set, the frame is converted into it first.
+fn overlay_background<'a>(
+    processor: &mut ImageProcessor,
+    frame: &'a TensorDyn,
+    rgba: &'a mut Option<TensorDyn>,
+) -> Result<&'a TensorDyn, Box<dyn std::error::Error>> {
+    match rgba {
+        Some(background) => {
+            processor.convert(frame, background, None)?;
+            Ok(background)
+        }
+        None => Ok(frame),
+    }
+}
+
 // ── Arguments ───────────────────────────────────────────────────────────────
 
 /// Live YOLOv8 detection / instance segmentation on the ARA-2 NPU.
@@ -1061,6 +1079,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         None,
         CpuAccess::ReadWrite,
     )?;
+    // Without GL, each frame is converted into this RGBA image for the
+    // overlay background (see `overlay_background`).
+    let mut rgba_background = if processor.opengl.is_none() {
+        Some(processor.create_image(
+            cam_w,
+            cam_h,
+            PixelFormat::Rgba,
+            DType::U8,
+            None,
+            CpuAccess::ReadWrite,
+        )?)
+    } else {
+        None
+    };
     let canvas_fd = canvas.clone_fd()?;
     let canvas_raw_fd = canvas_fd.as_raw_fd();
 
@@ -1184,8 +1216,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             copy_from_outputs(&model, &output_tensors)?;
         }
 
+        let background = overlay_background(&mut processor, src, &mut rgba_background)?;
         let overlay = MaskOverlay::default()
-            .with_background(src)
+            .with_background(background)
             .with_convert_options(&letterbox, cam_w, cam_h, in_w, in_h)
             .with_color_mode(color_mode);
         processor.draw_masks(&decoder, &output_refs, &mut canvas, overlay)?;
@@ -1259,8 +1292,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         let t4 = Instant::now();
 
+        let background = overlay_background(&mut processor, src, &mut rgba_background)?;
         let overlay = MaskOverlay::default()
-            .with_background(src)
+            .with_background(background)
             .with_convert_options(&letterbox, cam_w, cam_h, in_w, in_h)
             .with_color_mode(color_mode);
         let detections = processor.draw_masks(&decoder, &output_refs, &mut canvas, overlay)?;

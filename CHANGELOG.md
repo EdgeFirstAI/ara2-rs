@@ -79,6 +79,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Session::versions()` leaked the version list.
 - Dropping an in-flight `InferRequest` made the next submit fail with `Ara2(402)` because the model was still busy.
 - `Endpoint::statistics()` no longer leaks the library's buffer when it reports no entries, and `Endpoint::dram_statistics()` returns `Error::NullPointer` instead of dereferencing a null buffer.
+- The yolov8 and yolov8_live examples (Rust and Python) draw their overlay when the CPU renders it. A JPEG or camera frame is NV12 or YUYV, and only GL converts an overlay background, so the examples now give the CPU an RGBA copy of the frame: once at setup for yolov8, and per frame for yolov8_live when GL is unavailable.
 
 ## [0.22.0] - 2026-10-12
 

@@ -1038,14 +1038,34 @@ def main() -> None:
         model.run()
         if not fd_backed:
             copy_from_outputs(model, output_tensors, shapes)
-        decoder.draw_onto(
-            processor,
-            output_tensors,
-            canvas,
-            background=src,
-            letterbox=letterbox_norm,
-            color_mode=color_mode,
-        )
+        # GL composites the frame's native NV12 or YUYV layout as the overlay
+        # background. G2D and the CPU copy the background byte-for-byte, so
+        # they refuse one whose format differs from the RGBA canvas. If the
+        # warmup draw is refused, every frame is converted to RGBA first; a
+        # draw that fails for another reason fails again and is raised.
+        rgba_background = None
+        try:
+            decoder.draw_onto(
+                processor,
+                output_tensors,
+                canvas,
+                background=src,
+                letterbox=letterbox_norm,
+                color_mode=color_mode,
+            )
+        except RuntimeError:
+            rgba_background = processor.create_image(
+                cam_w, cam_h, ef_image.PixelFormat.Rgba
+            )
+            processor.convert(src, rgba_background)
+            decoder.draw_onto(
+                processor,
+                output_tensors,
+                canvas,
+                background=rgba_background,
+                letterbox=letterbox_norm,
+                color_mode=color_mode,
+            )
         display.render_dmabuf(canvas_fd)
 
         print(f"Warmup complete, cache: {len(frame_cache)} bufs")
@@ -1105,11 +1125,15 @@ def main() -> None:
             # edgefirst-decoder >= 0.31.0; see the note in examples/yolov8.py.
             # Only the detection count is used here; the overlay is drawn
             # in-place onto `canvas` by draw_onto itself.
+            background = src
+            if rgba_background is not None:
+                processor.convert(src, rgba_background)
+                background = rgba_background
             _, scores, _ = decoder.draw_onto(
                 processor,
                 output_tensors,
                 canvas,
-                background=src,
+                background=background,
                 letterbox=letterbox_norm,
                 color_mode=color_mode,
             )
