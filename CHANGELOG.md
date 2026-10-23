@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-10-22
+
 ### Added
 
 - DVAPI 3.0 (Kinara arart r3.0) support, alongside DVAPI 1.1 and 1.3.
@@ -1024,7 +1026,8 @@ Non-qmode-9 DVMs now raise `Ara2Error("unsupported quantization mode: qmode=N ..
 - Requires `edgefirst-hal` for HAL integration
 - Requires `libaraclient.so` runtime library
 
-[Unreleased]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.22.0...HEAD
+[Unreleased]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.23.0...HEAD
+[0.23.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.19.0...v0.20.0
