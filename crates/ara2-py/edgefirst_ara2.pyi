@@ -844,11 +844,11 @@ class Endpoint:
         other runtime generation is logged as a warning before loading.
 
         Raises:
-            HardwareError: If the client library could not parse the file
+            ModelError: If the client library could not parse the file
                 (code 520, ``DV_MODEL_LOAD_FAILURE``), with
                 ``compatibility`` and ``model_format`` set and a message
-                saying whether to reconvert the model; or if the endpoint
-                has insufficient DRAM.
+                saying whether to reconvert the model.
+            HardwareError: If the endpoint has insufficient DRAM.
             Ara2Error: Or one of its subclasses, for any other failure.
         """
         ...

@@ -72,6 +72,12 @@ class TestSessionErrors(unittest.TestCase):
 
 
 class TestModelFormat(unittest.TestCase):
+    def require_proxy(self):
+        try:
+            ara2.proxy_endpoint()
+        except ara2.ProxyError as e:
+            self.skipTest(f"no proxy endpoint: {e}")
+
     def test_unrecognised_file_has_no_format(self):
         import tempfile
 
@@ -91,6 +97,7 @@ class TestModelFormat(unittest.TestCase):
         path = os.environ.get("ARA2_TEST_MODEL")
         if path is None:
             self.skipTest("ARA2_TEST_MODEL not set")
+        self.require_proxy()
         fmt = ara2.read_model_format(path)
         model = ara2.Session.connect().list_endpoints()[0].load_model(path)
         self.assertEqual(fmt, int(model.version.split(".")[0]))
@@ -103,8 +110,9 @@ class TestModelFormat(unittest.TestCase):
         path = os.environ.get("ARA2_TEST_FOREIGN_MODEL")
         if path is None:
             self.skipTest("ARA2_TEST_FOREIGN_MODEL not set")
+        self.require_proxy()
         endpoint = ara2.Session.connect().list_endpoints()[0]
-        with self.assertRaises(ara2.HardwareError) as ctx:
+        with self.assertRaises(ara2.ModelError) as ctx:
             endpoint.load_model(path)
         e = ctx.exception
         self.assertEqual(e.code, 520)
