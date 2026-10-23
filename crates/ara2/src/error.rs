@@ -1,4 +1,4 @@
-use crate::DvapiVersion;
+use crate::Version;
 use ara2_sys::DV_LAYER_OUTPUT_TYPE;
 
 /// `#[non_exhaustive]` because the variant set is not fixed: `Error::Codec`
@@ -31,7 +31,7 @@ pub enum Error {
         name: &'static str,
         /// The version reported, or `None` if the library would not report
         /// one at all.
-        version: Option<DvapiVersion>,
+        version: Option<Version>,
     },
     /// [`crate::ABI_OVERRIDE_ENV`] was set to something other than a
     /// recognised [`crate::Abi`]. Carries the offending value.
@@ -41,7 +41,7 @@ pub enum Error {
         /// The layout the override asked for.
         forced: crate::Abi,
         /// The version the library reported.
-        reported: DvapiVersion,
+        reported: Version,
     },
     /// A proxy configuration file could not be read.
     ProxyConfigUnreadable {

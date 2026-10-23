@@ -182,20 +182,15 @@ pub const LIBRARY_NAMES: &[&str] = &[ARCH_LIBRARY_NAME, "libaraclient.so", "liba
 #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
 pub const LIBRARY_NAMES: &[&str] = &["libaraclient.so", "libaraclient.so.1"];
 
-/// A DVAPI version, as reported by `dv_get_client_lib_version`.
-///
-/// This is the version of the `dvapi.h` interface a `libaraclient`
-/// implements, which is what governs struct layout. It is not the version
-/// of the SDK the library was packaged in -- NXP's rt-sdk-ara2 2.1.1 ships
-/// DVAPI 1.3.2, and the Kinara runtime that
-/// [meta-kinara](https://github.com/EdgeFirstAI/meta-kinara) packages as
-/// 1.2.1 ships DVAPI 1.1.2.
+/// A four-part `major.minor.patch.patch_minor` version, as the runtime
+/// reports it for the client library ([`Session::dvapi_version`]), each
+/// running component ([`ComponentVersion`]) and a loaded model's format
+/// ([`Model::version`]).
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub struct DvapiVersion {
-    /// Major version: `1` for DVAPI 1.1 and 1.3, `3` for DVAPI 3.0.
+pub struct Version {
+    /// Major version.
     pub major: u8,
-    /// Minor version. Together with `major` it selects the [`Abi`], which
-    /// is keyed on major.minor.
+    /// Minor version.
     pub minor: u8,
     /// Patch version.
     pub patch: u8,
@@ -203,7 +198,11 @@ pub struct DvapiVersion {
     pub patch_minor: u8,
 }
 
-impl std::fmt::Display for DvapiVersion {
+/// Former name of [`Version`].
+#[deprecated(note = "renamed to `Version`")]
+pub type DvapiVersion = Version;
+
+impl std::fmt::Display for Version {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -252,7 +251,7 @@ impl Abi {
     /// Keyed on major and minor only. The one layout change seen so far
     /// landed on a minor bump, and a patch release that moved a field would
     /// be a packaging fault rather than something to accommodate here.
-    fn from_version(version: DvapiVersion) -> Option<Self> {
+    fn from_version(version: Version) -> Option<Self> {
         match (version.major, version.minor) {
             (1, 1) => Some(Abi::V1_1),
             (1, 3) => Some(Abi::V1_3),
@@ -290,7 +289,7 @@ fn abi_override() -> Result<Option<Abi>, error::Error> {
 /// `dv_get_client_lib_version` takes no session, so this runs before
 /// anything else the library can be asked to do -- which is the point, as
 /// the answer decides how its structs may be read.
-fn probe_version(lib: &araclient) -> Option<DvapiVersion> {
+fn probe_version(lib: &araclient) -> Option<Version> {
     let probe = lib.dv_get_client_lib_version.as_ref().ok()?;
     let mut raw = dv_version {
         major: 0,
@@ -303,7 +302,7 @@ fn probe_version(lib: &araclient) -> Option<DvapiVersion> {
     if unsafe { probe(&mut raw) } != 0 {
         return None;
     }
-    Some(DvapiVersion {
+    Some(Version {
         major: raw.major,
         minor: raw.minor,
         patch: raw.patch,
@@ -320,7 +319,7 @@ fn probe_version(lib: &araclient) -> Option<DvapiVersion> {
 /// an error, since every read through it would be at the wrong offsets.
 pub(crate) fn resolve_abi(
     forced: Option<Abi>,
-    probed: Option<DvapiVersion>,
+    probed: Option<Version>,
 ) -> Result<Option<Abi>, error::Error> {
     let known = probed.and_then(Abi::from_version);
     match (forced, probed, known) {
@@ -343,11 +342,11 @@ pub(crate) fn resolve_abi(
 /// Opens the first usable candidate in [`LIBRARY_NAMES`], returning its
 /// common function table, ABI, reported version and the name it loaded
 /// under.
-pub(crate) fn open_library()
--> Result<(araclient, Abi, Option<DvapiVersion>, &'static str), error::Error> {
+pub(crate) fn open_library() -> Result<(araclient, Abi, Option<Version>, &'static str), error::Error>
+{
     let forced = abi_override()?;
     let mut last_err = None;
-    let mut rejected: Option<(&'static str, Option<DvapiVersion>)> = None;
+    let mut rejected: Option<(&'static str, Option<Version>)> = None;
 
     for name in LIBRARY_NAMES {
         let lib = match unsafe { araclient::new(*name) } {
@@ -389,8 +388,8 @@ pub(crate) fn open_library()
 mod offline_tests {
     use super::*;
 
-    fn v(major: u8, minor: u8) -> Option<DvapiVersion> {
-        Some(DvapiVersion {
+    fn v(major: u8, minor: u8) -> Option<Version> {
+        Some(Version {
             major,
             minor,
             patch: 0,
@@ -448,7 +447,7 @@ mod offline_tests {
         let message = |major, minor| {
             error::Error::UnsupportedDvapi {
                 name: "libaraclient.so",
-                version: Some(DvapiVersion {
+                version: Some(Version {
                     major,
                     minor,
                     patch: 0,

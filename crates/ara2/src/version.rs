@@ -7,7 +7,7 @@ use ara2_sys::{
     v3_0::dv_product_type_3_0_MCS_LLM_MODEL,
 };
 
-use crate::DvapiVersion;
+use crate::Version;
 
 /// A software or firmware component the proxy reports a version for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -72,20 +72,20 @@ pub struct ComponentVersion {
     /// Which component.
     pub component: Component,
     /// Its version.
-    pub version: DvapiVersion,
+    pub version: Version,
 }
 
 pub(crate) fn component_versions(list: &[dv_product_version]) -> Vec<ComponentVersion> {
     list.iter()
         .map(|p| ComponentVersion {
             component: Component::from_raw(p.product_type),
-            version: dvapi_version(p.product_version),
+            version: from_raw(p.product_version),
         })
         .collect()
 }
 
-pub(crate) fn dvapi_version(v: dv_version) -> DvapiVersion {
-    DvapiVersion {
+pub(crate) fn from_raw(v: dv_version) -> Version {
+    Version {
         major: v.major,
         minor: v.minor,
         patch: v.patch,

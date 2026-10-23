@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Component`, `ComponentVersion`, `StatusDetail`, `StatusComponent` and `Severity`.
 - `Error::FdPassingUnavailable`, `Error::NoProxyFound`, `Error::InvalidSocketOverride`, `Error::AbiOverrideRejected` and `Error::Unsupported`.
 - `ARA2_SOCKET` accepts `unix:/path` and `tcp:IPV4:PORT` as well as a bare socket path.
-- `crates/ara2-sys/update.sh --verify <1.1|1.3|3.0> <sdk-include-dir>` and the `verify_sdk` test, checking ara2-sys declarations against an SDK's headers (`ARA2_SDK_V1_1`, `ARA2_SDK_V1_3`, `ARA2_SDK_V3_0`, `ARA2_SDK_REQUIRE`).
+- `crates/ara2-sys/update.sh --verify <1.1|1.3|3.0> <sdk-include-dir>` and the `verify_sdk` test, checking ara2-sys declarations against an SDK's headers (`ARA2_SDK_V1_1`, `ARA2_SDK_V1_3`, `ARA2_SDK_V3_0`, `ARA2_SDK_REQUIRE`). The test ships in the `ara2-sys` package.
 - Python: `proxy_endpoint()`, `Session.supports_fd_passing`, `Session.supported_versions()`, `ComponentVersion`, `Abi.V3_0`, and `code`, `name`, `sub_code`, `component` and `severity` attributes on every exception (`None` where they do not apply). `NoProxyFound` and `InvalidSocketOverride` raise `ProxyError`, `FdPassingUnavailable` raises `TensorError`, and `ARA2_ABI` refusals raise `LibraryError`.
 - `InferenceStats`, returned by `Model::run()` and `InferRequest::wait()`: the `timing` durations, the `clocks` the inference ran at, `hw_cycles`, `fp_cycles`, `retries`, and the `input_start`, `inference_start` and `output_start` timestamps as `MonotonicTime` on `CLOCK_MONOTONIC` (DVAPI 3.0; `None` on 1.x, which stamps the wall clock).
 - `ara2::monotonic_now()`, for comparing inference timestamps with the host clock.
@@ -57,8 +57,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `Session::connect()` falls back to discovered proxies, preferring UNIX endpoints over TCP, and reports a failed discovery in `Error::NoProxyFound`.
 - `Session::connect()` logs a warning when it selects a TCP endpoint.
+- `ara2::DvapiVersion` is renamed `ara2::Version`: it also carries the proxy, firmware, driver and model-format versions. `DvapiVersion` remains as a deprecated alias.
 - On a TCP session, `memory: None` allocates heap (`TensorMemory::Mem`) tensors, and an explicit `Shm` or `DmaBuf` fails with `Error::FdPassingUnavailable` before anything is allocated.
-- Dropping a pending `InferRequest` (including after `wait()` returns an error, and a garbage-collected Python `InferRequest`) waits for it to finish, up to 4 waits of `DEFAULT_TIMEOUT_MS` (about 4 s), before freeing it.
+- Dropping a pending `InferRequest` (including after `wait()` returns an error, and a garbage-collected Python `InferRequest`) waits for it to finish, up to 4 waits of `DEFAULT_TIMEOUT_MS` (about 4 s), before freeing it. A garbage-collected Python `InferRequest` waits without holding the GIL.
 - The yolov8 examples run on sessions that cannot pass file descriptors: they allocate heap tensors and copy the model input and outputs around each inference, keeping the zero-copy DMA-BUF path where it is available.
 - The examples' `--socket` flag is optional; without it the proxy is found as `Session::connect()` does.
 - `ModelTiming` keeps the runtime's sub-microsecond precision instead of truncating to whole microseconds.

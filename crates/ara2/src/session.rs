@@ -1,4 +1,4 @@
-use crate::{Abi, ComponentVersion, DvapiVersion, Endpoint, error::Error, status::RawStatus};
+use crate::{Abi, ComponentVersion, Endpoint, Version, error::Error, status::RawStatus};
 use ara2_sys::{araclient, dv_endpoint, dv_product_version, dv_session, dv_status_code_t};
 use std::{ffi::c_char, net::Ipv4Addr, sync::Arc};
 
@@ -23,7 +23,7 @@ pub(crate) struct SessionInner {
     /// `lib` is interpreted against this, so it must not be re-derived
     /// per call.
     pub(crate) abi: Abi,
-    pub(crate) dvapi_version: Option<DvapiVersion>,
+    pub(crate) dvapi_version: Option<Version>,
     /// The functions only `abi`'s version has, from the same library.
     pub(crate) vlib: VersionLib,
 }
@@ -279,9 +279,13 @@ impl Session {
     /// The DVAPI version `dv_get_client_lib_version` reported, or `None`
     /// if the library would not report one.
     ///
-    /// This is the interface version, not the version of the SDK the
-    /// library was packaged in. See [`DvapiVersion`].
-    pub fn dvapi_version(&self) -> Option<DvapiVersion> {
+    /// This is the version of the `dvapi.h` interface the library
+    /// implements, whose major.minor selects the [`Abi`]. It is not the
+    /// version of the SDK the library was packaged in: NXP's rt-sdk-ara2
+    /// 2.1.1 ships DVAPI 1.3.2, and the Kinara runtime that
+    /// [meta-kinara](https://github.com/EdgeFirstAI/meta-kinara) packages
+    /// as 1.2.1 ships DVAPI 1.1.2.
+    pub fn dvapi_version(&self) -> Option<Version> {
         self.inner.dvapi_version
     }
 
