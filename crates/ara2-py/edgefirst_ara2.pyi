@@ -1197,7 +1197,7 @@ class InferRequest:
         is still pending — the NPU is reading/writing the tensor buffers.
     """
 
-    def wait(self, timeout: float = 1.0) -> InferenceStats:
+    def wait(self, *, timeout: float = 1.0) -> InferenceStats:
         """Block until the inference completes and return its statistics.
 
         The GIL is released during the wait, allowing other Python
