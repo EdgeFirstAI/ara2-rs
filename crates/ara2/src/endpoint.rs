@@ -458,23 +458,16 @@ impl Endpoint {
                 .into(),
             ),
             // A forced ARA2_ABI can load a library lacking the detailed symbols.
-            _ => {
-                let code = unsafe {
-                    session.lib.dv_model_load_from_file(
-                        session.ptr,
-                        self.ptr,
-                        path_ptr,
-                        name_ptr,
-                        priority,
-                        &mut model,
-                    )
-                };
-                if code == 0 {
-                    Ok(())
-                } else {
-                    Err(session.status_error(code))
-                }
-            }
+            _ => session.check(unsafe {
+                session.lib.dv_model_load_from_file(
+                    session.ptr,
+                    self.ptr,
+                    path_ptr,
+                    name_ptr,
+                    priority,
+                    &mut model,
+                )
+            }),
         };
 
         if let Err(err) = result {

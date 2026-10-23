@@ -58,6 +58,20 @@ impl SessionInner {
         crate::status::status_error_from(&self.lib, code)
     }
 
+    /// `Ok` for a zero status code, the named error otherwise.
+    pub(crate) fn check(&self, code: dv_status_code_t) -> Result<(), Error> {
+        if code == 0 {
+            Ok(())
+        } else {
+            Err(self.status_error(code))
+        }
+    }
+
+    /// File descriptors can only cross a UNIX socket.
+    pub(crate) fn supports_fd_passing(&self) -> bool {
+        matches!(self.socket_type, SocketType::Unix)
+    }
+
     /// A failing detailed status as an [`Error`], named by the library.
     pub(crate) fn detailed_error(&self, status: RawStatus) -> Error {
         Error::Ara2 {
@@ -160,7 +174,7 @@ impl Session {
     /// descriptor: `clone_fd()` fails on them and they must be accessed
     /// through `map()`.
     pub fn supports_fd_passing(&self) -> bool {
-        matches!(self.inner.socket_type, SocketType::Unix)
+        self.inner.supports_fd_passing()
     }
 
     /// Connect to the proxy described by a proxy configuration file.
