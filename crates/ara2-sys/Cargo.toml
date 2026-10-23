@@ -10,7 +10,7 @@ license.workspace = true
 readme = "README.md"
 keywords = ["ffi", "bindings", "ara2", "accelerator", "edgefirst"]
 categories = ["external-ffi-bindings", "hardware-support"]
-include = ["src/**", "include/**", "update.sh", "README.md"]
+include = ["src/**", "include/**", "tests/**", "update.sh", "README.md"]
 
 [dependencies]
 libloading.workspace = true
