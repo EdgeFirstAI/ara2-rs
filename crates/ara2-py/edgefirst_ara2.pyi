@@ -64,7 +64,7 @@ class Ara2Error(RuntimeError):
     (``DV_MODEL_LOAD_FAILURE``), ``compatibility`` says whether the model's
     format suits the runtime generation (``"mismatch"``, ``"matching"`` or
     ``"unknown"``) and ``model_format`` is the format read from the file
-    (2 or 3), and the message says what to do about it. Attributes that do not
+    (``None`` if it could not be read), and the message says what to do about it. Attributes that do not
     apply are ``None``.
     """
 
@@ -219,8 +219,8 @@ class ModelType:
     """The kind of model, as the runtime reports it.
 
     ``McsLlm`` is reported by DVAPI 3.0 only. ``Other`` is a value this
-    build does not know for the loaded version; the raw value is logged at
-    warning level."""
+    build does not know for the loaded version; the first such raw value is
+    logged at warning level."""
 
     Ara1Cnn: ModelType
     Ara2Cnn: ModelType
@@ -238,7 +238,7 @@ class InterfaceKind:
     """The host bus an endpoint is attached through.
 
     ``Other`` is a host interface value this build does not recognise; the
-    raw value is logged at warning level."""
+    first such raw value is logged at warning level."""
 
     Pcie: InterfaceKind
     Usb: InterfaceKind
@@ -770,6 +770,9 @@ class Session:
     def set_log_level(self, level: LogLevel) -> None:
         """Set the client library's log verbosity. DVAPI 1.3 and later.
 
+        The level belongs to the client library, not the session, so it
+        applies to every session in the process.
+
         Raises:
             UnsupportedError: If the loaded library does not support it.
         """
@@ -844,11 +847,11 @@ class Endpoint:
         other runtime generation is logged as a warning before loading.
 
         Raises:
-            HardwareError: If the client library could not parse the file
+            ModelError: If the client library could not parse the file
                 (code 520, ``DV_MODEL_LOAD_FAILURE``), with
                 ``compatibility`` and ``model_format`` set and a message
-                saying whether to reconvert the model; or if the endpoint
-                has insufficient DRAM.
+                saying whether to reconvert the model.
+            HardwareError: If the endpoint has insufficient DRAM.
             Ara2Error: Or one of its subclasses, for any other failure.
         """
         ...
@@ -1197,7 +1200,7 @@ class InferRequest:
         is still pending — the NPU is reading/writing the tensor buffers.
     """
 
-    def wait(self, timeout: float = 1.0) -> InferenceStats:
+    def wait(self, *, timeout: float = 1.0) -> InferenceStats:
         """Block until the inference completes and return its statistics.
 
         The GIL is released during the wait, allowing other Python

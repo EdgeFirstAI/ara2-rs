@@ -255,17 +255,15 @@ impl Model {
                         .into(),
                 ),
                 // A forced ARA2_ABI can load a library lacking the detailed symbols.
-                _ => {
-                    let code =
-                        session
-                            .lib
-                            .dv_infer_async(session.ptr, ep, model, ip, op, true, request);
-                    if code == 0 {
-                        Ok(())
-                    } else {
-                        Err(session.status_error(code))
-                    }
-                }
+                _ => session.check(session.lib.dv_infer_async(
+                    session.ptr,
+                    ep,
+                    model,
+                    ip,
+                    op,
+                    true,
+                    request,
+                )),
             }
         }
     }
@@ -857,16 +855,13 @@ impl Model {
     }
 
     fn resolve_memory(&self, memory: Option<TensorMemory>) -> Result<Option<TensorMemory>, Error> {
-        resolve_memory_for(
-            matches!(self.session.socket_type, crate::SocketType::Unix),
-            memory,
-        )
+        resolve_memory_for(self.session.supports_fd_passing(), memory)
     }
 
     /// Register a tensor's file descriptor with the proxy for zero-copy
     /// transfers.
     fn shmfd_register(&self, tensor: &Tensor<u8>) -> Result<ShmRegistration, Error> {
-        if !matches!(self.session.socket_type, crate::SocketType::Unix) {
+        if !self.session.supports_fd_passing() {
             return Err(Error::FdPassingUnavailable);
         }
         let mut desc: *mut dv_shm_descriptor = std::ptr::null_mut();
@@ -921,8 +916,8 @@ impl Model {
     /// The model format version the model was compiled to: 2.0.0.0 for
     /// DVAPI 1.x runtimes, 3.0.0.0 for 3.x. Its major is what
     /// [`crate::read_model_format`] reads from the file.
-    pub fn version(&self) -> crate::DvapiVersion {
-        crate::version::dvapi_version(self.fields().version)
+    pub fn version(&self) -> crate::Version {
+        crate::version::from_raw(self.fields().version)
     }
 
     /// The name given when the model was loaded, if any.
@@ -1400,18 +1395,13 @@ impl InferRequest {
                         )?
                     }
                     // A forced ARA2_ABI can load a library lacking the detailed symbols.
-                    _ => {
-                        let code = session.lib.dv_infer_wait_for_completion(
-                            sp,
-                            lp,
-                            1,
-                            timeout_ms,
-                            &mut completed,
-                        );
-                        if code != 0 {
-                            return Err(session.status_error(code));
-                        }
-                    }
+                    _ => session.check(session.lib.dv_infer_wait_for_completion(
+                        sp,
+                        lp,
+                        1,
+                        timeout_ms,
+                        &mut completed,
+                    ))?,
                 }
             }
 

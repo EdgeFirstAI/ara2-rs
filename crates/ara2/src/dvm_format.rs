@@ -203,7 +203,10 @@ pub enum ModelCompatibility {
     },
     /// The format could not be read, or is one this build does not map to
     /// a runtime generation.
-    Unknown,
+    Unknown {
+        /// The model's format, when it was read but is not mapped.
+        model_format: Option<u8>,
+    },
 }
 
 impl ModelCompatibility {
@@ -222,7 +225,7 @@ impl ModelCompatibility {
     /// ```
     pub fn new(format: Option<u8>, runtime: Abi) -> Self {
         let Some(model_format) = format else {
-            return ModelCompatibility::Unknown;
+            return ModelCompatibility::Unknown { model_format: None };
         };
         match format_runtime_major(model_format) {
             Some(major) if major == runtime.major() => {
@@ -232,7 +235,9 @@ impl ModelCompatibility {
                 model_format,
                 runtime,
             },
-            None => ModelCompatibility::Unknown,
+            None => ModelCompatibility::Unknown {
+                model_format: Some(model_format),
+            },
         }
     }
 
@@ -241,7 +246,7 @@ impl ModelCompatibility {
         match self {
             ModelCompatibility::Mismatch { model_format, .. }
             | ModelCompatibility::Matching { model_format } => Some(*model_format),
-            ModelCompatibility::Unknown => None,
+            ModelCompatibility::Unknown { model_format } => *model_format,
         }
     }
 }
@@ -442,8 +447,16 @@ mod offline_tests {
             ModelCompatibility::new(Some(3), Abi::V3_0),
             Matching { model_format: 3 }
         );
-        assert_eq!(ModelCompatibility::new(Some(4), Abi::V3_0), Unknown);
-        assert_eq!(ModelCompatibility::new(None, Abi::V3_0), Unknown);
+        assert_eq!(
+            ModelCompatibility::new(Some(4), Abi::V3_0),
+            Unknown {
+                model_format: Some(4)
+            }
+        );
+        assert_eq!(
+            ModelCompatibility::new(None, Abi::V3_0),
+            Unknown { model_format: None }
+        );
     }
 
     /// Runs the reader over real models named by `ARA2_TEST_FORMAT_FILES`,

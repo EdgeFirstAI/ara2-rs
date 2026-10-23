@@ -62,8 +62,8 @@ pyo3::create_exception!(
 /// status, and the last two for a model the library could not parse.
 pub fn to_py_err(err: ara2::Error) -> PyErr {
     let msg = err.to_string();
-    // A model load failure is raised as its status would be, with the
-    // compatibility finding added to the message and attributes.
+    // A model load failure carries its status's attributes, with the
+    // compatibility finding added.
     let (status, compatibility) = match &err {
         ara2::Error::ModelLoadFailed {
             status,
@@ -72,7 +72,7 @@ pub fn to_py_err(err: ara2::Error) -> PyErr {
         } => (status.as_ref(), Some(*compatibility)),
         other => (other, None),
     };
-    let py_err = exception_for(status, msg);
+    let py_err = exception_for(&err, msg);
     let (code, name, detail) = match status {
         ara2::Error::Ara2 { code, name, detail } => (Some(*code), Some(name.as_str()), *detail),
         _ => (None, None, None),
@@ -146,7 +146,7 @@ fn exception_for(err: &ara2::Error, msg: String) -> PyErr {
         ara2::Error::InferenceFailed | ara2::Error::InferenceNotCompleted(_) => {
             ModelError::new_err(msg)
         }
-        ara2::Error::ModelLoadFailed { status, .. } => exception_for(status, msg),
+        ara2::Error::ModelLoadFailed { .. } => ModelError::new_err(msg),
         // Reached by `ara2::Error::Codec`, which exists only when something
         // else in the build enables ara2's `codec` feature (this crate does
         // not, so it cannot name the variant), and by variants added later.

@@ -103,8 +103,8 @@ let request = model.submit()?;
 // CPU is free to do other work (preprocess next frame, etc.)
 
 // Block until the NPU finishes
-let timing = request.wait(DEFAULT_TIMEOUT_MS)?;
-println!("NPU inference: {:?}", timing.run_time);
+let stats = request.wait(DEFAULT_TIMEOUT_MS)?;
+println!("NPU inference: {:?}", stats.timing.run_time);
 
 // Monitor pipeline depth
 assert_eq!(session.inflight_count()?, 0);
@@ -162,7 +162,7 @@ if let Some(start) = run.inference_start {
 
 `Endpoint::statistics()` reports the endpoint state, `Clocks` (system, DRAM, NNP and SBP), core voltage, temperature, soft-reset count and DRAM usage. The DVAPI 1.1 runtime reports the core voltage as 0.0; DVAPI 1.3 and later measure it.
 `Endpoint::info()` reports the device and vendor identifiers, the chip, the DRAM vendor name and the host interface.
-Each field a runtime does not populate is `None`, never zero.
+A field the loaded DVAPI version does not have is `None`, never zero. The DVAPI 1.1 core voltage is the one field a runtime has but leaves at zero.
 The inference timestamps (`input_start`, `inference_start`, `output_start`) are on `CLOCK_MONOTONIC`, and so line up with Perfetto, on DVAPI 3.0 only.
 
 Per-model statistics, inference queue statistics, the endpoint power state and power-state control are not exposed, because the runtime does not yet report or apply them reliably.
@@ -243,7 +243,7 @@ Only a UNIX socket can pass file descriptors. On a TCP session (`Session::suppor
 
 ### Forcing a layout
 
-`ARA2_ABI` (`1.1`, `1.3` or `3.0`) forces a layout, for bringing up a library reporting a version this build does not recognise. It is refused with `Error::AbiOverrideRejected` when it contradicts the version the library reports: a recognised version other than the forced one, or an unrecognised version with a different major version. Forcing the version the library already reports is accepted, as is any force when the version probe failed. So forcing `3.0` on a future 3.1 library works, and forcing `1.3` on a 3.0 library does not. A refusal stops the library search rather than trying the next name.
+`ARA2_ABI` (`1.1`, `1.3` or `3.0`) forces a layout, for bringing up a library reporting a version this build does not recognise. It is refused with `Error::AbiOverrideRejected` when it contradicts the version the library reports: a recognised version other than the forced one, or an unrecognised version with a different major version. Forcing the version the library already reports is accepted, as is any force when the version probe failed. So forcing `3.0` on a future 3.1 library works, and forcing `1.3` on a 3.0 library does not. A library the override contradicts is skipped and the search moves on to the next name in `LIBRARY_NAMES`, so `ARA2_ABI` can also pick one of several installed libraries; the first refusal is reported only when no candidate is accepted.
 
 ## Building
 

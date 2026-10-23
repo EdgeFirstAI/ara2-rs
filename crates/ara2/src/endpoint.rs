@@ -36,7 +36,7 @@ use crate::{
 };
 
 /// `dv_status_code_t` for a model the client library could not parse.
-const DV_MODEL_LOAD_FAILURE: i32 = 520;
+const DV_MODEL_LOAD_FAILURE: i32 = ara2_sys::dv_status_code_DV_MODEL_LOAD_FAILURE as i32;
 
 /// The operational state of an NPU endpoint.
 ///
@@ -398,7 +398,7 @@ impl Endpoint {
         let format = crate::read_model_format_from_file(path);
         let compatibility = match &format {
             Ok(format) => ModelCompatibility::new(*format, session.abi),
-            Err(_) => ModelCompatibility::Unknown,
+            Err(_) => ModelCompatibility::Unknown { model_format: None },
         };
         if let ModelCompatibility::Mismatch {
             model_format,
@@ -458,23 +458,16 @@ impl Endpoint {
                 .into(),
             ),
             // A forced ARA2_ABI can load a library lacking the detailed symbols.
-            _ => {
-                let code = unsafe {
-                    session.lib.dv_model_load_from_file(
-                        session.ptr,
-                        self.ptr,
-                        path_ptr,
-                        name_ptr,
-                        priority,
-                        &mut model,
-                    )
-                };
-                if code == 0 {
-                    Ok(())
-                } else {
-                    Err(session.status_error(code))
-                }
-            }
+            _ => session.check(unsafe {
+                session.lib.dv_model_load_from_file(
+                    session.ptr,
+                    self.ptr,
+                    path_ptr,
+                    name_ptr,
+                    priority,
+                    &mut model,
+                )
+            }),
         };
 
         if let Err(err) = result {

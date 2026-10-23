@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Component`, `ComponentVersion`, `StatusDetail`, `StatusComponent` and `Severity`.
 - `Error::FdPassingUnavailable`, `Error::NoProxyFound`, `Error::InvalidSocketOverride`, `Error::AbiOverrideRejected` and `Error::Unsupported`.
 - `ARA2_SOCKET` accepts `unix:/path` and `tcp:IPV4:PORT` as well as a bare socket path.
-- `crates/ara2-sys/update.sh --verify <1.1|1.3|3.0> <sdk-include-dir>` and the `verify_sdk` test, checking ara2-sys declarations against an SDK's headers (`ARA2_SDK_V1_1`, `ARA2_SDK_V1_3`, `ARA2_SDK_V3_0`, `ARA2_SDK_REQUIRE`).
+- `crates/ara2-sys/update.sh --verify <1.1|1.3|3.0> <sdk-include-dir>` and the `verify_sdk` test, checking ara2-sys declarations against an SDK's headers (`ARA2_SDK_V1_1`, `ARA2_SDK_V1_3`, `ARA2_SDK_V3_0`, `ARA2_SDK_REQUIRE`). The test ships in the `ara2-sys` package.
 - Python: `proxy_endpoint()`, `Session.supports_fd_passing`, `Session.supported_versions()`, `ComponentVersion`, `Abi.V3_0`, and `code`, `name`, `sub_code`, `component` and `severity` attributes on every exception (`None` where they do not apply). `NoProxyFound` and `InvalidSocketOverride` raise `ProxyError`, `FdPassingUnavailable` raises `TensorError`, and `ARA2_ABI` refusals raise `LibraryError`.
 - `InferenceStats`, returned by `Model::run()` and `InferRequest::wait()`: the `timing` durations, the `clocks` the inference ran at, `hw_cycles`, `fp_cycles`, `retries`, and the `input_start`, `inference_start` and `output_start` timestamps as `MonotonicTime` on `CLOCK_MONOTONIC` (DVAPI 3.0; `None` on 1.x, which stamps the wall clock).
 - `ara2::monotonic_now()`, for comparing inference timestamps with the host clock.
@@ -28,7 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Model::version()`, `Model::name()` and `Model::model_type()`, with `ModelType`.
 - `Session::set_log_level()` and `LogLevel` (DVAPI 1.3 and 3.0).
 - `telemetry` example (Rust and Python), printing endpoint, model and per-inference telemetry and measuring the cost of sampling statistics.
-- Python: `InferenceStats`, `Clocks`, `EndpointStatistics`, `Endpoint.statistics()`, `Endpoint.info()` with `EndpointInfo`, `ChipInfo`, `DramInfo`, `Interface` and `InterfaceKind`, `Endpoint.is_busy()`, `Model.version()`, `Model.name()`, `Model.model_type()` with `ModelType`, `Session.set_log_level()` with `LogLevel`, and `UnsupportedError`, raised for a call the loaded DVAPI version lacks.
+- Python: `InferenceStats`, `Clocks`, `EndpointStatistics`, `Endpoint.statistics()`, `Endpoint.info()` with `EndpointInfo`, `ChipInfo`, `DramInfo`, `Interface` and `InterfaceKind`, `Endpoint.is_busy()`, the `Model.version`, `Model.name` and `Model.model_type` properties with `ModelType`, `Session.set_log_level()` with `LogLevel`, and `UnsupportedError`, raised for a call the loaded DVAPI version lacks.
 - `ara2::read_model_format()` and `ara2::read_model_format_from_file()`, reading a `.dvm`'s model format number (2 from the DVAPI 1.x SDKs, 3 from the 3.0 SDK) without loading it. The format is read from the model's FlatBuffers header and validated; a file it cannot validate reads as `None`.
 - `Error::ModelLoadFailed` and `ModelCompatibility`. A model load that fails with `DV_MODEL_LOAD_FAILURE` now reports whether the model's format matches the running DVAPI generation, and on a mismatch says to reconvert the model with a converter built on the matching SDK. When the model's `edgefirst.json` records them, the message names the converter and SDK versions.
 - `Endpoint::load_model_from_file()` logs a warning before loading a model whose format does not match the runtime.
@@ -42,14 +42,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Error::Ara2` is a struct variant with `code`, `name` and `detail`, displayed as `NAME (code)`. On DVAPI 1.3 and 3.0, model load, submit and wait errors carry the detailed status.
 - `impl From<ara2_sys::dv_status_code> for Error` is removed; status codes are reported through `Error::Ara2`, named by the library.
 - `ara2::socket_path()` is replaced by `ara2::proxy_endpoint()`.
-- `ARA2_ABI` is refused with `Error::AbiOverrideRejected` when it contradicts the reported version, and is honoured for an unrecognised version only within the same major version. A refused override stops the library search.
+- `ARA2_ABI` is refused with `Error::AbiOverrideRejected` when it contradicts the reported version, and is honoured for an unrecognised version only within the same major version. A library the override contradicts is skipped and the search continues with the next candidate; the first refusal is reported if none is accepted.
 - Python: `Session.versions()` returns `list[ComponentVersion]`.
 - Python: `edgefirst_ara2.socket_path()` is removed in favour of `proxy_endpoint()`.
 - `Model::run()` and `InferRequest::wait()` return `InferenceStats`; the previous `ModelTiming` is its `timing` field.
 - `EndpointStatistics` reports its clocks as `clocks: Clocks` instead of `sys_clk_mhz` and `dram_clk_mhz`, and is `#[non_exhaustive]`, as is `DramStatistics`.
 - Python: `Model.run()` and `InferRequest.wait()` return `InferenceStats`.
-- Python: times are `float` seconds throughout. `ModelTiming` has `run_time`, `input_time` and `output_time` instead of the integer microsecond `run_time_us`, `input_time_us` and `output_time_us`; `Model.set_timeout(timeout)` replaces `set_timeout_ms(timeout_ms)`, and `InferRequest.wait(timeout=1.0)` replaces `wait(timeout_ms=1000)`. A negative, non-finite or out-of-range timeout raises `ValueError`.
-- A model load failing with `DV_MODEL_LOAD_FAILURE` returns `Error::ModelLoadFailed`, carrying the `Error::Ara2` status, instead of `Error::Ara2`.
+- Python: times are `float` seconds throughout. `ModelTiming` has `run_time`, `input_time` and `output_time` instead of the integer microsecond `run_time_us`, `input_time_us` and `output_time_us`; `Model.set_timeout(timeout)` replaces `set_timeout_ms(timeout_ms)`, and `InferRequest.wait(*, timeout=1.0)` replaces `wait(timeout_ms=1000)`; `timeout` is keyword-only, so a positional millisecond value raises `TypeError` instead of being read as seconds. A negative, non-finite or out-of-range timeout raises `ValueError`.
+- A model load failing with `DV_MODEL_LOAD_FAILURE` returns `Error::ModelLoadFailed`, carrying the `Error::Ara2` status, instead of `Error::Ara2`. Python raises it as `ModelError` instead of `HardwareError`.
 - `Ara2Info` is `#[non_exhaustive]`.
 - **EdgeFirst HAL 0.36.** `edgefirst-tensor`, `edgefirst-image`, `edgefirst-codec` and `edgefirst-decoder` move from 0.35 to 0.36. `Model` exposes `edgefirst_tensor::Tensor` and `TensorMemory`, and the `decoder` feature exposes `edgefirst_decoder` types, so a crate using `ara2` must take the same HAL minor release. HAL 0.36 enforces each tensor's declared `CpuAccess`, now `ReadWrite` by default: a CPU map outside the declaration fails with `CpuAccessDenied` instead of logging a warning. `ara2` allocates its model tensors with the default and maps them `ReadWrite`. Callers of `edgefirst-image` pass `Option<ConvertOptions>` to `convert` in place of rotation, flip and crop, and `MaskOverlay::with_letterbox_crop` is now `with_convert_options`. `ara2` no longer enables `edgefirst-image`'s `static` feature, which HAL 0.36 removes.
 
@@ -57,8 +57,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `Session::connect()` falls back to discovered proxies, preferring UNIX endpoints over TCP, and reports a failed discovery in `Error::NoProxyFound`.
 - `Session::connect()` logs a warning when it selects a TCP endpoint.
+- `ara2::DvapiVersion` is renamed `ara2::Version`: it also carries the proxy, firmware, driver and model-format versions. `DvapiVersion` remains as a deprecated alias.
 - On a TCP session, `memory: None` allocates heap (`TensorMemory::Mem`) tensors, and an explicit `Shm` or `DmaBuf` fails with `Error::FdPassingUnavailable` before anything is allocated.
-- Dropping a pending `InferRequest` (including after `wait()` returns an error, and a garbage-collected Python `InferRequest`) waits for it to finish, up to 4 waits of `DEFAULT_TIMEOUT_MS` (about 4 s), before freeing it.
+- Dropping a pending `InferRequest` (including after `wait()` returns an error, and a garbage-collected Python `InferRequest`) waits for it to finish, up to 4 waits of `DEFAULT_TIMEOUT_MS` (about 4 s), before freeing it. A garbage-collected Python `InferRequest` waits without holding the GIL.
 - The yolov8 examples run on sessions that cannot pass file descriptors: they allocate heap tensors and copy the model input and outputs around each inference, keeping the zero-copy DMA-BUF path where it is available.
 - The examples' `--socket` flag is optional; without it the proxy is found as `Session::connect()` does.
 - `ModelTiming` keeps the runtime's sub-microsecond precision instead of truncating to whole microseconds.

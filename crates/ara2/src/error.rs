@@ -1,4 +1,4 @@
-use crate::DvapiVersion;
+use crate::Version;
 use ara2_sys::DV_LAYER_OUTPUT_TYPE;
 
 /// `#[non_exhaustive]` because the variant set is not fixed: `Error::Codec`
@@ -31,7 +31,7 @@ pub enum Error {
         name: &'static str,
         /// The version reported, or `None` if the library would not report
         /// one at all.
-        version: Option<DvapiVersion>,
+        version: Option<Version>,
     },
     /// [`crate::ABI_OVERRIDE_ENV`] was set to something other than a
     /// recognised [`crate::Abi`]. Carries the offending value.
@@ -41,7 +41,7 @@ pub enum Error {
         /// The layout the override asked for.
         forced: crate::Abi,
         /// The version the library reported.
-        reported: DvapiVersion,
+        reported: Version,
     },
     /// A proxy configuration file could not be read.
     ProxyConfigUnreadable {
@@ -369,7 +369,16 @@ impl std::fmt::Display for Error {
                          format {model_format} matches this DVAPI {runtime} runtime; the file may \
                          be damaged"
                     ),
-                    crate::ModelCompatibility::Unknown => write!(
+                    crate::ModelCompatibility::Unknown {
+                        model_format: Some(model_format),
+                    } => write!(
+                        f,
+                        "the client library could not parse {file}, whose model format \
+                         {model_format} this build does not recognise; it may have been built \
+                         for a different runtime generation than this DVAPI {runtime} \
+                         runtime, or it may be damaged"
+                    ),
+                    crate::ModelCompatibility::Unknown { model_format: None } => write!(
                         f,
                         "the client library could not parse {file}; it may have been built \
                          for a different runtime generation than this DVAPI {runtime} \
@@ -468,12 +477,31 @@ mod offline_tests {
 
     #[test]
     fn offline_unknown_hint_names_both_causes() {
-        let m = failed(ModelCompatibility::Unknown, None, None);
+        let m = failed(
+            ModelCompatibility::Unknown { model_format: None },
+            None,
+            None,
+        );
         assert!(
             m.ends_with(
                 "could not parse /models/m.dvm; it may have been built for a different runtime \
                  generation than this DVAPI 3.0 runtime, or it may be damaged"
             ),
+            "{m}"
+        );
+    }
+
+    #[test]
+    fn offline_unknown_hint_names_an_unmapped_format() {
+        let m = failed(
+            ModelCompatibility::Unknown {
+                model_format: Some(4),
+            },
+            None,
+            None,
+        );
+        assert!(
+            m.contains("could not parse /models/m.dvm, whose model format 4 this build"),
             "{m}"
         );
     }

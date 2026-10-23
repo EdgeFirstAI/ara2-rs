@@ -568,10 +568,12 @@ pub fn read_metadata_from_file(path: &std::path::Path) -> Result<Option<DvmMetad
 pub(crate) fn read_ara2_info_from_file(path: &std::path::Path) -> Option<Ara2Info> {
     let file = std::io::BufReader::new(std::fs::File::open(path).ok()?);
     let json = metadata_json(file).ok()??;
-    // Only the `ara2` section is parsed, so a malformed field elsewhere in
-    // the metadata does not hide the provenance.
+    // Only the provenance in the `ara2` section is parsed, so a malformed
+    // field elsewhere, including a strictly typed `qmode`, does not hide it.
     let mut root: serde_json::Value = serde_json::from_str(&json).ok()?;
-    serde_json::from_value(root.get_mut("ara2")?.take()).ok()
+    let mut section = root.get_mut("ara2")?.take();
+    section.as_object_mut()?.remove("qmode");
+    serde_json::from_value(section).ok()
 }
 
 /// Read labels from a DVM file path.
@@ -881,6 +883,12 @@ mod tests {
         let a = read_ara2_info_from_file(&path).unwrap();
         assert_eq!(a.converter_version.as_deref(), Some("1.4.0"));
         assert_eq!(a.sdk_version.as_deref(), Some("r3.0"));
+        let json =
+            r#"{"ara2": {"qmode": "9", "converter_version": "1.2.0", "sdk_version": "r1.2.1"}}"#;
+        std::fs::write(&path, make_dvm_with_metadata(json, None)).unwrap();
+        let a = read_ara2_info_from_file(&path).unwrap();
+        assert_eq!(a.converter_version.as_deref(), Some("1.2.0"));
+        assert_eq!(a.sdk_version.as_deref(), Some("r1.2.1"));
         std::fs::write(&path, b"no archive").unwrap();
         assert!(read_ara2_info_from_file(&path).is_none());
         std::fs::remove_dir_all(&dir).unwrap();

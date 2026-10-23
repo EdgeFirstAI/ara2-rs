@@ -1,4 +1,4 @@
-use crate::{Abi, ComponentVersion, DvapiVersion, Endpoint, error::Error, status::RawStatus};
+use crate::{Abi, ComponentVersion, Endpoint, Version, error::Error, status::RawStatus};
 use ara2_sys::{araclient, dv_endpoint, dv_product_version, dv_session, dv_status_code_t};
 use std::{ffi::c_char, net::Ipv4Addr, sync::Arc};
 
@@ -23,7 +23,7 @@ pub(crate) struct SessionInner {
     /// `lib` is interpreted against this, so it must not be re-derived
     /// per call.
     pub(crate) abi: Abi,
-    pub(crate) dvapi_version: Option<DvapiVersion>,
+    pub(crate) dvapi_version: Option<Version>,
     /// The functions only `abi`'s version has, from the same library.
     pub(crate) vlib: VersionLib,
 }
@@ -56,6 +56,20 @@ impl SessionInner {
     /// A failing status code as an [`Error`], named by the library.
     pub(crate) fn status_error(&self, code: dv_status_code_t) -> Error {
         crate::status::status_error_from(&self.lib, code)
+    }
+
+    /// `Ok` for a zero status code, the named error otherwise.
+    pub(crate) fn check(&self, code: dv_status_code_t) -> Result<(), Error> {
+        if code == 0 {
+            Ok(())
+        } else {
+            Err(self.status_error(code))
+        }
+    }
+
+    /// File descriptors can only cross a UNIX socket.
+    pub(crate) fn supports_fd_passing(&self) -> bool {
+        matches!(self.socket_type, SocketType::Unix)
     }
 
     /// A failing detailed status as an [`Error`], named by the library.
@@ -160,7 +174,7 @@ impl Session {
     /// descriptor: `clone_fd()` fails on them and they must be accessed
     /// through `map()`.
     pub fn supports_fd_passing(&self) -> bool {
-        matches!(self.inner.socket_type, SocketType::Unix)
+        self.inner.supports_fd_passing()
     }
 
     /// Connect to the proxy described by a proxy configuration file.
@@ -265,9 +279,13 @@ impl Session {
     /// The DVAPI version `dv_get_client_lib_version` reported, or `None`
     /// if the library would not report one.
     ///
-    /// This is the interface version, not the version of the SDK the
-    /// library was packaged in. See [`DvapiVersion`].
-    pub fn dvapi_version(&self) -> Option<DvapiVersion> {
+    /// This is the version of the `dvapi.h` interface the library
+    /// implements, whose major.minor selects the [`Abi`]. It is not the
+    /// version of the SDK the library was packaged in: NXP's rt-sdk-ara2
+    /// 2.1.1 ships DVAPI 1.3.2, and the Kinara runtime that
+    /// [meta-kinara](https://github.com/EdgeFirstAI/meta-kinara) packages
+    /// as 1.2.1 ships DVAPI 1.1.2.
+    pub fn dvapi_version(&self) -> Option<Version> {
         self.inner.dvapi_version
     }
 
@@ -310,6 +328,9 @@ impl Session {
     }
 
     /// Set the client library's log verbosity. DVAPI 1.3 and later.
+    ///
+    /// The level belongs to the client library, not the session, so it
+    /// applies to every session in the process.
     pub fn set_log_level(&self, level: crate::LogLevel) -> Result<(), Error> {
         let raw = level as u32;
         let inner = &self.inner;

@@ -15,7 +15,7 @@ use std::os::fd::IntoRawFd as _;
 /// Converts a timeout in seconds to the whole milliseconds DVAPI takes.
 fn timeout_ms(seconds: f64) -> PyResult<i32> {
     let ms = (seconds * 1000.0).ceil();
-    if !(0.0..=f64::from(i32::MAX)).contains(&ms) {
+    if seconds < 0.0 || !(0.0..=f64::from(i32::MAX)).contains(&ms) {
         return Err(pyo3::exceptions::PyValueError::new_err(format!(
             "timeout must be between 0 and {} seconds, got {seconds}",
             i32::MAX / 1000
@@ -733,7 +733,7 @@ impl InferRequest {
     ///     ValueError: If ``timeout`` is negative, not finite, or too large
     ///     Ara2Error: If the request has already been consumed, or
     ///                inference failed on the NPU
-    #[pyo3(signature = (timeout=1.0))]
+    #[pyo3(signature = (*, timeout=1.0))]
     fn wait(&mut self, py: Python<'_>, timeout: f64) -> PyResult<InferenceStats> {
         let timeout_ms = timeout_ms(timeout)?;
         let req = self
@@ -764,6 +764,16 @@ impl InferRequest {
         match &self.inner {
             Some(_) => "InferRequest(pending)".to_string(),
             None => "InferRequest(consumed)".to_string(),
+        }
+    }
+}
+
+impl Drop for InferRequest {
+    fn drop(&mut self) {
+        // Dropping a pending request waits for it to finish; do that
+        // without the GIL so other Python threads keep running.
+        if let Some(req) = self.inner.take() {
+            Python::attach(|py| py.detach(|| drop(req)));
         }
     }
 }

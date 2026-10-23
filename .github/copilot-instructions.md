@@ -17,7 +17,7 @@ Three DVAPI versions are supported: 1.1 (Kinara runtime 1.2.1, packaged by meta-
 - In our headers: every enumerator has an explicit `= value`; every prototype is on one line; inside `dvapi_v*.h`, version-specific structs are referenced by `struct tag`, never by their `_t` typedef (which names the opaque common type).
 - **Only `crates/ara2/src/raw.rs` reads version-specific structs**, through `with_layout!`. Nowhere else may dereference a `dv_model`, `dv_endpoint_statistics` or similar.
 - After editing a header, run `crates/ara2-sys/update.sh`, then `update.sh --verify <1.1|1.3|3.0> <sdk-include-dir>` for every affected version (see TESTING.md), and update the pins in `crates/ara2-sys/src/lib.rs`.
-- `ARA2_ABI` is refused (`Error::AbiOverrideRejected`, and the library search stops there) when it contradicts the reported version: a different recognised version, or an unrecognised version of another major. Forcing the recognised version itself, forcing when the probe failed, and forcing the same major over an unrecognised minor are accepted.
+- `ARA2_ABI` is refused (`Error::AbiOverrideRejected`, reported only if no later `LIBRARY_NAMES` candidate is accepted) when it contradicts the reported version: a different recognised version, or an unrecognised version of another major. Forcing the recognised version itself, forcing when the probe failed, and forcing the same major over an unrecognised minor are accepted.
 
 ### Connection
 

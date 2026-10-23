@@ -26,7 +26,9 @@ if [ "$1" = "--verify" ]; then
     env "$var=$sdk" ARA2_SDK_REQUIRE="$version" cargo test -p ara2-sys --test verify_sdk -- --nocapture
 
     # Informational: what the SDK has that ara2-sys does not declare.
-    out="../../target/dvapi-inventory-$version"
+    target="$(cargo metadata --format-version 1 --no-deps |
+        sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')"
+    out="$target/dvapi-inventory-$version"
     mkdir -p "$out"
     bindgen --allowlist-item 'dv_.*' --allowlist-item 'DV_.*' "$sdk/dvapi.h" \
         -o "$out/sdk.rs" -- -I"$gcc_include" -I"$sdk"
