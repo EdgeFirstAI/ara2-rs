@@ -369,7 +369,16 @@ impl std::fmt::Display for Error {
                          format {model_format} matches this DVAPI {runtime} runtime; the file may \
                          be damaged"
                     ),
-                    crate::ModelCompatibility::Unknown => write!(
+                    crate::ModelCompatibility::Unknown {
+                        model_format: Some(model_format),
+                    } => write!(
+                        f,
+                        "the client library could not parse {file}, whose model format \
+                         {model_format} this build does not recognise; it may have been built \
+                         for a different runtime generation than this DVAPI {runtime} \
+                         runtime, or it may be damaged"
+                    ),
+                    crate::ModelCompatibility::Unknown { model_format: None } => write!(
                         f,
                         "the client library could not parse {file}; it may have been built \
                          for a different runtime generation than this DVAPI {runtime} \
@@ -468,12 +477,31 @@ mod offline_tests {
 
     #[test]
     fn offline_unknown_hint_names_both_causes() {
-        let m = failed(ModelCompatibility::Unknown, None, None);
+        let m = failed(
+            ModelCompatibility::Unknown { model_format: None },
+            None,
+            None,
+        );
         assert!(
             m.ends_with(
                 "could not parse /models/m.dvm; it may have been built for a different runtime \
                  generation than this DVAPI 3.0 runtime, or it may be damaged"
             ),
+            "{m}"
+        );
+    }
+
+    #[test]
+    fn offline_unknown_hint_names_an_unmapped_format() {
+        let m = failed(
+            ModelCompatibility::Unknown {
+                model_format: Some(4),
+            },
+            None,
+            None,
+        );
+        assert!(
+            m.contains("could not parse /models/m.dvm, whose model format 4 this build"),
             "{m}"
         );
     }

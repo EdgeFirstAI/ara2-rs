@@ -64,7 +64,7 @@ class Ara2Error(RuntimeError):
     (``DV_MODEL_LOAD_FAILURE``), ``compatibility`` says whether the model's
     format suits the runtime generation (``"mismatch"``, ``"matching"`` or
     ``"unknown"``) and ``model_format`` is the format read from the file
-    (2 or 3), and the message says what to do about it. Attributes that do not
+    (``None`` if it could not be read), and the message says what to do about it. Attributes that do not
     apply are ``None``.
     """
 

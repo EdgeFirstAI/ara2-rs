@@ -398,7 +398,7 @@ impl Endpoint {
         let format = crate::read_model_format_from_file(path);
         let compatibility = match &format {
             Ok(format) => ModelCompatibility::new(*format, session.abi),
-            Err(_) => ModelCompatibility::Unknown,
+            Err(_) => ModelCompatibility::Unknown { model_format: None },
         };
         if let ModelCompatibility::Mismatch {
             model_format,
