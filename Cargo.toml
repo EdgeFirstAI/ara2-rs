@@ -34,7 +34,7 @@ log = { version = "0.4", features = ["release_max_level_debug"] }
 ndarray = { version = "0.17", features = ["rayon"] }
 numpy = { version = "0.29", default-features = false }
 pyo3 = "0.29"
-pyo3-build-config = "0.29"
+pyo3-build-config = "0.30"
 
 [profile.release]
 opt-level = 3
