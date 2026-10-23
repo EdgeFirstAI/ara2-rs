@@ -767,3 +767,13 @@ impl InferRequest {
         }
     }
 }
+
+impl Drop for InferRequest {
+    fn drop(&mut self) {
+        // Dropping a pending request waits for it to finish; do that
+        // without the GIL so other Python threads keep running.
+        if let Some(req) = self.inner.take() {
+            Python::attach(|py| py.detach(|| drop(req)));
+        }
+    }
+}
