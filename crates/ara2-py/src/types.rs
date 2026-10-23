@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright © 2025 Au-Zone Technologies. All Rights Reserved.
 
+use std::sync::Once;
+
 use pyo3::prelude::*;
 
 /// The DVAPI generation a loaded ``libaraclient`` implements.
@@ -352,7 +354,7 @@ impl LogLevel {
 /// The kind of model, as the runtime reports it.
 ///
 /// ``Other`` is a value this build does not know for the loaded version;
-/// the raw value is logged at warning level.
+/// the first such raw value is logged at warning level.
 #[pyclass(module = "edgefirst_ara2", eq, eq_int, from_py_object)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ModelType {
@@ -373,7 +375,10 @@ impl From<ara2::ModelType> for ModelType {
             ara2::ModelType::Ara2LlmDynV2 => ModelType::Ara2LlmDynV2,
             ara2::ModelType::McsLlm => ModelType::McsLlm,
             ara2::ModelType::Other(raw) => {
-                log::warn!("model reported type {raw}, which this version does not define");
+                static WARNED: Once = Once::new();
+                WARNED.call_once(|| {
+                    log::warn!("model reported type {raw}, which this version does not define")
+                });
                 ModelType::Other
             }
             _ => ModelType::Other,
@@ -395,7 +400,7 @@ impl ModelType {
 /// The host bus an endpoint is attached through.
 ///
 /// ``Other`` is a host interface value this build does not recognise; the
-/// raw value is logged at warning level.
+/// first such raw value is logged at warning level.
 #[pyclass(module = "edgefirst_ara2", eq, eq_int, from_py_object)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum InterfaceKind {
@@ -410,9 +415,13 @@ impl From<ara2::InterfaceKind> for InterfaceKind {
             ara2::InterfaceKind::Pcie => InterfaceKind::Pcie,
             ara2::InterfaceKind::Usb => InterfaceKind::Usb,
             ara2::InterfaceKind::Other(raw) => {
-                log::warn!(
-                    "endpoint reported host interface {raw}, which this build does not recognise"
-                );
+                static WARNED: Once = Once::new();
+                WARNED.call_once(|| {
+                    log::warn!(
+                        "endpoint reported host interface {raw}, which this build does not \
+                         recognise"
+                    )
+                });
                 InterfaceKind::Other
             }
             _ => InterfaceKind::Other,

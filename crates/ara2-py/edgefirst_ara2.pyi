@@ -219,8 +219,8 @@ class ModelType:
     """The kind of model, as the runtime reports it.
 
     ``McsLlm`` is reported by DVAPI 3.0 only. ``Other`` is a value this
-    build does not know for the loaded version; the raw value is logged at
-    warning level."""
+    build does not know for the loaded version; the first such raw value is
+    logged at warning level."""
 
     Ara1Cnn: ModelType
     Ara2Cnn: ModelType
@@ -238,7 +238,7 @@ class InterfaceKind:
     """The host bus an endpoint is attached through.
 
     ``Other`` is a host interface value this build does not recognise; the
-    raw value is logged at warning level."""
+    first such raw value is logged at warning level."""
 
     Pcie: InterfaceKind
     Usb: InterfaceKind
