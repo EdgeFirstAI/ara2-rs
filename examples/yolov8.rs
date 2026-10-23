@@ -697,9 +697,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let image_bytes = std::fs::read(&args.image)?;
     let mut processor = ImageProcessor::new()?;
 
-    // Decode JPEG into a pre-allocated DMA tensor for GPU access. The decode
-    // writes it and a CPU convert or overlay background reads it, so it is
-    // declared `ReadWrite` for when no GPU backend takes the work.
+    // Decode JPEG into a pre-allocated DMA tensor for GPU access. The decoder
+    // reshapes it to the JPEG's native NV12 within the same allocation. The
+    // decode writes it and a CPU convert reads it, so it is declared
+    // `ReadWrite` for when no GPU backend takes the work.
     let info = peek_info(&image_bytes)?;
     let (img_w, img_h) = (info.width, info.height);
     println!("Image: {img_w}x{img_h}");
@@ -765,7 +766,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // ── 5. Pre-allocate render canvas ───────────────────────────────────
     // Canvas at source image dimensions for display-resolution overlay.
-    // src doubles as the background for the mask overlay blit.
+    //
+    // The model input is converted straight from the NV12 source, but the
+    // overlay background must be in the canvas's format: G2D and the CPU copy
+    // it byte-for-byte, and only GL converts it. So the overlay gets its own
+    // one-off RGBA copy of the source.
+    let mut background = processor.create_image(
+        img_w,
+        img_h,
+        PixelFormat::Rgba,
+        DType::U8,
+        None,
+        CpuAccess::ReadWrite,
+    )?;
+    processor.convert(&src, &mut background, None)?;
     let mut canvas = processor.create_image(
         img_w,
         img_h,
@@ -851,7 +865,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Step 3 — Draw: GL-accelerated rendering of each binary mask as a colored
     // overlay quad, composited over the background image on the canvas.
     let overlay = MaskOverlay::default()
-        .with_background(&src)
+        .with_background(&background)
         .with_convert_options(&letterbox, img_w, img_h, in_w, in_h)
         .with_color_mode(color_mode);
     let t_draw = Instant::now();
@@ -934,7 +948,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Vec::new()
             };
             let overlay = MaskOverlay::default()
-                .with_background(&src)
+                .with_background(&background)
                 .with_convert_options(&letterbox, img_w, img_h, in_w, in_h)
                 .with_color_mode(color_mode);
             processor.draw_decoded_masks(&mut canvas, &warmup_boxes, &masks, overlay)?;
@@ -994,7 +1008,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Step 3 — Draw: GL overlay of bitmaps onto canvas.
             // MaskOverlay is a lightweight builder with no heap allocation.
             let overlay = MaskOverlay::default()
-                .with_background(&src)
+                .with_background(&background)
                 .with_convert_options(&letterbox, img_w, img_h, in_w, in_h)
                 .with_color_mode(color_mode);
             processor.draw_decoded_masks(&mut canvas, &boxes, &masks, overlay)?;
