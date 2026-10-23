@@ -103,8 +103,8 @@ let request = model.submit()?;
 // CPU is free to do other work (preprocess next frame, etc.)
 
 // Block until the NPU finishes
-let timing = request.wait(DEFAULT_TIMEOUT_MS)?;
-println!("NPU inference: {:?}", timing.run_time);
+let stats = request.wait(DEFAULT_TIMEOUT_MS)?;
+println!("NPU inference: {:?}", stats.timing.run_time);
 
 // Monitor pipeline depth
 assert_eq!(session.inflight_count()?, 0);
@@ -162,7 +162,7 @@ if let Some(start) = run.inference_start {
 
 `Endpoint::statistics()` reports the endpoint state, `Clocks` (system, DRAM, NNP and SBP), core voltage, temperature, soft-reset count and DRAM usage. The DVAPI 1.1 runtime reports the core voltage as 0.0; DVAPI 1.3 and later measure it.
 `Endpoint::info()` reports the device and vendor identifiers, the chip, the DRAM vendor name and the host interface.
-Each field a runtime does not populate is `None`, never zero.
+A field the loaded DVAPI version does not have is `None`, never zero. The DVAPI 1.1 core voltage is the one field a runtime has but leaves at zero.
 The inference timestamps (`input_start`, `inference_start`, `output_start`) are on `CLOCK_MONOTONIC`, and so line up with Perfetto, on DVAPI 3.0 only.
 
 Per-model statistics, inference queue statistics, the endpoint power state and power-state control are not exposed, because the runtime does not yet report or apply them reliably.

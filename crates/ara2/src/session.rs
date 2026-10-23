@@ -328,6 +328,9 @@ impl Session {
     }
 
     /// Set the client library's log verbosity. DVAPI 1.3 and later.
+    ///
+    /// The level belongs to the client library, not the session, so it
+    /// applies to every session in the process.
     pub fn set_log_level(&self, level: crate::LogLevel) -> Result<(), Error> {
         let raw = level as u32;
         let inner = &self.inner;

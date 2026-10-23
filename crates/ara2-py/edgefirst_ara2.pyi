@@ -770,6 +770,9 @@ class Session:
     def set_log_level(self, level: LogLevel) -> None:
         """Set the client library's log verbosity. DVAPI 1.3 and later.
 
+        The level belongs to the client library, not the session, so it
+        applies to every session in the process.
+
         Raises:
             UnsupportedError: If the loaded library does not support it.
         """
