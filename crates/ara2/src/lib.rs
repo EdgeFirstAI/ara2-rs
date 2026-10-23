@@ -346,7 +346,7 @@ pub(crate) fn open_library() -> Result<(araclient, Abi, Option<Version>, &'stati
 {
     let forced = abi_override()?;
     let mut last_err = None;
-    let mut rejected: Option<(&'static str, Option<Version>)> = None;
+    let mut rejected: Option<error::Error> = None;
 
     for name in LIBRARY_NAMES {
         let lib = match unsafe { araclient::new(*name) } {
@@ -358,21 +358,24 @@ pub(crate) fn open_library() -> Result<(araclient, Abi, Option<Version>, &'stati
         };
 
         let version = probe_version(&lib);
-        match resolve_abi(forced, version)? {
-            Some(abi) => return Ok((lib, abi, version, *name)),
+        let resolved = resolve_abi(forced, version)
+            .and_then(|abi| abi.ok_or(error::Error::UnsupportedDvapi { name, version }));
+        match resolved {
+            Ok(abi) => return Ok((lib, abi, version, *name)),
             // Keep going rather than failing here: an image can carry more
-            // than one libaraclient, and a later candidate may well be a
-            // generation this build does know.
-            None if rejected.is_none() => rejected = Some((*name, version)),
-            None => {}
+            // than one libaraclient, and a later candidate may be a
+            // generation this build knows, or the one ARA2_ABI names.
+            Err(e) => {
+                rejected.get_or_insert(e);
+            }
         }
     }
 
     // A library that loaded but reported an unusable version is a different
     // problem from none of them being installed, and has a different fix,
     // so say which happened.
-    if let Some((name, version)) = rejected {
-        return Err(error::Error::UnsupportedDvapi { name, version });
+    if let Some(e) = rejected {
+        return Err(e);
     }
 
     // Report every candidate, not just the last failure: the last name

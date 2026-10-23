@@ -42,7 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Error::Ara2` is a struct variant with `code`, `name` and `detail`, displayed as `NAME (code)`. On DVAPI 1.3 and 3.0, model load, submit and wait errors carry the detailed status.
 - `impl From<ara2_sys::dv_status_code> for Error` is removed; status codes are reported through `Error::Ara2`, named by the library.
 - `ara2::socket_path()` is replaced by `ara2::proxy_endpoint()`.
-- `ARA2_ABI` is refused with `Error::AbiOverrideRejected` when it contradicts the reported version, and is honoured for an unrecognised version only within the same major version. A refused override stops the library search.
+- `ARA2_ABI` is refused with `Error::AbiOverrideRejected` when it contradicts the reported version, and is honoured for an unrecognised version only within the same major version. A library the override contradicts is skipped and the search continues with the next candidate; the first refusal is reported if none is accepted.
 - Python: `Session.versions()` returns `list[ComponentVersion]`.
 - Python: `edgefirst_ara2.socket_path()` is removed in favour of `proxy_endpoint()`.
 - `Model::run()` and `InferRequest::wait()` return `InferenceStats`; the previous `ModelTiming` is its `timing` field.

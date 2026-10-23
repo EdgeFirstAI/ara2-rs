@@ -243,7 +243,7 @@ Only a UNIX socket can pass file descriptors. On a TCP session (`Session::suppor
 
 ### Forcing a layout
 
-`ARA2_ABI` (`1.1`, `1.3` or `3.0`) forces a layout, for bringing up a library reporting a version this build does not recognise. It is refused with `Error::AbiOverrideRejected` when it contradicts the version the library reports: a recognised version other than the forced one, or an unrecognised version with a different major version. Forcing the version the library already reports is accepted, as is any force when the version probe failed. So forcing `3.0` on a future 3.1 library works, and forcing `1.3` on a 3.0 library does not. A refusal stops the library search rather than trying the next name.
+`ARA2_ABI` (`1.1`, `1.3` or `3.0`) forces a layout, for bringing up a library reporting a version this build does not recognise. It is refused with `Error::AbiOverrideRejected` when it contradicts the version the library reports: a recognised version other than the forced one, or an unrecognised version with a different major version. Forcing the version the library already reports is accepted, as is any force when the version probe failed. So forcing `3.0` on a future 3.1 library works, and forcing `1.3` on a 3.0 library does not. A library the override contradicts is skipped and the search moves on to the next name in `LIBRARY_NAMES`, so `ARA2_ABI` can also pick one of several installed libraries; the first refusal is reported only when no candidate is accepted.
 
 ## Building
 
