@@ -36,7 +36,7 @@ use crate::{
 };
 
 /// `dv_status_code_t` for a model the client library could not parse.
-const DV_MODEL_LOAD_FAILURE: i32 = 520;
+const DV_MODEL_LOAD_FAILURE: i32 = ara2_sys::dv_status_code_DV_MODEL_LOAD_FAILURE as i32;
 
 /// The operational state of an NPU endpoint.
 ///

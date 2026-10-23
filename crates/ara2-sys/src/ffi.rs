@@ -16,6 +16,7 @@ const _: () = {
     ["Offset of field: timespec::tv_nsec"][::std::mem::offset_of!(timespec, tv_nsec) - 8usize];
 };
 pub const dv_status_code_DV_SUCCESS: dv_status_code = 0;
+pub const dv_status_code_DV_MODEL_LOAD_FAILURE: dv_status_code = 520;
 pub type dv_status_code = ::std::os::raw::c_uint;
 pub use self::dv_status_code as dv_status_code_t;
 pub const DV_BLOB_TYPE_DV_BLOB_TYPE_RAW_POINTER: DV_BLOB_TYPE = 0;

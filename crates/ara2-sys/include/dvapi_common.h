@@ -27,6 +27,7 @@
  * dv_stringify_status_code. */
 typedef enum dv_status_code {
   DV_SUCCESS = 0,
+  DV_MODEL_LOAD_FAILURE = 520,
 } dv_status_code_t;
 
 typedef enum DV_BLOB_TYPE {
