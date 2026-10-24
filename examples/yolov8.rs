@@ -760,9 +760,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Letterbox: fit src into model input preserving aspect ratio with gray padding.
     let letterbox = ConvertOptions::new().letterbox([114, 114, 114, 255]);
-    let letterbox_norm = MaskOverlay::default()
+    let content_region = MaskOverlay::default()
         .with_convert_options(&letterbox, img_w, img_h, in_w, in_h)
-        .letterbox;
+        .content_region;
 
     // ── 5. Pre-allocate render canvas ───────────────────────────────────
     // Canvas at source image dimensions for display-resolution overlay.
@@ -854,7 +854,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         processor.materialize_masks(
             &detections,
             proto_data,
-            letterbox_norm,
+            content_region,
             MaskResolution::Proto,
         )?
     } else {
@@ -941,7 +941,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 processor.materialize_masks(
                     &warmup_boxes,
                     pd,
-                    letterbox_norm,
+                    content_region,
                     MaskResolution::Proto,
                 )?
             } else {
@@ -997,7 +997,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 processor.materialize_masks(
                     &boxes,
                     proto_data,
-                    letterbox_norm,
+                    content_region,
                     MaskResolution::Proto,
                 )?
             } else {

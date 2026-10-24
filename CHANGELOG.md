@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-10-23
+
+### Changed (BREAKING)
+
+- **EdgeFirst HAL 0.37.** `edgefirst-tensor`, `edgefirst-image`, `edgefirst-codec` and `edgefirst-decoder` move from 0.36 to 0.37. `Model` exposes `edgefirst_tensor::Tensor` and `TensorMemory`, and the `decoder` feature exposes `edgefirst_decoder` types, so a crate using `ara2` must take the same HAL minor release. HAL 0.37 renames the letterbox image rectangle to a content region (`MaskOverlay::letterbox` becomes `content_region`, as does the `materialize_masks` argument), moves the preprocessing types into `edgefirst-tensor` with re-exports at their old paths, and removes `ConvertOptions::with_preprocessing`; `ara2` uses none of these, and the `yolov8` example is updated.
+
+### Changed
+
+- Dependencies updated to their latest semver-compatible releases. PyO3 and numpy stay on 0.29 to keep Python 3.8 support.
+- Python: the `hal` extra requires `edgefirst-image>=0.37`. The `yolov8` and `yolov8_live` examples pass `content_region=` to `materialize_masks`, `draw_decoded_masks` and `Decoder.draw_onto`, which HAL 0.37 requires in place of `letterbox=`, and their documented install lines require the 0.37 HAL wheels.
+
 ## [0.23.0] - 2026-10-22
 
 ### Added
@@ -1026,7 +1037,8 @@ Non-qmode-9 DVMs now raise `Ara2Error("unsupported quantization mode: qmode=N ..
 - Requires `edgefirst-hal` for HAL integration
 - Requires `libaraclient.so` runtime library
 
-[Unreleased]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.23.0...HEAD
+[Unreleased]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.24.0...HEAD
+[0.24.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.20.0...v0.21.0
