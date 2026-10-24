@@ -53,7 +53,7 @@ Models:
     ``yolov8-det`` and ``yolov8-seg`` repositories.
 
 Requirements:
-    edgefirst-ara2  edgefirst-decoder>=0.31  edgefirst-image>=0.31  numpy
+    edgefirst-ara2  edgefirst-decoder>=0.37  edgefirst-image>=0.37  numpy
     pywayland
     libcamera Python bindings (ship with libcamera)
     Wayland compositor running (e.g. Weston) with zwp_linux_dmabuf_v1
@@ -389,7 +389,7 @@ def compute_letterbox(
     aspect-preserving fit itself and pads the border with the given colour,
     so no destination rectangle is passed in.  What the caller still has to
     supply is the same placement in normalised model-input coordinates, for
-    ``Decoder.draw_onto(letterbox=...)`` to map boxes and masks back onto the
+    ``Decoder.draw_onto(content_region=...)`` to map boxes and masks back onto the
     camera frame.
 
     The arithmetic mirrors the HAL's own ``letterbox_rect``: the long axis
@@ -1050,7 +1050,7 @@ def main() -> None:
                 output_tensors,
                 canvas,
                 background=src,
-                letterbox=letterbox_norm,
+                content_region=letterbox_norm,
                 color_mode=color_mode,
             )
         except RuntimeError:
@@ -1063,7 +1063,7 @@ def main() -> None:
                 output_tensors,
                 canvas,
                 background=rgba_background,
-                letterbox=letterbox_norm,
+                content_region=letterbox_norm,
                 color_mode=color_mode,
             )
         display.render_dmabuf(canvas_fd)
@@ -1134,7 +1134,7 @@ def main() -> None:
                 output_tensors,
                 canvas,
                 background=background,
-                letterbox=letterbox_norm,
+                content_region=letterbox_norm,
                 color_mode=color_mode,
             )
             t5 = time.monotonic()

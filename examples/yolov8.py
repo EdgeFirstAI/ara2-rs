@@ -49,8 +49,8 @@ Models:
     ``yolov8-det`` and ``yolov8-seg`` repositories.
 
 Requirements:
-    edgefirst-ara2  edgefirst-codec>=0.31  edgefirst-decoder>=0.31
-    edgefirst-image>=0.31  numpy
+    edgefirst-ara2  edgefirst-codec>=0.37  edgefirst-decoder>=0.37
+    edgefirst-image>=0.37  numpy
 
     The EdgeFirst HAL ships as one package per library rather than a single
     ``edgefirst-hal`` wheel; ``edgefirst-tensor`` arrives as a dependency of
@@ -606,7 +606,9 @@ def main() -> None:
         after_run()
         _wb, _ws, _wc, _wp = decoder.decode_proto(output_tensors)
         _wm = (
-            processor.materialize_masks(_wb, _ws, _wc, _wp, letterbox=letterbox_norm)
+            processor.materialize_masks(
+                _wb, _ws, _wc, _wp, content_region=letterbox_norm
+            )
             if _wp
             else []
         )
@@ -617,7 +619,7 @@ def main() -> None:
             _wc,
             seg=_wm,
             background=background,
-            letterbox=letterbox_norm,
+            content_region=letterbox_norm,
             color_mode=color_mode,
         )
 
@@ -647,7 +649,7 @@ def main() -> None:
         t3 = time.monotonic()
         masks = (
             processor.materialize_masks(
-                boxes, scores, classes, proto_data, letterbox=letterbox_norm
+                boxes, scores, classes, proto_data, content_region=letterbox_norm
             )
             if proto_data
             else []
@@ -663,7 +665,7 @@ def main() -> None:
             classes,
             seg=masks,
             background=background,
-            letterbox=letterbox_norm,
+            content_region=letterbox_norm,
             color_mode=color_mode,
         )
         draw_ms = (time.monotonic() - t4) * 1000
@@ -779,7 +781,7 @@ def _benchmark(
         # Step 2 — Materialize: CPU dot-product → per-detection bitmaps
         masks = (
             processor.materialize_masks(
-                boxes, scores, classes, proto_data, letterbox=letterbox_norm
+                boxes, scores, classes, proto_data, content_region=letterbox_norm
             )
             if proto_data
             else []
@@ -794,7 +796,7 @@ def _benchmark(
             classes,
             seg=masks,
             background=background,
-            letterbox=letterbox_norm,
+            content_region=letterbox_norm,
             color_mode=color_mode,
         )
         t5 = time.monotonic()

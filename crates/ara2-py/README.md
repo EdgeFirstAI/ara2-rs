@@ -188,8 +188,8 @@ install the packages from PyPI:
 
 ```bash
 python3 -m venv ~/venv
-~/venv/bin/pip install edgefirst-ara2 'edgefirst-codec>=0.31' \
-    'edgefirst-decoder>=0.31' 'edgefirst-image>=0.31'
+~/venv/bin/pip install edgefirst-ara2 'edgefirst-codec>=0.37' \
+    'edgefirst-decoder>=0.37' 'edgefirst-image>=0.37'
 ~/venv/bin/python3 yolov8.py yolov8m-seg-int16.dvm zidane.jpg --benchmark 30 --save
 ```
 
