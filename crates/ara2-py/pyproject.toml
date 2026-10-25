@@ -34,10 +34,11 @@ keywords = ["ara2", "neural-network", "accelerator", "inference", "edgefirst"]
 # `edgefirst-tensor` with it. Add `edgefirst-codec` / `edgefirst-decoder`
 # explicitly for JPEG/PNG decode and YOLO post-processing.
 #
-# 0.31 is a floor, not a preference: earlier releases dropped a tensor's
+# 0.37 is the first release whose mask-drawing APIs take `content_region=`,
+# the keyword the examples use; releases before 0.31 also dropped a tensor's
 # quantization crossing between the `edgefirst.*` packages, which makes int8
 # instance segmentation fail outright.
-hal = ["edgefirst-image>=0.31"]
+hal = ["edgefirst-image>=0.37"]
 
 [project.urls]
 Homepage = "https://edgefirst.ai"

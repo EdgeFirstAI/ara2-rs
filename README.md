@@ -355,8 +355,8 @@ Create a virtual environment on the target and install the packages from PyPI:
 ```bash
 # On target
 python3 -m venv ~/venv
-~/venv/bin/pip install edgefirst-ara2 'edgefirst-codec>=0.32' \
-    'edgefirst-decoder>=0.32' 'edgefirst-image>=0.32'
+~/venv/bin/pip install edgefirst-ara2 'edgefirst-codec>=0.37' \
+    'edgefirst-decoder>=0.37' 'edgefirst-image>=0.37'
 ```
 
 Copy the script and run:
