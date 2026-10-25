@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (BREAKING)
 
-- **EdgeFirst HAL 0.37.** `edgefirst-tensor`, `edgefirst-image`, `edgefirst-codec` and `edgefirst-decoder` move from 0.36 to 0.37. `Model` exposes `edgefirst_tensor::Tensor` and `TensorMemory`, and the `decoder` feature exposes `edgefirst_decoder` types, so a crate using `ara2` must take the same HAL minor release. HAL 0.37 renames the letterbox image rectangle to a content region (`MaskOverlay::letterbox` becomes `content_region`, as does the `materialize_masks` argument), moves the preprocessing types into `edgefirst-tensor` with re-exports at their old paths, and removes `ConvertOptions::with_preprocessing`; `ara2` uses none of these, and the `yolov8` example is updated.
+- **EdgeFirst HAL 0.38.** `edgefirst-tensor`, `edgefirst-image`, `edgefirst-codec` and `edgefirst-decoder` move from 0.36 to 0.38. `Model` exposes `edgefirst_tensor::Tensor` and `TensorMemory`, and the `decoder` feature exposes `edgefirst_decoder` types, so a crate using `ara2` must take the same HAL minor release. HAL 0.37 renames the letterbox image rectangle to a content region (`MaskOverlay::letterbox` becomes `content_region`, as does the `materialize_masks` argument), moves the preprocessing types into `edgefirst-tensor` with re-exports at their old paths, and removes `ConvertOptions::with_preprocessing`; `ara2` uses none of these, and the `yolov8` example is updated.
 
 ### Changed
 

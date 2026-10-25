@@ -169,9 +169,9 @@ dependencies = [
 
 [[package]]
 name = "argminmax"
-version = "0.6.3"
+version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "70f13d10a41ac8d2ec79ee34178d61e6f47a29c2edfe7ef1721c7383b0359e65"
+checksum = "088a9c28ca36500c581f9f54b63460492d2b4f71e1e61d176e8fb79565109b01"
 dependencies = [
  "num-traits",
 ]
@@ -585,9 +585,9 @@ dependencies = [
 
 [[package]]
 name = "edgefirst-codec"
-version = "0.37.0"
+version = "0.38.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e5f1308fbd7bf5b5fc4a6d0d965a26e214b1441e888bbe25a4a26adf02db7b9f"
+checksum = "220474b669783638910ae07987954cd56319183c780fea85e730e4e6f57a00ae"
 dependencies = [
  "edgefirst-tensor",
  "edgefirst-v4l2",
@@ -601,9 +601,9 @@ dependencies = [
 
 [[package]]
 name = "edgefirst-decoder"
-version = "0.37.0"
+version = "0.38.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "67d12dfda527814b3f5ec0a1beb8b1322895db3e234edf3d0463981b84ef7cae"
+checksum = "53c8349100207250af2eb916f38806ffac841c52998da27b4664e09adf45a521"
 dependencies = [
  "argminmax",
  "edgefirst-decoder-abi",
@@ -622,15 +622,15 @@ dependencies = [
 
 [[package]]
 name = "edgefirst-decoder-abi"
-version = "0.37.0"
+version = "0.38.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe767ecc0ffca93778a76403f310d49fc0016fabfda56fabbfc90e60e278b1ac"
+checksum = "590a779a6cfa110b43419cfa74acfa7c66b8a1cf2195a39b0a95ba61ce707087"
 
 [[package]]
 name = "edgefirst-egl"
-version = "0.37.0"
+version = "0.38.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c2cc83e57c58ddce9352d9a2c1301d9f0cbcd8da75ce6290716cc98d953c2114"
+checksum = "37ac44e3057604fc0ea32e78c7ff46319755a7f1c5d399690f88ad6419e637ac"
 dependencies = [
  "libc",
  "libloading 0.9.0",
@@ -661,18 +661,18 @@ dependencies = [
 
 [[package]]
 name = "edgefirst-gl"
-version = "0.37.0"
+version = "0.38.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a10d9da672f9d0f4850c37f1b5cc51bb93110e5a323a4988e987aef4d3a4c567"
+checksum = "eddcc7ed09c6c24eec07a605ee0ac28984d9fb821b0f9bbf5a42995a575f01b4"
 dependencies = [
  "gl_generator",
 ]
 
 [[package]]
 name = "edgefirst-image"
-version = "0.37.0"
+version = "0.38.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "43b277cb99b0545513f6dbf97e248781da2a7fcf868e4276ff68fb5a9733db4f"
+checksum = "b75d36cee76a8a0afe6e9eb289fe5071b5cf044af65d1706c17e94428425024b"
 dependencies = [
  "dma-heap",
  "drm-fourcc",
@@ -702,9 +702,9 @@ dependencies = [
 
 [[package]]
 name = "edgefirst-tensor"
-version = "0.37.0"
+version = "0.38.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a2ae925fb289341664a59f276e67461fbf1cb10ea58c7bcabaf3e9a6797c649e"
+checksum = "c1fc66f3985d7cc12a3afeb1373ecbf3b37b4f435043d2379a5dc0751e6a9cee"
 dependencies = [
  "dma-heap",
  "edgefirst-tensor-abi",
@@ -724,15 +724,15 @@ dependencies = [
 
 [[package]]
 name = "edgefirst-tensor-abi"
-version = "0.37.0"
+version = "0.38.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6fe5879a3139ab1de8f7f256bb52ade471839675dab894abee7ab02b54a7939a"
+checksum = "d6901df6654ce5c0d698d0d7de8e8dd34850a690555197cf9de55e11f64c7e77"
 
 [[package]]
 name = "edgefirst-tensor-ffi"
-version = "0.37.0"
+version = "0.38.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b526446a6faec65fd2f560de7b8732414c10b3bd97e154ec2824f5dbaed38209"
+checksum = "4840f26680749c2ac93c4fbdf557c5fcc02a9dff394e02c7d63df51f6fb86a93"
 dependencies = [
  "edgefirst-tensor-abi",
 ]
@@ -911,8 +911,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "300e883d756b2e4ec94e02791f39b04b522276138852cfc41d9fb7e904106099"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "r-efi 6.0.0",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -2181,9 +2183,9 @@ dependencies = [
 
 [[package]]
 name = "typed-path"
-version = "0.12.4"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "54ec2755506471f54baf5e4bb5499d8e510cc1caf271270e778a736bd2d7336c"
+checksum = "9ce898823d8cd0f028662d2f349694b1af0a5cc9be83f1d213a00d3147445e1e"
 
 [[package]]
 name = "unicode-ident"
@@ -2576,15 +2578,17 @@ dependencies = [
 
 [[package]]
 name = "zip"
-version = "9.0.5"
+version = "9.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e04976da629d3b04204ba8105b396a193af8ad2583b2c79bfb3ab8af580a11e"
+checksum = "2886b00003a72c4ccee3f42cfc34908d33b2508a74d827dc2a4244706475c704"
 dependencies = [
  "crc32fast",
+ "getrandom 0.4.3",
  "indexmap",
  "memchr",
  "nix",
  "typed-path",
+ "windows-sys",
 ]
 
 [[package]]
