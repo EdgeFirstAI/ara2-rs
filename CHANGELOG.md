@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The `yolov8_live` example failed on the first detection with a segmentation model (`mask_coefficients shape [1, 32] incompatible with protos [32, 160, 160]`). It now gives the decoder each output's `dshape` and box `normalized` flag from the model's `edgefirst.json`, falling back to the canonical Ultralytics layout, as the `yolov8` example does.
+- The `yolov8` and `yolov8_live` examples no longer give two outputs the same `edgefirst.json` entry when their shapes are equal, as the scores and mask coefficients are for a 32-class segmentation model; those outputs use the canonical Ultralytics layout for their role.
+
 ## [0.24.0] - 2026-10-23
 
 ### Changed (BREAKING)

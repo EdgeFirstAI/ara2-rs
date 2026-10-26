@@ -64,7 +64,7 @@ use ara2::{Session, dvm_metadata};
 use clap::{Parser, ValueEnum};
 use edgefirst_decoder::{
     DecoderBuilder,
-    configs::{self, DecoderType, QuantTuple},
+    configs::{self, DecoderType, DimName, QuantTuple},
 };
 use edgefirst_image::{
     ColorMode, ConvertOptions, ImageProcessor, ImageProcessorTrait as _, MaskOverlay,
@@ -691,6 +691,73 @@ fn normalize_shape(raw: [usize; 3]) -> Vec<usize> {
     shape
 }
 
+/// Strip trailing 1s from a metadata shape (Vec<i64>) and widen to usize.
+///
+/// Metadata declares shapes with the leading batch and any trailing
+/// `padding` axes; the NPU runtime strips trailing 1s before returning
+/// the per-output shape. Normalising both sides the same way lets us
+/// match a runtime shape to its [`dvm_metadata::OutputSpec`].
+fn strip_trailing_ones_i64(raw: &[i64]) -> Vec<usize> {
+    let mut shape: Vec<usize> = raw.iter().map(|&d| d as usize).collect();
+    while shape.len() > 1 && shape.last() == Some(&1) {
+        shape.pop();
+    }
+    shape
+}
+
+#[derive(Clone, Copy)]
+enum OutputRole {
+    Boxes,
+    Scores,
+    MaskCoefficients,
+    Protos,
+}
+
+/// Build a canonical Ultralytics `dshape` for a role, used when the DVM
+/// did not ship an `edgefirst.json` or when the metadata entry for that
+/// output was missing.
+///
+/// The HAL decoder treats an empty `dshape` as "shape is already in
+/// canonical order"; this is true for boxes / scores / mask coefficients,
+/// but for protos the canonical order is NHWC while NPU outputs are NCHW,
+/// so the decoder would otherwise mis-identify `num_protos`.
+fn canonical_dshape(role: OutputRole, shape: &[usize]) -> Vec<(DimName, usize)> {
+    let names: &[DimName] = match role {
+        OutputRole::Boxes => &[DimName::Batch, DimName::BoxCoords, DimName::NumBoxes],
+        OutputRole::Scores => &[DimName::Batch, DimName::NumClasses, DimName::NumBoxes],
+        OutputRole::MaskCoefficients => &[DimName::Batch, DimName::NumProtos, DimName::NumBoxes],
+        OutputRole::Protos => &[
+            DimName::Batch,
+            DimName::NumProtos,
+            DimName::Height,
+            DimName::Width,
+        ],
+    };
+    // Zip stops at the shorter side, keeping `dshape.len() == shape.len()`
+    // as the HAL decoder's validator requires.
+    shape
+        .iter()
+        .copied()
+        .zip(names.iter().copied())
+        .map(|(n, name)| (name, n))
+        .collect()
+}
+
+/// Return `dshapes[i]` if it was populated from metadata, otherwise the
+/// canonical Ultralytics dshape for the role at `shape`.
+fn dshape_or_canonical(
+    dshapes: &[Vec<(DimName, usize)>],
+    i: usize,
+    role: OutputRole,
+    shape: &[usize],
+) -> Vec<(DimName, usize)> {
+    if dshapes[i].is_empty() {
+        canonical_dshape(role, shape)
+    } else {
+        dshapes[i].clone()
+    }
+}
+
 /// Identify the boxes and scores output indices for a detection model.
 ///
 /// Matches outputs by shape:
@@ -923,19 +990,58 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let n_outputs = model.n_outputs();
     let mut shapes = Vec::with_capacity(n_outputs);
     let mut quants = Vec::with_capacity(n_outputs);
+    let mut dshapes: Vec<Vec<(DimName, usize)>> = Vec::with_capacity(n_outputs);
+    let mut normalized_flags: Vec<Option<bool>> = Vec::with_capacity(n_outputs);
+
+    // Attach each runtime output's edgefirst.json entry (matched by shape)
+    // for its dshape and normalized flag. A shape declared by more than one
+    // output (e.g. 32 classes and 32 protos) is ambiguous and maps to None,
+    // leaving those outputs to the canonical layout for their role.
+    let mut meta_by_shape: HashMap<Vec<usize>, Option<&dvm_metadata::OutputSpec>> = HashMap::new();
+    for o in metadata.iter().flat_map(|m| &m.outputs) {
+        meta_by_shape
+            .entry(strip_trailing_ones_i64(&o.shape))
+            .and_modify(|e| *e = None)
+            .or_insert(Some(o));
+    }
 
     for i in 0..n_outputs {
         let shape = normalize_shape(model.output_shape(i));
         let info = model.output_info(i)?;
+        let spec = meta_by_shape.get(&shape).copied().flatten();
+
+        // Some exports name the channel axis of `mask_coefs` `num_features`
+        // where the decoder requires `num_protos`.
+        let dshape: Vec<(DimName, usize)> = spec
+            .map(|s| {
+                let mut d = s.dshape_typed();
+                d.truncate(shape.len());
+                if s.output_type.as_deref() == Some("mask_coefs") {
+                    for (name, _) in d.iter_mut() {
+                        if *name == DimName::NumFeatures {
+                            *name = DimName::NumProtos;
+                        }
+                    }
+                }
+                d
+            })
+            .unwrap_or_default();
+        let normalized = spec.and_then(|s| s.normalized);
+
+        // Exports that do not declare `normalized` emit boxes in input
+        // pixels; dividing the scale by the input size normalizes them.
         let is_box = shape.len() == 3 && shape[1] == 4;
-        let scale = if is_box && input_dim > 1.0 {
+        let scale = if is_box && normalized.is_none() && input_dim > 1.0 {
             info.quant.qn / input_dim
         } else {
             info.quant.qn
         };
         quants.push((scale, info.quant.offset, info.bpp, info.quant.is_signed));
         shapes.push(shape);
+        dshapes.push(dshape);
+        normalized_flags.push(normalized);
     }
+    let normalized_for = |i: usize| Some(normalized_flags[i].unwrap_or(true));
 
     let task = if task == Task::Detect && shapes.iter().any(|s| s.len() == 4) {
         Task::Segment
@@ -952,14 +1058,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         decoder: DecoderType::Ultralytics,
                         quantization: Some(QuantTuple(quants[bi].0, quants[bi].1)),
                         shape: shapes[bi].clone(),
-                        normalized: Some(true),
-                        ..Default::default()
+                        dshape: dshape_or_canonical(&dshapes, bi, OutputRole::Boxes, &shapes[bi]),
+                        normalized: normalized_for(bi),
                     },
                     configs::Scores {
                         decoder: DecoderType::Ultralytics,
                         quantization: Some(QuantTuple(quants[si].0, quants[si].1)),
                         shape: shapes[si].clone(),
-                        ..Default::default()
+                        dshape: dshape_or_canonical(&dshapes, si, OutputRole::Scores, &shapes[si]),
                     },
                 )
                 .with_score_threshold(args.threshold)
@@ -974,26 +1080,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         decoder: DecoderType::Ultralytics,
                         quantization: Some(QuantTuple(quants[bi].0, quants[bi].1)),
                         shape: shapes[bi].clone(),
-                        normalized: Some(true),
-                        ..Default::default()
+                        dshape: dshape_or_canonical(&dshapes, bi, OutputRole::Boxes, &shapes[bi]),
+                        normalized: normalized_for(bi),
                     },
                     configs::Scores {
                         decoder: DecoderType::Ultralytics,
                         quantization: Some(QuantTuple(quants[si].0, quants[si].1)),
                         shape: shapes[si].clone(),
-                        ..Default::default()
+                        dshape: dshape_or_canonical(&dshapes, si, OutputRole::Scores, &shapes[si]),
                     },
                     configs::MaskCoefficients {
                         decoder: DecoderType::Ultralytics,
                         quantization: Some(QuantTuple(quants[mi].0, quants[mi].1)),
                         shape: shapes[mi].clone(),
-                        ..Default::default()
+                        dshape: dshape_or_canonical(
+                            &dshapes,
+                            mi,
+                            OutputRole::MaskCoefficients,
+                            &shapes[mi],
+                        ),
                     },
                     configs::Protos {
                         decoder: DecoderType::Ultralytics,
                         quantization: Some(QuantTuple(quants[pi].0, quants[pi].1)),
                         shape: shapes[pi].clone(),
-                        ..Default::default()
+                        dshape: dshape_or_canonical(&dshapes, pi, OutputRole::Protos, &shapes[pi]),
                     },
                 )
                 .with_score_threshold(args.threshold)
