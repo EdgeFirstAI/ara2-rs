@@ -994,21 +994,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut normalized_flags: Vec<Option<bool>> = Vec::with_capacity(n_outputs);
 
     // Attach each runtime output's edgefirst.json entry (matched by shape)
-    // for its dshape and normalized flag.
-    let meta_by_shape: HashMap<Vec<usize>, &dvm_metadata::OutputSpec> = metadata
-        .as_ref()
-        .map(|m| {
-            m.outputs
-                .iter()
-                .map(|o| (strip_trailing_ones_i64(&o.shape), o))
-                .collect()
-        })
-        .unwrap_or_default();
+    // for its dshape and normalized flag. A shape declared by more than one
+    // output (e.g. 32 classes and 32 protos) is ambiguous and maps to None,
+    // leaving those outputs to the canonical layout for their role.
+    let mut meta_by_shape: HashMap<Vec<usize>, Option<&dvm_metadata::OutputSpec>> = HashMap::new();
+    for o in metadata.iter().flat_map(|m| &m.outputs) {
+        meta_by_shape
+            .entry(strip_trailing_ones_i64(&o.shape))
+            .and_modify(|e| *e = None)
+            .or_insert(Some(o));
+    }
 
     for i in 0..n_outputs {
         let shape = normalize_shape(model.output_shape(i));
         let info = model.output_info(i)?;
-        let spec = meta_by_shape.get(&shape).copied();
+        let spec = meta_by_shape.get(&shape).copied().flatten();
 
         // Some exports name the channel axis of `mask_coefs` `num_features`
         // where the decoder requires `num_protos`.

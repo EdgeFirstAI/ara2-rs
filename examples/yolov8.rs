@@ -521,22 +521,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Index the metadata outputs by their normalized shape so we can attach
     // edgefirst.json fields (dshape, normalized, encoding) to each runtime
     // output. Older .dvm files without these fields still work — runtime
-    // info from the NPU continues to drive shape and quantization.
-    let meta_by_shape: std::collections::HashMap<Vec<usize>, &dvm_metadata::OutputSpec> = metadata
-        .as_ref()
-        .map(|m| {
-            m.outputs
-                .iter()
-                .map(|o| (strip_trailing_ones_i64(&o.shape), o))
-                .collect()
-        })
-        .unwrap_or_default();
+    // info from the NPU continues to drive shape and quantization. A shape
+    // declared by more than one output (e.g. 32 classes and 32 protos) is
+    // ambiguous and maps to None, leaving those outputs to the canonical
+    // layout for their role.
+    let mut meta_by_shape: std::collections::HashMap<
+        Vec<usize>,
+        Option<&dvm_metadata::OutputSpec>,
+    > = std::collections::HashMap::new();
+    for o in metadata.iter().flat_map(|m| &m.outputs) {
+        meta_by_shape
+            .entry(strip_trailing_ones_i64(&o.shape))
+            .and_modify(|e| *e = None)
+            .or_insert(Some(o));
+    }
 
     for i in 0..n_outputs {
         let raw_shape = model.output_shape(i);
         let shape = normalize_shape(raw_shape);
         let info = model.output_info(i)?;
-        let spec = meta_by_shape.get(&shape).copied();
+        let spec = meta_by_shape.get(&shape).copied().flatten();
 
         // Pull dshape from metadata if present. Trim trailing dims past
         // the rank of `shape` (covers metadata declaring a `padding=1`
