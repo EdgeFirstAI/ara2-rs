@@ -82,6 +82,12 @@ use edgefirst_tensor::{
 use std::os::fd::AsFd as _;
 use std::{path::PathBuf, time::Instant};
 
+#[path = "yolov8_outputs.rs"]
+mod yolov8_outputs;
+use yolov8_outputs::{
+    OutputMetadata, OutputRole, Task, dshape_or_canonical, normalize_shape, output_layout,
+};
+
 // ── Arguments ────────────────────────────────────────────────────────────────
 
 /// Static-image YOLOv8 detection / instance segmentation on the ARA-2 NPU.
@@ -230,189 +236,6 @@ const COCO: &[&str] = &[
     "toothbrush",
 ];
 
-// ── Output identification ────────────────────────────────────────────────────
-
-/// Whether this model performs detection only or detection + segmentation.
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum Task {
-    Detect,
-    Segment,
-}
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-/// Normalize an ARA-2 output shape for the HAL decoder.
-///
-/// ARA-2's FFI struct always reports 3 dimensions `[nch, height, width]`.
-/// For logically 2D outputs (e.g. scores `[80, 8400]`), the struct pads
-/// width=1, producing `[80, 8400, 1]`. We strip that trailing 1 to recover
-/// the true rank.
-///
-/// The HAL decoder expects an ONNX-style leading batch dimension (it slices
-/// `[0, .., ..]` internally to remove it), so we prepend batch=1.
-///
-/// Examples:
-///   `[80, 8400, 1]` → `[1, 80, 8400]`  (scores)
-///   `[4, 8400, 1]`  → `[1, 4, 8400]`   (boxes)
-///   `[32, 160, 160]` → `[1, 32, 160, 160]` (protos — no trailing 1 to strip)
-fn normalize_shape(raw: [usize; 3]) -> Vec<usize> {
-    let mut shape: Vec<usize> = raw.to_vec();
-    while shape.len() > 1 && shape.last() == Some(&1) {
-        shape.pop();
-    }
-    shape.insert(0, 1);
-    shape
-}
-
-/// Strip trailing 1s from a metadata shape (Vec<i64>) and widen to usize.
-///
-/// Metadata declares shapes with the leading batch and any trailing
-/// `padding` axes; the NPU runtime strips trailing 1s before returning
-/// the per-output shape. Normalising both sides the same way lets us
-/// match a runtime shape to its [`dvm_metadata::OutputSpec`].
-fn strip_trailing_ones_i64(raw: &[i64]) -> Vec<usize> {
-    let mut shape: Vec<usize> = raw.iter().map(|&d| d as usize).collect();
-    while shape.len() > 1 && shape.last() == Some(&1) {
-        shape.pop();
-    }
-    shape
-}
-
-/// Identify detection output indices: boxes `[1, 4, N]` and scores `[1, C, N]`.
-///
-/// Box tensors are identified by `shape[1] == 4` (the 4 box coordinates),
-/// not by checking whether 4 appears anywhere in the shape — which would
-/// misidentify score tensors from 4-class models.
-fn identify_det_outputs(shapes: &[Vec<usize>]) -> Result<(usize, usize), String> {
-    if shapes.len() < 2 {
-        return Err(format!(
-            "detection needs >= 2 outputs, got {}",
-            shapes.len()
-        ));
-    }
-    let (mut boxes, mut scores) = (None, None);
-    for (i, s) in shapes.iter().enumerate() {
-        if s.len() == 3 && s[1] == 4 {
-            boxes = Some(i);
-        } else if s.len() == 3 && scores.is_none() {
-            scores = Some(i);
-        }
-        // Skip rank-4 tensors (proto tensors from seg models)
-    }
-    Ok((
-        boxes.ok_or("cannot identify boxes output (shape[1] == 4)")?,
-        scores.ok_or("cannot identify scores output")?,
-    ))
-}
-
-/// Identify segmentation output indices: boxes, scores, mask_coeff, protos.
-///
-/// Protos are identified by rank-4 shape `[1, 32, H, W]`.
-/// Boxes by `shape[1] == 4`. Mask coefficients by `shape[1] == 32`.
-fn identify_seg_outputs(shapes: &[Vec<usize>]) -> Result<(usize, usize, usize, usize), String> {
-    if shapes.len() < 4 {
-        return Err(format!(
-            "segmentation needs 4 outputs, got {}",
-            shapes.len()
-        ));
-    }
-    let (mut scores, mut boxes, mut masks, mut protos) = (None, None, None, None);
-    for (i, s) in shapes.iter().enumerate() {
-        if s.len() == 4 {
-            protos = Some(i); // [1, 32, H, W]
-        } else if s.len() == 3 && s[1] == 4 {
-            boxes = Some(i); // [1, 4, num_boxes]
-        } else if s.len() == 3
-            && masks.is_none()
-            && protos.is_some_and(|p| shapes[p].get(1) == s.get(1))
-        {
-            masks = Some(i); // [1, 32, num_boxes]
-        } else if scores.is_none() {
-            scores = Some(i);
-        }
-    }
-    // Retry mask detection: needed when the proto tensor appears after the mask-coeff
-    // tensor in the output list (ARA-2 compiler output ordering is not guaranteed).
-    if masks.is_none()
-        && let Some(pi) = protos
-    {
-        for (i, s) in shapes.iter().enumerate() {
-            if s.len() == 3
-                && s[1] != 4
-                && Some(i) != scores
-                && Some(i) != boxes
-                && shapes[pi].get(1) == s.get(1)
-            {
-                masks = Some(i);
-                break;
-            }
-        }
-    }
-    Ok((
-        boxes.ok_or("cannot identify boxes")?,
-        scores.ok_or("cannot identify scores")?,
-        masks.ok_or("cannot identify mask_coeff")?,
-        protos.ok_or("cannot identify protos")?,
-    ))
-}
-
-/// Build a canonical Ultralytics `dshape` for a role, used when the DVM
-/// did not ship an `edgefirst.json` (e.g. Kinara-1.2.1 official models) or
-/// when the metadata entry for that output was missing.
-///
-/// The HAL decoder treats an empty `dshape` as "shape is already in
-/// canonical order"; this is true for boxes / scores / mask coefficients,
-/// but for protos the canonical order is NHWC while NPU outputs are NCHW,
-/// so the materializer would otherwise mis-identify `num_protos`.
-fn canonical_dshape(role: OutputRole, shape: &[usize]) -> Vec<(DimName, usize)> {
-    let names: &[DimName] = match role {
-        OutputRole::Detection => &[DimName::Batch, DimName::NumFeatures, DimName::NumBoxes],
-        OutputRole::Boxes => &[DimName::Batch, DimName::BoxCoords, DimName::NumBoxes],
-        OutputRole::Scores => &[DimName::Batch, DimName::NumClasses, DimName::NumBoxes],
-        OutputRole::MaskCoefficients => &[DimName::Batch, DimName::NumProtos, DimName::NumBoxes],
-        OutputRole::Protos => &[
-            DimName::Batch,
-            DimName::NumProtos,
-            DimName::Height,
-            DimName::Width,
-        ],
-    };
-    // Pair element-wise; if the runtime rank is shorter than the canonical
-    // names list (e.g. a `padding=1` axis was stripped) the zip stops at the
-    // shorter side, which keeps `dshape.len() == shape.len()` as the HAL
-    // decoder's validator requires.
-    shape
-        .iter()
-        .copied()
-        .zip(names.iter().copied())
-        .map(|(n, name)| (name, n))
-        .collect()
-}
-
-#[derive(Clone, Copy)]
-enum OutputRole {
-    Detection,
-    Boxes,
-    Scores,
-    MaskCoefficients,
-    Protos,
-}
-
-/// Return `dshapes[i]` if it was populated from metadata, otherwise the
-/// canonical Ultralytics dshape for the role at `shape`.
-fn dshape_or_canonical(
-    dshapes: &[Vec<(DimName, usize)>],
-    i: usize,
-    role: OutputRole,
-    shape: &[usize],
-) -> Vec<(DimName, usize)> {
-    if dshapes[i].is_empty() {
-        canonical_dshape(role, shape)
-    } else {
-        dshapes[i].clone()
-    }
-}
-
 fn bench_row(label: &str, data: &[f64]) {
     let n = data.len() as f64;
     let mean = data.iter().sum::<f64>() / n;
@@ -438,12 +261,14 @@ fn copy_to_input(
     Ok(())
 }
 
-/// Copies the model's heap output tensors into the tensors the decoder reads.
+/// Copies the model's heap output tensors into the tensors the decoder reads,
+/// which are in `layout` order.
 fn copy_from_outputs(
     model: &ara2::Model,
+    layout: &[(usize, OutputRole)],
     outputs: &[TensorDyn],
 ) -> Result<(), Box<dyn std::error::Error>> {
-    for (i, out) in outputs.iter().enumerate() {
+    for (&(i, _), out) in layout.iter().zip(outputs) {
         let src = model.output_tensor(i).map()?;
         let src = src.as_slice();
         let mut dst = out.map_bytes(CpuAccess::Write)?;
@@ -513,34 +338,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let input_dim = in_w.max(in_h) as f32;
     let n_outputs = model.n_outputs();
 
-    let mut shapes = Vec::with_capacity(n_outputs);
+    let shapes: Vec<Vec<usize>> = (0..n_outputs)
+        .map(|i| normalize_shape(model.output_shape(i)))
+        .collect();
+    let names = (0..n_outputs)
+        .map(|i| model.output_info(i).map(|info| info.layer_name))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    // Override task if output shapes indicate segmentation (rank-4 proto tensor present).
+    // Some DVM files report "detect" even for segmentation models.
+    let task = if task == Task::Detect && shapes.iter().any(|s| s.len() == 4) {
+        println!("  (task overridden to Segment based on output shapes)");
+        Task::Segment
+    } else {
+        task
+    };
+    let layout = output_layout(task, &shapes, &names)?;
+    let role_of = |i: usize| layout.iter().find(|&&(j, _)| j == i).map(|&(_, r)| r);
+
     let mut quants = Vec::with_capacity(n_outputs);
     let mut dshapes: Vec<Vec<(DimName, usize)>> = Vec::with_capacity(n_outputs);
     let mut normalized_flags: Vec<Option<bool>> = Vec::with_capacity(n_outputs);
 
-    // Index the metadata outputs by their normalized shape so we can attach
-    // edgefirst.json fields (dshape, normalized, encoding) to each runtime
-    // output. Older .dvm files without these fields still work — runtime
-    // info from the NPU continues to drive shape and quantization. A shape
-    // declared by more than one output (e.g. 32 classes and 32 protos) is
-    // ambiguous and maps to None, leaving those outputs to the canonical
-    // layout for their role.
-    let mut meta_by_shape: std::collections::HashMap<
-        Vec<usize>,
-        Option<&dvm_metadata::OutputSpec>,
-    > = std::collections::HashMap::new();
-    for o in metadata.iter().flat_map(|m| &m.outputs) {
-        meta_by_shape
-            .entry(strip_trailing_ones_i64(&o.shape))
-            .and_modify(|e| *e = None)
-            .or_insert(Some(o));
-    }
+    let output_metadata = OutputMetadata::new(metadata.iter().flat_map(|m| &m.outputs));
 
-    for i in 0..n_outputs {
-        let raw_shape = model.output_shape(i);
-        let shape = normalize_shape(raw_shape);
+    for (i, shape) in shapes.iter().enumerate() {
         let info = model.output_info(i)?;
-        let spec = meta_by_shape.get(&shape).copied().flatten();
+        let role = role_of(i);
+        let spec = role.and_then(|r| output_metadata.spec(&names[i], shape, r));
 
         // Pull dshape from metadata if present. Trim trailing dims past
         // the rank of `shape` (covers metadata declaring a `padding=1`
@@ -567,23 +392,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // The `normalized` flag from metadata applies to box outputs only
         // (per the EdgeFirst metadata spec). Other roles inherit None.
-        let normalized = spec.and_then(|s| s.normalized);
+        let normalized = spec
+            .filter(|_| matches!(role, Some(OutputRole::Boxes | OutputRole::Detection)))
+            .and_then(|s| s.normalized);
 
-        // Box outputs have shape [1, 4, N] — specifically dim[1]==4 for the
-        // Ultralytics split format. Older exports that didn't declare
-        // `normalized` emit int-encoded pixel coords (0..input_dim) and need
-        // the quant scale divided by input_dim to convert to the [0, 1]
-        // range the decoder reports back. Newer spec-conforming exports
-        // (normalized=true) already emit normalized coords so we use qn as-is.
-        let is_box_output = shape.len() == 3 && shape[1] == 4;
-        let scale = if is_box_output && normalized.is_none() && input_dim > 1.0 {
+        // Older split-box exports that didn't declare `normalized` emit
+        // int-encoded pixel coords (0..input_dim) and need the quant scale
+        // divided by input_dim to convert to the [0, 1] range the decoder
+        // reports back. Newer spec-conforming exports (normalized=true)
+        // already emit normalized coords so we use qn as-is.
+        let scale = if role == Some(OutputRole::Boxes) && normalized.is_none() && input_dim > 1.0 {
             info.quant.qn / input_dim
         } else {
             info.quant.qn
         };
         println!(
-            "  output[{i}] shape={shape:?} bpp={} signed={} qn={} offset={} \
+            "  output[{i}] {} ({}) shape={shape:?} bpp={} signed={} qn={} offset={} \
              (adj_scale={scale:.6e}) normalized={normalized:?} dshape_len={}",
+            role.map_or_else(|| "unused".to_owned(), |r| format!("{r:?}")),
+            names[i],
             info.bpp,
             info.quant.is_signed,
             info.quant.qn,
@@ -591,37 +418,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             dshape.len()
         );
         quants.push((scale, info.quant.offset, info.bpp, info.quant.is_signed));
-        shapes.push(shape);
         dshapes.push(dshape);
         normalized_flags.push(normalized);
     }
-
-    // Override task if output shapes indicate segmentation (rank-4 proto tensor present).
-    // Some DVM files report "detect" even for segmentation models.
-    let task = if task == Task::Detect && shapes.iter().any(|s| s.len() == 4) {
-        println!("  (task overridden to Segment based on output shapes)");
-        Task::Segment
-    } else {
-        task
-    };
 
     // For box outputs, prefer the metadata's normalized flag; if absent,
     // assume true (legacy converters that pre-divided the scale by
     // input_dim above are now operating in the normalized domain too).
     let normalized_for = |i: usize| Some(normalized_flags[i].unwrap_or(true));
 
-    let decoder = match (task, n_outputs) {
+    let decoder = match *layout.as_slice() {
         // Monolithic detection: single output [1, nc+4, N] with normalized boxes
-        (Task::Detect, 1) => {
-            println!("  Layout: monolithic detection [{:?}]", shapes[0]);
+        [(di, OutputRole::Detection)] => {
+            println!("  Layout: monolithic detection [{:?}]", shapes[di]);
             DecoderBuilder::new()
                 .with_config_yolo_det(
                     configs::Detection {
                         decoder: DecoderType::Ultralytics,
-                        quantization: Some(QuantTuple(quants[0].0, quants[0].1)),
-                        shape: shapes[0].clone(),
-                        dshape: dshape_or_canonical(&dshapes, 0, OutputRole::Detection, &shapes[0]),
-                        normalized: normalized_for(0),
+                        quantization: Some(QuantTuple(quants[di].0, quants[di].1)),
+                        shape: shapes[di].clone(),
+                        dshape: dshape_or_canonical(
+                            &dshapes,
+                            di,
+                            OutputRole::Detection,
+                            &shapes[di],
+                        ),
+                        normalized: normalized_for(di),
                         ..Default::default()
                     },
                     None,
@@ -631,8 +453,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .build()?
         }
         // Split detection: separate boxes [1,4,N] + scores [1,nc,N]
-        (Task::Detect, _) => {
-            let (bi, si) = identify_det_outputs(&shapes)?;
+        [(bi, _), (si, _)] => {
             println!("  Layout: split detection (boxes[{bi}] + scores[{si}])");
             DecoderBuilder::new()
                 .with_config_yolo_split_det(
@@ -654,8 +475,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .with_iou_threshold(args.iou)
                 .build()?
         }
-        (Task::Segment, _) => {
-            let (bi, si, mi, pi) = identify_seg_outputs(&shapes)?;
+        [(bi, _), (si, _), (mi, _), (pi, _)] => {
+            println!(
+                "  Layout: split segmentation (boxes[{bi}] + scores[{si}] + \
+                 mask_coeff[{mi}] + protos[{pi}])"
+            );
             DecoderBuilder::new()
                 .with_config_yolo_split_segdet(
                     configs::Boxes {
@@ -693,6 +517,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .with_iou_threshold(args.iou)
                 .build()?
         }
+        _ => return Err(format!("unexpected output layout {layout:?}").into()),
     };
 
     println!("Decoder: {:?}", decoder.model_type());
@@ -796,8 +621,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ── 5b. Pre-allocate output tensor wrappers ──────────────────────────
     // Wrap the model's DMA output buffers directly — no per-frame CPU copy —
     // or, for heap model tensors, allocate tensors the outputs are copied to.
-    let output_tensors: Vec<TensorDyn> = (0..n_outputs)
-        .map(|i| {
+    // Either way they are listed in `layout` order, the order the decoder
+    // reads them.
+    let output_tensors: Vec<TensorDyn> = layout
+        .iter()
+        .map(|&(i, _)| {
             let dtype = match (quants[i].2, quants[i].3) {
                 (1, false) => DType::U8,
                 (1, true) => DType::I8,
@@ -834,7 +662,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let t_inf = Instant::now();
     let stats = model.run()?;
     if !fd_backed {
-        copy_from_outputs(&model, &output_tensors)?;
+        copy_from_outputs(&model, &layout, &output_tensors)?;
     }
     let inference_time = t_inf.elapsed();
 
@@ -936,7 +764,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             model.run()?;
             if !fd_backed {
-                copy_from_outputs(&model, &output_tensors)?;
+                copy_from_outputs(&model, &layout, &output_tensors)?;
             }
             let proto = decoder
                 .decode_proto(&output_refs, &mut warmup_boxes)
@@ -985,7 +813,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Inference: NPU execution (includes DMA upload/download).
             let t = model.run()?;
             if !fd_backed {
-                copy_from_outputs(&model, &output_tensors)?;
+                copy_from_outputs(&model, &layout, &output_tensors)?;
             }
             let t2 = Instant::now();
 
@@ -1059,4 +887,227 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod offline_tests {
+    use super::yolov8_outputs::*;
+    use ara2::dvm_metadata;
+
+    const BOXES: &str = "_model_22_Concat_6_boxes_output_0";
+    const SCORES: &str = "_model_22_Sigmoid_output_0";
+    const MASKS: &str = "_model_22_Concat_7_output_0";
+    const PROTOS: &str = "_model_22_proto_cv3_conv_Conv_output_0";
+
+    fn layout(
+        task: Task,
+        outputs: &[(&[usize], &str)],
+    ) -> Result<Vec<(usize, OutputRole)>, String> {
+        let shapes: Vec<Vec<usize>> = outputs.iter().map(|(s, _)| s.to_vec()).collect();
+        let names: Vec<String> = outputs.iter().map(|(_, n)| n.to_string()).collect();
+        output_layout(task, &shapes, &names)
+    }
+
+    fn specs(json: &str) -> Vec<dvm_metadata::OutputSpec> {
+        serde_json::from_str(json).expect("output specs")
+    }
+
+    #[test]
+    fn metadata_matched_by_name() {
+        // The scores entry carries the boxes `type` and dshape.
+        let outputs = specs(&format!(
+            r#"[
+                {{"name": "{BOXES}", "type": "boxes", "shape": [1, 4, 8400],
+                  "dshape": [{{"batch": 1}}, {{"box_coords": 4}}, {{"num_boxes": 8400}}],
+                  "normalized": true}},
+                {{"name": "{SCORES}", "type": "boxes", "shape": [1, 4, 8400],
+                  "dshape": [{{"batch": 1}}, {{"box_coords": 4}}, {{"num_boxes": 8400}}],
+                  "normalized": true}}
+            ]"#
+        ));
+        let meta = OutputMetadata::new(&outputs);
+        let shape = [1, 4, 8400];
+        let boxes = meta.spec(BOXES, &shape, OutputRole::Boxes);
+        assert_eq!(boxes.and_then(|s| s.normalized), Some(true));
+        assert!(meta.spec(SCORES, &shape, OutputRole::Scores).is_none());
+    }
+
+    #[test]
+    fn metadata_matched_by_shape() {
+        let outputs = specs(
+            r#"[
+                {"type": "boxes", "shape": [1, 4, 8400], "normalized": true},
+                {"type": "scores", "shape": [1, 80, 8400]},
+                {"type": "mask_coefs", "shape": [1, 32, 8400]},
+                {"type": "protos", "shape": [1, 32, 160, 160]}
+            ]"#,
+        );
+        let meta = OutputMetadata::new(&outputs);
+        let boxes = meta.spec("output_a", &[1, 4, 8400], OutputRole::Boxes);
+        assert_eq!(boxes.and_then(|s| s.normalized), Some(true));
+        assert!(
+            meta.spec("output_b", &[1, 80, 8400], OutputRole::Scores)
+                .is_some()
+        );
+        assert!(
+            meta.spec("output_c", &[1, 32, 160, 160], OutputRole::Protos)
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn metadata_shared_shape_unmatched() {
+        let outputs = specs(
+            r#"[
+                {"type": "scores", "shape": [1, 32, 8400]},
+                {"type": "mask_coefs", "shape": [1, 32, 8400]}
+            ]"#,
+        );
+        let meta = OutputMetadata::new(&outputs);
+        let shape = [1, 32, 8400];
+        assert!(meta.spec("output_a", &shape, OutputRole::Scores).is_none());
+        assert!(
+            meta.spec("output_b", &shape, OutputRole::MaskCoefficients)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn four_class_tie_broken_by_name() {
+        let got = layout(
+            Task::Detect,
+            &[(&[1, 4, 8400], BOXES), (&[1, 4, 8400], SCORES)],
+        );
+        assert_eq!(
+            got,
+            Ok(vec![(0, OutputRole::Boxes), (1, OutputRole::Scores)])
+        );
+    }
+
+    #[test]
+    fn four_class_scores_first() {
+        let got = layout(
+            Task::Detect,
+            &[(&[1, 4, 8400], SCORES), (&[1, 4, 8400], BOXES)],
+        );
+        assert_eq!(
+            got,
+            Ok(vec![(1, OutputRole::Boxes), (0, OutputRole::Scores)])
+        );
+    }
+
+    #[test]
+    fn four_class_ambiguous_names_error() {
+        let err = layout(
+            Task::Detect,
+            &[(&[1, 4, 8400], "output_a"), (&[1, 4, 8400], "output_b")],
+        )
+        .unwrap_err();
+        assert!(
+            err.contains("output_a") && err.contains("output_b"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn eighty_class_detection() {
+        let got = layout(
+            Task::Detect,
+            &[(&[1, 80, 8400], "output_a"), (&[1, 4, 8400], "output_b")],
+        );
+        assert_eq!(
+            got,
+            Ok(vec![(1, OutputRole::Boxes), (0, OutputRole::Scores)])
+        );
+    }
+
+    #[test]
+    fn monolithic_detection() {
+        let got = layout(Task::Detect, &[(&[1, 84, 8400], "output0")]);
+        assert_eq!(got, Ok(vec![(0, OutputRole::Detection)]));
+    }
+
+    #[test]
+    fn eighty_class_segmentation() {
+        let got = layout(
+            Task::Segment,
+            &[
+                (&[1, 32, 160, 160], PROTOS),
+                (&[1, 80, 8400], SCORES),
+                (&[1, 32, 8400], MASKS),
+                (&[1, 4, 8400], BOXES),
+            ],
+        );
+        assert_eq!(
+            got,
+            Ok(vec![
+                (3, OutputRole::Boxes),
+                (1, OutputRole::Scores),
+                (2, OutputRole::MaskCoefficients),
+                (0, OutputRole::Protos),
+            ])
+        );
+    }
+
+    #[test]
+    fn thirty_two_class_segmentation_scores_first() {
+        let got = layout(
+            Task::Segment,
+            &[
+                (&[1, 32, 8400], SCORES),
+                (&[1, 32, 160, 160], PROTOS),
+                (&[1, 32, 8400], MASKS),
+                (&[1, 4, 8400], BOXES),
+            ],
+        );
+        assert_eq!(
+            got,
+            Ok(vec![
+                (3, OutputRole::Boxes),
+                (0, OutputRole::Scores),
+                (2, OutputRole::MaskCoefficients),
+                (1, OutputRole::Protos),
+            ])
+        );
+    }
+
+    #[test]
+    fn thirty_two_class_segmentation_ambiguous_names_error() {
+        let err = layout(
+            Task::Segment,
+            &[
+                (&[1, 4, 8400], "output_a"),
+                (&[1, 32, 8400], "output_b"),
+                (&[1, 32, 8400], "output_c"),
+                (&[1, 32, 160, 160], "output_d"),
+            ],
+        )
+        .unwrap_err();
+        assert!(
+            err.contains("output_b") && err.contains("output_c"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn four_class_segmentation_scores_first() {
+        let got = layout(
+            Task::Segment,
+            &[
+                (&[1, 4, 8400], SCORES),
+                (&[1, 4, 8400], BOXES),
+                (&[1, 32, 8400], MASKS),
+                (&[1, 32, 160, 160], PROTOS),
+            ],
+        );
+        assert_eq!(
+            got,
+            Ok(vec![
+                (1, OutputRole::Boxes),
+                (0, OutputRole::Scores),
+                (2, OutputRole::MaskCoefficients),
+                (3, OutputRole::Protos),
+            ])
+        );
+    }
 }

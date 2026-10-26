@@ -94,6 +94,12 @@ use wayland_protocols::wp::linux_dmabuf::zv1::client::{
 };
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 
+#[path = "yolov8_outputs.rs"]
+mod yolov8_outputs;
+use yolov8_outputs::{
+    OutputMetadata, OutputRole, Task, dshape_or_canonical, normalize_shape, output_layout,
+};
+
 // ── Wayland display (direct DMA-BUF submission, no EGL/GL) ──────────────────
 
 /// DRM fourcc code for `ABGR8888` (`0x34324241`).
@@ -655,197 +661,6 @@ const COCO: &[&str] = &[
     "toothbrush",
 ];
 
-// ── Output identification ───────────────────────────────────────────────────
-
-/// The type of YOLOv8 task, determined from DVM metadata or output shape inspection.
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum Task {
-    /// Object detection only (bounding boxes + class scores, 2 outputs).
-    Detect,
-    /// Instance segmentation (bounding boxes + class scores + mask coefficients + prototypes, 4 outputs).
-    Segment,
-}
-
-// ── Helpers ─────────────────────────────────────────────────────────────────
-
-/// Normalize an ARA-2 output shape for the HAL decoder.
-///
-/// ARA-2 reports 3D shapes as `[nch, height, width]`. This function strips
-/// trailing dimensions of size 1 (which are padding artifacts from the
-/// compiler) and prepends a batch dimension of 1 to match the NCHW layout
-/// that the HAL decoder expects.
-///
-/// # Examples
-///
-/// ```text
-/// [4, 8400, 1] -> strip trailing 1 -> [4, 8400] -> prepend batch -> [1, 4, 8400]
-/// [80, 8400, 1] -> strip trailing 1 -> [80, 8400] -> prepend batch -> [1, 80, 8400]
-/// [32, 160, 160] -> no trailing 1s  -> [32, 160, 160] -> prepend batch -> [1, 32, 160, 160]
-/// ```
-fn normalize_shape(raw: [usize; 3]) -> Vec<usize> {
-    let mut shape: Vec<usize> = raw.to_vec();
-    while shape.len() > 1 && shape.last() == Some(&1) {
-        shape.pop();
-    }
-    shape.insert(0, 1);
-    shape
-}
-
-/// Strip trailing 1s from a metadata shape (Vec<i64>) and widen to usize.
-///
-/// Metadata declares shapes with the leading batch and any trailing
-/// `padding` axes; the NPU runtime strips trailing 1s before returning
-/// the per-output shape. Normalising both sides the same way lets us
-/// match a runtime shape to its [`dvm_metadata::OutputSpec`].
-fn strip_trailing_ones_i64(raw: &[i64]) -> Vec<usize> {
-    let mut shape: Vec<usize> = raw.iter().map(|&d| d as usize).collect();
-    while shape.len() > 1 && shape.last() == Some(&1) {
-        shape.pop();
-    }
-    shape
-}
-
-#[derive(Clone, Copy)]
-enum OutputRole {
-    Boxes,
-    Scores,
-    MaskCoefficients,
-    Protos,
-}
-
-/// Build a canonical Ultralytics `dshape` for a role, used when the DVM
-/// did not ship an `edgefirst.json` or when the metadata entry for that
-/// output was missing.
-///
-/// The HAL decoder treats an empty `dshape` as "shape is already in
-/// canonical order"; this is true for boxes / scores / mask coefficients,
-/// but for protos the canonical order is NHWC while NPU outputs are NCHW,
-/// so the decoder would otherwise mis-identify `num_protos`.
-fn canonical_dshape(role: OutputRole, shape: &[usize]) -> Vec<(DimName, usize)> {
-    let names: &[DimName] = match role {
-        OutputRole::Boxes => &[DimName::Batch, DimName::BoxCoords, DimName::NumBoxes],
-        OutputRole::Scores => &[DimName::Batch, DimName::NumClasses, DimName::NumBoxes],
-        OutputRole::MaskCoefficients => &[DimName::Batch, DimName::NumProtos, DimName::NumBoxes],
-        OutputRole::Protos => &[
-            DimName::Batch,
-            DimName::NumProtos,
-            DimName::Height,
-            DimName::Width,
-        ],
-    };
-    // Zip stops at the shorter side, keeping `dshape.len() == shape.len()`
-    // as the HAL decoder's validator requires.
-    shape
-        .iter()
-        .copied()
-        .zip(names.iter().copied())
-        .map(|(n, name)| (name, n))
-        .collect()
-}
-
-/// Return `dshapes[i]` if it was populated from metadata, otherwise the
-/// canonical Ultralytics dshape for the role at `shape`.
-fn dshape_or_canonical(
-    dshapes: &[Vec<(DimName, usize)>],
-    i: usize,
-    role: OutputRole,
-    shape: &[usize],
-) -> Vec<(DimName, usize)> {
-    if dshapes[i].is_empty() {
-        canonical_dshape(role, shape)
-    } else {
-        dshapes[i].clone()
-    }
-}
-
-/// Identify the boxes and scores output indices for a detection model.
-///
-/// Matches outputs by shape:
-/// - **Boxes**: 3D shape where `shape[1] == 4` (i.e. `[1, 4, N]`).
-/// - **Scores**: the first remaining 3D tensor (i.e. `[1, num_classes, N]`).
-///
-/// Returns `(boxes_index, scores_index)`.
-fn identify_det_outputs(shapes: &[Vec<usize>]) -> Result<(usize, usize), String> {
-    if shapes.len() < 2 {
-        return Err(format!(
-            "detection needs >= 2 outputs, got {}",
-            shapes.len()
-        ));
-    }
-    let (mut boxes, mut scores) = (None, None);
-    for (i, s) in shapes.iter().enumerate() {
-        if s.len() == 3 && s[1] == 4 {
-            boxes = Some(i);
-        } else if s.len() == 3 && scores.is_none() {
-            scores = Some(i);
-        }
-    }
-    Ok((
-        boxes.ok_or("cannot identify boxes output (shape[1] == 4)")?,
-        scores.ok_or("cannot identify scores output")?,
-    ))
-}
-
-/// Identify the four output indices for a segmentation model.
-///
-/// YOLOv8-seg produces four outputs whose roles are inferred by shape:
-/// - **Protos**: the only 4D tensor (`[1, mask_dim, H, W]`).
-/// - **Boxes**: 3D with `shape[1] == 4` (`[1, 4, N]`).
-/// - **Mask coefficients**: 3D whose `shape[1]` matches the protos' `mask_dim`.
-/// - **Scores**: the remaining 3D tensor (`[1, num_classes, N]`).
-///
-/// Because ARA-2 output ordering is not guaranteed, a retry pass is performed
-/// when the mask-coefficient tensor appears before the protos tensor in the
-/// output list (since the first pass cannot match `mask_dim` until protos is
-/// found).
-///
-/// Returns `(boxes_index, scores_index, masks_index, protos_index)`.
-fn identify_seg_outputs(shapes: &[Vec<usize>]) -> Result<(usize, usize, usize, usize), String> {
-    if shapes.len() < 4 {
-        return Err(format!(
-            "segmentation needs 4 outputs, got {}",
-            shapes.len()
-        ));
-    }
-    let (mut scores, mut boxes, mut masks, mut protos) = (None, None, None, None);
-    for (i, s) in shapes.iter().enumerate() {
-        if s.len() == 4 {
-            protos = Some(i);
-        } else if s.len() == 3 && s[1] == 4 {
-            boxes = Some(i);
-        } else if s.len() == 3
-            && masks.is_none()
-            && protos.is_some_and(|p| shapes[p].get(1) == s.get(1))
-        {
-            masks = Some(i);
-        } else if scores.is_none() {
-            scores = Some(i);
-        }
-    }
-    // Retry mask detection when proto tensor appears after mask-coeff tensor.
-    if masks.is_none()
-        && let Some(pi) = protos
-    {
-        for (i, s) in shapes.iter().enumerate() {
-            if s.len() == 3
-                && s[1] != 4
-                && Some(i) != scores
-                && Some(i) != boxes
-                && shapes[pi].get(1) == s.get(1)
-            {
-                masks = Some(i);
-                break;
-            }
-        }
-    }
-    Ok((
-        boxes.ok_or("cannot identify boxes")?,
-        scores.ok_or("cannot identify scores")?,
-        masks.ok_or("cannot identify mask_coeff")?,
-        protos.ok_or("cannot identify protos")?,
-    ))
-}
-
 // ── Pixel format mapping ────────────────────────────────────────────────────
 
 /// DRM fourcc for NV12 — semi-planar YUV 4:2:0 (luma plane + interleaved UV plane).
@@ -883,12 +698,14 @@ fn copy_to_input(
     Ok(())
 }
 
-/// Copies the model's heap output tensors into the tensors the decoder reads.
+/// Copies the model's heap output tensors into the tensors the decoder reads,
+/// which are in `layout` order.
 fn copy_from_outputs(
     model: &ara2::Model,
+    layout: &[(usize, OutputRole)],
     outputs: &[TensorDyn],
 ) -> Result<(), Box<dyn std::error::Error>> {
-    for (i, out) in outputs.iter().enumerate() {
+    for (&(i, _), out) in layout.iter().zip(outputs) {
         let src = model.output_tensor(i).map()?;
         let src = src.as_slice();
         let mut dst = out.map_bytes(CpuAccess::Write)?;
@@ -988,27 +805,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // build the appropriate HAL post-processing decoder (detection or
     // segmentation).
     let n_outputs = model.n_outputs();
-    let mut shapes = Vec::with_capacity(n_outputs);
+    let shapes: Vec<Vec<usize>> = (0..n_outputs)
+        .map(|i| normalize_shape(model.output_shape(i)))
+        .collect();
+    let names = (0..n_outputs)
+        .map(|i| model.output_info(i).map(|info| info.layer_name))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let task = if task == Task::Detect && shapes.iter().any(|s| s.len() == 4) {
+        Task::Segment
+    } else {
+        task
+    };
+    let layout = output_layout(task, &shapes, &names)?;
+
     let mut quants = Vec::with_capacity(n_outputs);
     let mut dshapes: Vec<Vec<(DimName, usize)>> = Vec::with_capacity(n_outputs);
     let mut normalized_flags: Vec<Option<bool>> = Vec::with_capacity(n_outputs);
 
-    // Attach each runtime output's edgefirst.json entry (matched by shape)
-    // for its dshape and normalized flag. A shape declared by more than one
-    // output (e.g. 32 classes and 32 protos) is ambiguous and maps to None,
-    // leaving those outputs to the canonical layout for their role.
-    let mut meta_by_shape: HashMap<Vec<usize>, Option<&dvm_metadata::OutputSpec>> = HashMap::new();
-    for o in metadata.iter().flat_map(|m| &m.outputs) {
-        meta_by_shape
-            .entry(strip_trailing_ones_i64(&o.shape))
-            .and_modify(|e| *e = None)
-            .or_insert(Some(o));
-    }
+    // Each runtime output's edgefirst.json entry gives its dshape and
+    // normalized flag; see `OutputMetadata`.
+    let output_metadata = OutputMetadata::new(metadata.iter().flat_map(|m| &m.outputs));
 
-    for i in 0..n_outputs {
-        let shape = normalize_shape(model.output_shape(i));
+    for (i, shape) in shapes.iter().enumerate() {
         let info = model.output_info(i)?;
-        let spec = meta_by_shape.get(&shape).copied().flatten();
+        let role = layout.iter().find(|&&(j, _)| j == i).map(|&(_, r)| r);
+        let spec = role.and_then(|r| output_metadata.spec(&names[i], shape, r));
 
         // Some exports name the channel axis of `mask_coefs` `num_features`
         // where the decoder requires `num_protos`.
@@ -1026,91 +848,88 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 d
             })
             .unwrap_or_default();
-        let normalized = spec.and_then(|s| s.normalized);
+        let normalized = spec
+            .filter(|_| role == Some(OutputRole::Boxes))
+            .and_then(|s| s.normalized);
 
         // Exports that do not declare `normalized` emit boxes in input
         // pixels; dividing the scale by the input size normalizes them.
-        let is_box = shape.len() == 3 && shape[1] == 4;
-        let scale = if is_box && normalized.is_none() && input_dim > 1.0 {
+        let scale = if role == Some(OutputRole::Boxes) && normalized.is_none() && input_dim > 1.0 {
             info.quant.qn / input_dim
         } else {
             info.quant.qn
         };
+        println!(
+            "Output {i}: {} ({}), {shape:?} bpp={} signed={} scale={scale} offset={}",
+            role.map_or_else(|| "unused".to_owned(), |r| format!("{r:?}")),
+            names[i],
+            info.bpp,
+            info.quant.is_signed,
+            info.quant.offset
+        );
         quants.push((scale, info.quant.offset, info.bpp, info.quant.is_signed));
-        shapes.push(shape);
         dshapes.push(dshape);
         normalized_flags.push(normalized);
     }
     let normalized_for = |i: usize| Some(normalized_flags[i].unwrap_or(true));
 
-    let task = if task == Task::Detect && shapes.iter().any(|s| s.len() == 4) {
-        Task::Segment
-    } else {
-        task
-    };
-
-    let decoder = match task {
-        Task::Detect => {
-            let (bi, si) = identify_det_outputs(&shapes)?;
-            DecoderBuilder::new()
-                .with_config_yolo_split_det(
-                    configs::Boxes {
-                        decoder: DecoderType::Ultralytics,
-                        quantization: Some(QuantTuple(quants[bi].0, quants[bi].1)),
-                        shape: shapes[bi].clone(),
-                        dshape: dshape_or_canonical(&dshapes, bi, OutputRole::Boxes, &shapes[bi]),
-                        normalized: normalized_for(bi),
-                    },
-                    configs::Scores {
-                        decoder: DecoderType::Ultralytics,
-                        quantization: Some(QuantTuple(quants[si].0, quants[si].1)),
-                        shape: shapes[si].clone(),
-                        dshape: dshape_or_canonical(&dshapes, si, OutputRole::Scores, &shapes[si]),
-                    },
-                )
-                .with_score_threshold(args.threshold)
-                .with_iou_threshold(args.iou)
-                .build()?
-        }
-        Task::Segment => {
-            let (bi, si, mi, pi) = identify_seg_outputs(&shapes)?;
-            DecoderBuilder::new()
-                .with_config_yolo_split_segdet(
-                    configs::Boxes {
-                        decoder: DecoderType::Ultralytics,
-                        quantization: Some(QuantTuple(quants[bi].0, quants[bi].1)),
-                        shape: shapes[bi].clone(),
-                        dshape: dshape_or_canonical(&dshapes, bi, OutputRole::Boxes, &shapes[bi]),
-                        normalized: normalized_for(bi),
-                    },
-                    configs::Scores {
-                        decoder: DecoderType::Ultralytics,
-                        quantization: Some(QuantTuple(quants[si].0, quants[si].1)),
-                        shape: shapes[si].clone(),
-                        dshape: dshape_or_canonical(&dshapes, si, OutputRole::Scores, &shapes[si]),
-                    },
-                    configs::MaskCoefficients {
-                        decoder: DecoderType::Ultralytics,
-                        quantization: Some(QuantTuple(quants[mi].0, quants[mi].1)),
-                        shape: shapes[mi].clone(),
-                        dshape: dshape_or_canonical(
-                            &dshapes,
-                            mi,
-                            OutputRole::MaskCoefficients,
-                            &shapes[mi],
-                        ),
-                    },
-                    configs::Protos {
-                        decoder: DecoderType::Ultralytics,
-                        quantization: Some(QuantTuple(quants[pi].0, quants[pi].1)),
-                        shape: shapes[pi].clone(),
-                        dshape: dshape_or_canonical(&dshapes, pi, OutputRole::Protos, &shapes[pi]),
-                    },
-                )
-                .with_score_threshold(args.threshold)
-                .with_iou_threshold(args.iou)
-                .build()?
-        }
+    let decoder = match *layout.as_slice() {
+        [(bi, _), (si, _)] => DecoderBuilder::new()
+            .with_config_yolo_split_det(
+                configs::Boxes {
+                    decoder: DecoderType::Ultralytics,
+                    quantization: Some(QuantTuple(quants[bi].0, quants[bi].1)),
+                    shape: shapes[bi].clone(),
+                    dshape: dshape_or_canonical(&dshapes, bi, OutputRole::Boxes, &shapes[bi]),
+                    normalized: normalized_for(bi),
+                },
+                configs::Scores {
+                    decoder: DecoderType::Ultralytics,
+                    quantization: Some(QuantTuple(quants[si].0, quants[si].1)),
+                    shape: shapes[si].clone(),
+                    dshape: dshape_or_canonical(&dshapes, si, OutputRole::Scores, &shapes[si]),
+                },
+            )
+            .with_score_threshold(args.threshold)
+            .with_iou_threshold(args.iou)
+            .build()?,
+        [(bi, _), (si, _), (mi, _), (pi, _)] => DecoderBuilder::new()
+            .with_config_yolo_split_segdet(
+                configs::Boxes {
+                    decoder: DecoderType::Ultralytics,
+                    quantization: Some(QuantTuple(quants[bi].0, quants[bi].1)),
+                    shape: shapes[bi].clone(),
+                    dshape: dshape_or_canonical(&dshapes, bi, OutputRole::Boxes, &shapes[bi]),
+                    normalized: normalized_for(bi),
+                },
+                configs::Scores {
+                    decoder: DecoderType::Ultralytics,
+                    quantization: Some(QuantTuple(quants[si].0, quants[si].1)),
+                    shape: shapes[si].clone(),
+                    dshape: dshape_or_canonical(&dshapes, si, OutputRole::Scores, &shapes[si]),
+                },
+                configs::MaskCoefficients {
+                    decoder: DecoderType::Ultralytics,
+                    quantization: Some(QuantTuple(quants[mi].0, quants[mi].1)),
+                    shape: shapes[mi].clone(),
+                    dshape: dshape_or_canonical(
+                        &dshapes,
+                        mi,
+                        OutputRole::MaskCoefficients,
+                        &shapes[mi],
+                    ),
+                },
+                configs::Protos {
+                    decoder: DecoderType::Ultralytics,
+                    quantization: Some(QuantTuple(quants[pi].0, quants[pi].1)),
+                    shape: shapes[pi].clone(),
+                    dshape: dshape_or_canonical(&dshapes, pi, OutputRole::Protos, &shapes[pi]),
+                },
+            )
+            .with_score_threshold(args.threshold)
+            .with_iou_threshold(args.iou)
+            .build()?,
+        _ => return Err(format!("unexpected output layout {layout:?}").into()),
     };
 
     // ── 4. Setup HAL processor and model I/O tensors ────────────────────
@@ -1157,8 +976,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let letterbox = ConvertOptions::new().letterbox([114, 114, 114, 255]);
 
-    let output_tensors: Vec<TensorDyn> = (0..n_outputs)
-        .map(|i| {
+    // Listed in `layout` order, the order the decoder reads them.
+    let output_tensors: Vec<TensorDyn> = layout
+        .iter()
+        .map(|&(i, _)| {
             let dtype = match (quants[i].2, quants[i].3) {
                 (1, false) => DType::U8,
                 (1, true) => DType::I8,
@@ -1324,7 +1145,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         model.run()?;
         if !fd_backed {
-            copy_from_outputs(&model, &output_tensors)?;
+            copy_from_outputs(&model, &layout, &output_tensors)?;
         }
 
         let background = overlay_background(&mut processor, src, &mut rgba_background)?;
@@ -1399,7 +1220,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         model.run()?;
         if !fd_backed {
-            copy_from_outputs(&model, &output_tensors)?;
+            copy_from_outputs(&model, &layout, &output_tensors)?;
         }
         let t4 = Instant::now();
 

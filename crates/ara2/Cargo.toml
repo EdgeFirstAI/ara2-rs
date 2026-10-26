@@ -84,6 +84,7 @@ path = "../../examples/test_dvm_metadata.rs"
 [[example]]
 name = "yolov8"
 path = "../../examples/yolov8.rs"
+test = true
 required-features = ["decoder"]
 
 [[example]]

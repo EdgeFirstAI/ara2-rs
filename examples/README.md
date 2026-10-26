@@ -23,6 +23,7 @@ in Python they are four wheels sharing the `edgefirst.` namespace.
 | `yolov8_live.rs` | Live camera inference (Rust + libcamera + wayland-client) |
 | `yolov8_live.py` | Live camera inference (Python + libcamera + pywayland) |
 | `yolov8.py` | Static image inference (Python) |
+| `yolov8_outputs.rs`, `yolov8_outputs.py` | Output identification shared by the YOLOv8 examples; copy it alongside them |
 | `telemetry.rs` | Telemetry report and sampling-cost measurement (Rust) |
 | `telemetry.py` | Telemetry report (Python) |
 

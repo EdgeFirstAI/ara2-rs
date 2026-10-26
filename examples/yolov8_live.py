@@ -74,6 +74,12 @@ import edgefirst.image as ef_image
 import edgefirst.tensor as ef_tensor
 import edgefirst_ara2 as ara2
 import numpy as np
+from yolov8_outputs import (
+    index_metadata,
+    metadata_spec,
+    normalize_shape,
+    output_layout,
+)
 
 # Camera capture via native libcamera Python bindings
 try:
@@ -352,34 +358,6 @@ class WaylandDisplay:
 # ── Helpers (shared with yolov8.py) ───────────────────────────────────────────
 
 
-def normalize_shape(raw: tuple[int, int, int]) -> list[int]:
-    """Normalize an ARA-2 output tensor shape for the HAL decoder.
-
-    ARA-2 reports output shapes as 3-D ``(C, H, W)`` with trailing
-    dimensions of 1 used as padding.  The HAL decoder expects a batch
-    dimension and no trailing padding, so this function strips trailing
-    1s and prepends ``batch=1``.
-
-    Examples::
-
-        (80, 8400, 1) -> [1, 80, 8400]
-        (32, 160, 160) -> [1, 32, 160, 160]
-        (1, 8400, 1)  -> [1, 1, 8400]
-
-    Args:
-        raw: 3-D shape tuple ``(C, H, W)`` as returned by
-            ``model.output_shape()``.
-
-    Returns:
-        Shape list with ``batch=1`` prepended and trailing 1s removed.
-    """
-    shape = list(raw)
-    while len(shape) > 1 and shape[-1] == 1:
-        shape.pop()
-    shape.insert(0, 1)
-    return shape
-
-
 def compute_letterbox(
     src_w: int, src_h: int, dst_w: int, dst_h: int
 ) -> tuple[float, float, float, float]:
@@ -446,39 +424,18 @@ def copy_to_input(model: ara2.Model, image: ef_tensor.Tensor) -> None:
 
 
 def copy_from_outputs(
-    model: ara2.Model, outputs: list[ef_tensor.Tensor], shapes: list[list[int]]
+    model: ara2.Model,
+    layout: list[tuple[int, str]],
+    outputs: list[ef_tensor.Tensor],
+    shapes: list[list[int]],
 ) -> None:
-    """Copy the model's heap output tensors into the tensors the decoder reads."""
-    for i, (out, shape) in enumerate(zip(outputs, shapes)):
+    """Copy the model's heap output tensors into the tensors the decoder reads.
+
+    *outputs* are in *layout* order; *shapes* are by runtime index.
+    """
+    for (i, _), out in zip(layout, outputs):
         raw = model.get_output_tensor(i).reshape(-1)
-        out.from_numpy(raw[: math.prod(shape)].reshape(shape))
-
-
-def strip_trailing_ones(raw) -> list[int]:
-    """Strip trailing 1s from a metadata shape.
-
-    Metadata declares shapes with the leading batch and any trailing
-    ``padding`` axes; the NPU runtime strips trailing 1s before returning the
-    per-output shape.  Normalising both sides the same way lets a runtime
-    shape be matched to its ``OutputSpec``.
-    """
-    shape = [int(d) for d in raw]
-    while len(shape) > 1 and shape[-1] == 1:
-        shape.pop()
-    return shape
-
-
-def index_metadata_by_shape(metadata) -> dict[tuple[int, ...], object]:
-    """Index a model's metadata outputs by their normalised shape.
-
-    The runtime reports shape and quantization; ``edgefirst.json`` inside the
-    ``.dvm`` adds the semantics the runtime cannot know -- the named
-    ``dshape`` and, for box outputs, whether coordinates are already
-    normalised.  Older ``.dvm`` files carry neither.
-    """
-    if metadata is None:
-        return {}
-    return {tuple(strip_trailing_ones(o.shape)): o for o in metadata.outputs}
+        out.from_numpy(raw[: math.prod(shapes[i])].reshape(shapes[i]))
 
 
 DIM_NAMES = {
@@ -554,73 +511,52 @@ def canonical_dshape(
 
 
 def _decoder_output(
+    role: str,
     shape: list[int],
     quant,
     spec,
-    n_proto_ch: int | None,
     input_dim: float,
 ) -> ef_decoder.Output:
     """Build the decoder ``Output`` for a single model output tensor.
 
-    The role is inferred from *shape*; the named ``dshape`` comes from the DVM
-    metadata when it carries one, otherwise from :func:`canonical_dshape`.
+    The named ``dshape`` comes from the DVM metadata when it carries one,
+    otherwise from :func:`canonical_dshape`.
 
     Args:
+        role: The output's role from :func:`output_layout`.
         shape: Batch-prefixed runtime shape of this output.
         quant: Runtime quantization for this output.
-        spec: ``OutputSpec`` from the DVM metadata, or ``None`` when the
+        spec: ``OutputSpec`` from :func:`metadata_spec`, or ``None`` when the
             metadata does not describe this output.
-        n_proto_ch: Prototype-channel count, or ``None`` for a detect-only
-            model with no proto tensor.
         input_dim: Largest model input dimension.
     """
     qn, offset = quant.qn, quant.offset
+    dshape = metadata_dshape(spec, shape) or canonical_dshape(role, shape)
+    decoder = ef_decoder.DecoderType.Ultralytics
 
-    def dshape_for(role: str) -> list[tuple[ef_decoder.DimName, int]]:
-        return metadata_dshape(spec, shape) or canonical_dshape(role, shape)
-
-    if len(shape) == 4:
-        # Proto tensor [1, 32, H, W]
-        out = ef_decoder.Output.protos(
-            dshape=dshape_for("protos"),
-            decoder=ef_decoder.DecoderType.Ultralytics,
-        )
-        return out.with_quantization(qn, offset)
-
-    if len(shape) == 3 and shape[1] == 4:
-        # Box tensor [1, 4, N]. A spec-conforming export declares `normalized`,
-        # and its coordinates are already in [0, 1] — use qn as-is. An older
-        # export that declares nothing emits int-encoded pixel coordinates in
-        # [0, input_dim], so the quantization scale is divided by input_dim to
-        # bring them into the same range. Dividing unconditionally (as this
-        # example used to) makes a modern model's boxes `input_dim` times too
-        # small.
+    if role == "boxes":
+        # A spec-conforming export declares `normalized`, and its coordinates
+        # are already in [0, 1] — use qn as-is. An older export that declares
+        # nothing emits int-encoded pixel coordinates in [0, input_dim], so
+        # the quantization scale is divided by input_dim to bring them into
+        # the same range. Dividing unconditionally (as this example used to)
+        # makes a modern model's boxes `input_dim` times too small.
         normalized = spec.normalized if spec is not None else None
         scale = qn / input_dim if normalized is None and input_dim > 1 else qn
-        out = ef_decoder.Output.boxes(
-            dshape=dshape_for("boxes"),
-            decoder=ef_decoder.DecoderType.Ultralytics,
-        )
+        out = ef_decoder.Output.boxes(dshape=dshape, decoder=decoder)
         out = out.with_quantization(scale, offset)
         return out.with_normalized(True if normalized is None else normalized)
 
-    if n_proto_ch and len(shape) == 3 and shape[1] == n_proto_ch:
-        # Mask coefficient tensor [1, 32, N]
-        out = ef_decoder.Output.mask_coefficients(
-            dshape=dshape_for("mask_coefficients"),
-            decoder=ef_decoder.DecoderType.Ultralytics,
-        )
-        return out.with_quantization(qn, offset)
-
-    # Score tensor [1, C, N]
-    out = ef_decoder.Output.scores(
-        dshape=dshape_for("scores"),
-        decoder=ef_decoder.DecoderType.Ultralytics,
-    )
-    return out.with_quantization(qn, offset)
+    make = {
+        "scores": ef_decoder.Output.scores,
+        "mask_coefficients": ef_decoder.Output.mask_coefficients,
+        "protos": ef_decoder.Output.protos,
+    }[role]
+    return make(dshape=dshape, decoder=decoder).with_quantization(qn, offset)
 
 
 def build_decoder(
+    layout: list[tuple[int, str]],
     shapes: list[list[int]],
     quants: list,
     specs: list,
@@ -630,30 +566,18 @@ def build_decoder(
 ) -> ef_decoder.Decoder:
     """Build an EdgeFirst YOLOv8 decoder from model output metadata.
 
-    Classifies each output tensor into one of four roles based on its
-    shape, so that the decoder knows how to interpret the raw NPU
-    output:
-
-    * **Protos** (4-D, e.g. ``[1, 32, 160, 160]``) -- segmentation
-      prototype masks.
-    * **Boxes** (3-D with ``dim[1] == 4``) -- bounding-box coordinates.
-      A spec-conforming export declares ``normalized`` in its metadata and
-      already emits ``[0, 1]``; an older one that declares nothing emits
-      int-encoded pixel coordinates, and only then is the quantization scale
-      divided by *input_dim*.
-    * **Mask coefficients** (3-D with ``dim[1] == n_proto_channels``) --
-      per-detection coefficients that combine with the protos.
-    * **Scores** (everything else) -- class confidence scores.
+    Each output is declared with a named ``dshape`` — from the DVM metadata
+    when it carries one, otherwise :func:`canonical_dshape`.
 
     Args:
-        shapes: Normalised output shapes (batch-prefixed) from
-            ``normalize_shape``.
-        quants: Per-output quantization parameters from
-            ``model.output_quants()``.
-        specs: Per-output ``OutputSpec`` from the DVM metadata, or ``None``
-            for outputs the metadata does not describe.
-        input_dim: Largest model input dimension (used to normalise box
-            coordinates when the metadata does not declare them normalised).
+        layout: Runtime index and role of each output, from
+            :func:`output_layout`. The decoder reads its tensors in this
+            order.
+        shapes: Batch-prefixed runtime shapes from ``normalize_shape``.
+        quants: Per-output runtime quantization from ``model.output_quants``.
+        specs: Per-output ``OutputSpec`` from :func:`metadata_spec`, or
+            ``None`` for outputs the metadata does not describe.
+        input_dim: Largest model input dimension.
         threshold: Minimum score to keep a detection.
         iou: IoU threshold for non-maximum suppression.
 
@@ -661,13 +585,9 @@ def build_decoder(
         A configured ``ef_decoder.Decoder`` ready for
         ``Decoder.draw_onto()``.
     """
-    # Number of prototype channels (e.g., 32) from the rank-4 proto tensor.
-    proto_shape = next((s for s in shapes if len(s) == 4), None)
-    n_proto_ch = proto_shape[1] if proto_shape else None
-
     outputs = [
-        _decoder_output(shape, quants[i], specs[i], n_proto_ch, input_dim)
-        for i, shape in enumerate(shapes)
+        _decoder_output(role, shapes[i], quants[i], specs[i], input_dim)
+        for i, role in layout
     ]
 
     return ef_decoder.Decoder.new_from_outputs(
@@ -883,16 +803,29 @@ def main() -> None:
         # ── 4. Build decoder ─────────────────────────────────────────────
         # The runtime supplies shape and quantization; the DVM's
         # `edgefirst.json` adds the named dshape and the `normalized` flag.
-        meta_by_shape = index_metadata_by_shape(metadata)
-        shapes, quants, specs = [], [], []
-        for i in range(model.n_outputs):
-            shape = normalize_shape(model.output_shape(i))
-            shapes.append(shape)
-            quants.append(model.output_quants(i))
-            specs.append(meta_by_shape.get(tuple(shape)))
+        meta_index = index_metadata(metadata)
+        n_out = model.n_outputs
+        shapes = [normalize_shape(model.output_shape(i)) for i in range(n_out)]
+        names = [model.output_info(i).layer_name for i in range(n_out)]
+        layout = output_layout(shapes, names)
+        roles = dict(layout)
+        quants, specs = [], []
+        for i in range(n_out):
+            oq = model.output_quants(i)
+            role = roles.get(i)
+            spec = (
+                metadata_spec(meta_index, names[i], shapes[i], role) if role else None
+            )
+            print(
+                f"Output {i}: {role or 'unused'} ({names[i]}), {shapes[i]} "
+                f"bpp={model.output_info(i).bpp} signed={oq.is_signed} "
+                f"qn={oq.qn:.6g} offset={oq.offset}"
+            )
+            quants.append(oq)
+            specs.append(spec)
 
         decoder = build_decoder(
-            shapes, quants, specs, input_dim, args.threshold, args.iou
+            layout, shapes, quants, specs, input_dim, args.threshold, args.iou
         )
 
         # ── 5. Setup image processor and model I/O tensors ───────────────
@@ -925,8 +858,9 @@ def main() -> None:
         letterbox_norm = compute_letterbox(cam_w, cam_h, w, h)
         pad_color = (114, 114, 114, 255)
 
+        # Listed in `layout` order, the order the decoder reads them.
         output_tensors = []
-        for i in range(model.n_outputs):
+        for i, _ in layout:
             dtype = output_dtype(
                 model.output_info(i).bpp, model.output_quants(i).is_signed
             )
@@ -1037,7 +971,7 @@ def main() -> None:
             copy_to_input(model, model_input)
         model.run()
         if not fd_backed:
-            copy_from_outputs(model, output_tensors, shapes)
+            copy_from_outputs(model, layout, output_tensors, shapes)
         # GL composites the frame's native NV12 or YUYV layout as the overlay
         # background. G2D and the CPU copy the background byte-for-byte, so
         # they refuse one whose format differs from the RGBA canvas. If the
@@ -1118,7 +1052,7 @@ def main() -> None:
 
             model.run()
             if not fd_backed:
-                copy_from_outputs(model, output_tensors, shapes)
+                copy_from_outputs(model, layout, output_tensors, shapes)
             t4 = time.monotonic()
 
             # An int8 *segmentation* model needs edgefirst-image and

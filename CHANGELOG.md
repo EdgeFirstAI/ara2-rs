@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The `yolov8_live` example failed on the first detection with a segmentation model (`mask_coefficients shape [1, 32] incompatible with protos [32, 160, 160]`). It now gives the decoder each output's `dshape` and box `normalized` flag from the model's `edgefirst.json`, falling back to the canonical Ultralytics layout, as the `yolov8` example does.
 - The `yolov8` and `yolov8_live` examples no longer give two outputs the same `edgefirst.json` entry when their shapes are equal, as the scores and mask coefficients are for a 32-class segmentation model; those outputs use the canonical Ultralytics layout for their role.
+- The `yolov8` and `yolov8_live` examples, Rust and Python, could not run a 4-class detection model, whose scores and boxes outputs have the same shape: they reported no scores output, or decoded hundreds of spurious detections. They now tell the two apart by the runtime's output layer name (an Ultralytics export's scores layer is a `Sigmoid`), and stop with an error naming both layers when the names do not settle it. The scores and mask coefficients of a 32-class segmentation model are told apart the same way.
+- The `yolov8` and `yolov8_live` examples pass the output tensors to the decoder in role order (boxes, scores, mask coefficients, protos) whatever order the runtime returns them in. The decoder takes the first tensor matching each role's shape, so outputs of the same shape were swapped when the runtime returned the scores first.
+- The `yolov8` and `yolov8_live` examples match each output to its `edgefirst.json` entry by layer name before shape, use an entry's `dshape` only when its `type` agrees with the output's role, take `normalized` only from a boxes entry, and divide coordinates by the input size only on the boxes output. A 4-class model's normalized boxes were shrunk by the input size.
 
 ## [0.24.0] - 2026-10-23
 
