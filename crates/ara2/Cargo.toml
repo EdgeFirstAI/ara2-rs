@@ -89,7 +89,7 @@ required-features = ["decoder"]
 
 [[example]]
 name = "yolov8_live"
-path = "../../examples/yolov8_live.rs"
+path = "../../examples/yolov8_live/main.rs"
 required-features = ["camera"]
 
 [[example]]

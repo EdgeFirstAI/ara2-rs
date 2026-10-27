@@ -490,7 +490,7 @@ def canonical_dshape(
     An anonymous ``shape=`` leaves the decoder to guess which axis carries
     what, and for the rank-4 proto tensor it guesses wrong.  Naming the
     dimensions removes the guess -- this mirrors ``canonical_dshape`` in the
-    Rust example (``examples/yolov8_live.rs``).
+    Rust examples (``examples/yolov8_outputs.rs``).
 
     Args:
         role: One of ``"protos"``, ``"boxes"``, ``"scores"``, or
