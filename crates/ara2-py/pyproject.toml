@@ -38,7 +38,7 @@ keywords = ["ara2", "neural-network", "accelerator", "inference", "edgefirst"]
 # the keyword the examples use; releases before 0.31 also dropped a tensor's
 # quantization crossing between the `edgefirst.*` packages, which makes int8
 # instance segmentation fail outright.
-hal = ["edgefirst-image>=0.37"]
+hal = ["edgefirst-image>=0.38.1"]
 
 [project.urls]
 Homepage = "https://edgefirst.ai"
