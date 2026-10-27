@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- EdgeFirst HAL 0.38.1, and dependencies updated to their latest semver-compatible releases. PyO3 and numpy stay on 0.29 to keep Python 3.8 support. Python: the `hal` extra requires `edgefirst-image>=0.38.1`.
+- The Rust `yolov8_live` example, now in `examples/yolov8_live/`, runs letterbox, inference and decode on their own threads so consecutive frames overlap, with `--slots` input buffers (default 2) and a pool of output sets the decoder reads in place. It draws into two canvases in turn, lets the compositor scale the canvas to the window where it can, and prints status lines a log records whole when stderr is not a terminal. A camera that adjusts the requested capture size is now an error rather than a misregistered overlay, and frames are imported with the stream's colorimetry. On an i.MX95 FRDM with an os08a20 at 1080p, yolov8n detection and segmentation both run at the camera's 60 FPS, from 43 and 40 FPS before.
+
+### Added
+
+- `yolov8_live` options: `--nms auto|agnostic|aware`, `--fullscreen`, `--class-colors`, `--line-width` (through the HAL's `set_box_line_width`), and `--exposure US --gain N` to hold the camera at a fixed exposure and analogue gain, or `--auto-exposure` to leave it to the camera. A warning names any exposure control the camera lacks, a gain outside its range, or frames that report other values than requested, and each status line ends with the exposure and gain the frames report. `examples/README.md` explains choosing flicker-free values and turning off the Phytec AR0234's own automatic exposure, which otherwise fights them.
+
 ### Fixed
 
 - The `yolov8_live` example failed on the first detection with a segmentation model (`mask_coefficients shape [1, 32] incompatible with protos [32, 160, 160]`). It now gives the decoder each output's `dshape` and box `normalized` flag from the model's `edgefirst.json`, falling back to the canonical Ultralytics layout, as the `yolov8` example does.
