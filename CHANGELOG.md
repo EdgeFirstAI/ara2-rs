@@ -7,10 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- EdgeFirst HAL 0.38.1, and dependencies updated to their latest semver-compatible releases. PyO3 and numpy stay on 0.29 to keep Python 3.8 support. Python: the `hal` extra requires `edgefirst-image>=0.38.1`.
+- The Rust `yolov8_live` example, now in `examples/yolov8_live/`, runs letterbox, inference and decode on their own threads so consecutive frames overlap, with `--slots` input buffers (default 2) and a pool of output sets the decoder reads in place. It draws each frame into one of four canvases the compositor has released and commits it at once, so the compositor shows the newest, lets the compositor scale the canvas to the window where it can, and prints status lines a log records whole when stderr is not a terminal, with `skip` counting frames left undrawn because no canvas was free. A camera that changes the requested capture size or format is now an error rather than a misregistered overlay, while other adjustments such as the stride are accepted, and frames are imported with the stream's colorimetry. On an i.MX95 FRDM with an os08a20 at 1080p, yolov8n detection and segmentation both run at the camera's 60 FPS, from 43 and 40 FPS before.
+
+### Added
+
+- `yolov8_live` options: `--nms auto|agnostic|aware` (`auto` follows the model's `edgefirst.json`), `--fullscreen`, `--class-colors`, `--line-width` (through the HAL's `set_box_line_width`), and `--exposure US --gain N` to hold the camera at a fixed exposure and analogue gain, or `--auto-exposure` to leave it to the camera. A warning names any exposure control the camera lacks, a gain outside its range, or frames that report other values than requested, and each status line ends with the exposure and gain the frames report. `examples/README.md` explains choosing flicker-free values and turning off the Phytec AR0234's own automatic exposure, which otherwise fights them.
+
 ### Fixed
 
 - The `yolov8_live` example failed on the first detection with a segmentation model (`mask_coefficients shape [1, 32] incompatible with protos [32, 160, 160]`). It now gives the decoder each output's `dshape` and box `normalized` flag from the model's `edgefirst.json`, falling back to the canonical Ultralytics layout, as the `yolov8` example does.
 - The `yolov8` and `yolov8_live` examples no longer give two outputs the same `edgefirst.json` entry when their shapes are equal, as the scores and mask coefficients are for a 32-class segmentation model; those outputs use the canonical Ultralytics layout for their role.
+- The `yolov8` and `yolov8_live` examples, Rust and Python, could not run a 4-class detection model, whose scores and boxes outputs have the same shape: they reported no scores output, or decoded hundreds of spurious detections. They now tell the two apart by the runtime's output layer name (an Ultralytics export's scores layer is a `Sigmoid`), and stop with an error naming both layers when the names do not settle it. The scores and mask coefficients of a 32-class segmentation model are told apart the same way.
+- The `yolov8` and `yolov8_live` examples pass the output tensors to the decoder in role order (boxes, scores, mask coefficients, protos) whatever order the runtime returns them in. The decoder takes the first tensor matching each role's shape, so outputs of the same shape were swapped when the runtime returned the scores first.
+- The `yolov8` and `yolov8_live` examples match each output to its `edgefirst.json` entry by layer name before shape, use an entry's `dshape` only when its `type` agrees with the output's role, take `normalized` only from a boxes entry, and divide coordinates by the input size only on the boxes output. A 4-class model's normalized boxes were shrunk by the input size.
 
 ## [0.24.0] - 2026-10-23
 

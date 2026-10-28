@@ -585,9 +585,9 @@ dependencies = [
 
 [[package]]
 name = "edgefirst-codec"
-version = "0.38.0"
+version = "0.38.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "220474b669783638910ae07987954cd56319183c780fea85e730e4e6f57a00ae"
+checksum = "eba0f621be189f5c1a55b28c0e8a65ecc5f352c34d6c8ca585723b91701a6a6d"
 dependencies = [
  "edgefirst-tensor",
  "edgefirst-v4l2",
@@ -601,9 +601,9 @@ dependencies = [
 
 [[package]]
 name = "edgefirst-decoder"
-version = "0.38.0"
+version = "0.38.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "53c8349100207250af2eb916f38806ffac841c52998da27b4664e09adf45a521"
+checksum = "02fc78fb794820da096c52ac1c7d3b4f9f6caaa989084481dea6f69d276c0237"
 dependencies = [
  "argminmax",
  "edgefirst-decoder-abi",
@@ -622,15 +622,15 @@ dependencies = [
 
 [[package]]
 name = "edgefirst-decoder-abi"
-version = "0.38.0"
+version = "0.38.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "590a779a6cfa110b43419cfa74acfa7c66b8a1cf2195a39b0a95ba61ce707087"
+checksum = "df8eef296530fe1e3b0f756c0d0f24d104ead7b9c31bc91f76c6c036ea3f1d50"
 
 [[package]]
 name = "edgefirst-egl"
-version = "0.38.0"
+version = "0.38.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37ac44e3057604fc0ea32e78c7ff46319755a7f1c5d399690f88ad6419e637ac"
+checksum = "23a4763593e3cd083cfc3fa4e94dcb94f10d86a0bfa16cf1e1eed59b60fec786"
 dependencies = [
  "libc",
  "libloading 0.9.0",
@@ -661,18 +661,18 @@ dependencies = [
 
 [[package]]
 name = "edgefirst-gl"
-version = "0.38.0"
+version = "0.38.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eddcc7ed09c6c24eec07a605ee0ac28984d9fb821b0f9bbf5a42995a575f01b4"
+checksum = "9d8804909a2979dc490423bafaa29a06e2546a30ffd442400810b011c5f8f000"
 dependencies = [
  "gl_generator",
 ]
 
 [[package]]
 name = "edgefirst-image"
-version = "0.38.0"
+version = "0.38.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b75d36cee76a8a0afe6e9eb289fe5071b5cf044af65d1706c17e94428425024b"
+checksum = "45d9d412fa7a5aa93773caa095d2de34c8f1cbc1966fd4c59446c6493c58085b"
 dependencies = [
  "dma-heap",
  "drm-fourcc",
@@ -702,9 +702,9 @@ dependencies = [
 
 [[package]]
 name = "edgefirst-tensor"
-version = "0.38.0"
+version = "0.38.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c1fc66f3985d7cc12a3afeb1373ecbf3b37b4f435043d2379a5dc0751e6a9cee"
+checksum = "c25fa3afc59fa6c01e0f3e3d861687b38795f1c9911aef06d0aec79fde94cf37"
 dependencies = [
  "dma-heap",
  "edgefirst-tensor-abi",
@@ -724,15 +724,15 @@ dependencies = [
 
 [[package]]
 name = "edgefirst-tensor-abi"
-version = "0.38.0"
+version = "0.38.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6901df6654ce5c0d698d0d7de8e8dd34850a690555197cf9de55e11f64c7e77"
+checksum = "26eb4243d32ea80d9bf1ae87d7643d29a976a1bfff7ad1c42d1ce122f8c94eac"
 
 [[package]]
 name = "edgefirst-tensor-ffi"
-version = "0.38.0"
+version = "0.38.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4840f26680749c2ac93c4fbdf557c5fcc02a9dff394e02c7d63df51f6fb86a93"
+checksum = "557d1cb15cc50477c825c36381be375fa1ed87b3188c5df290bcf49a6e26cb4f"
 dependencies = [
  "edgefirst-tensor-abi",
 ]
@@ -1901,9 +1901,9 @@ checksum = "6b1e7f9a428571be2dc5bc0505c13fb6bf936822b894ec87abf8a08a4e51742d"
 
 [[package]]
 name = "rustix"
-version = "1.1.5"
+version = "1.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "891efababe418670775f199f0d233d84843c227a0949a883ce15b37c78d6629d"
+checksum = "e5e76742e5294153d4dde1207dbec5bdd81eef6fabdc0d2118babadabfd858aa"
 dependencies = [
  "bitflags",
  "errno",
@@ -2578,9 +2578,9 @@ dependencies = [
 
 [[package]]
 name = "zip"
-version = "9.1.0"
+version = "9.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2886b00003a72c4ccee3f42cfc34908d33b2508a74d827dc2a4244706475c704"
+checksum = "ec2e3161de27091f18a831d9494e9c53378a34833af5c1dda35ad85849da18d6"
 dependencies = [
  "crc32fast",
  "getrandom 0.4.3",

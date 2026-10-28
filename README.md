@@ -289,8 +289,8 @@ physical buffers with no CPU copies in the data path.
 |---------|-------------|
 | [`yolov8.rs`](examples/yolov8.rs) | Rust — YOLOv8 detection + segmentation with letterbox preprocessing and 3-step mask pipeline (needs `--features decoder`) |
 | [`yolov8.py`](examples/yolov8.py) | Python — Same 3-step pipeline via the `edgefirst.*` and `edgefirst-ara2` Python packages |
-| [`yolov8_live.rs`](examples/yolov8_live.rs) | Rust — Live camera inference: libcamera capture → NPU → Wayland display (needs `--features camera`) |
-| [`yolov8_live.py`](examples/yolov8_live.py) | Python — Same live pipeline via the libcamera Python bindings and pywayland |
+| [`yolov8_live/`](examples/yolov8_live/main.rs) | Rust — Live camera inference: libcamera capture → NPU → Wayland display, as a threaded pipeline (needs `--features camera`) |
+| [`yolov8_live.py`](examples/yolov8_live.py) | Python — Live camera inference, single-threaded, via the libcamera Python bindings and pywayland |
 | [`async_multi_model.rs`](examples/async_multi_model.rs) | Rust — Two models in flight concurrently on one endpoint |
 | [`async_multi_model.py`](examples/async_multi_model.py) | Python — Same multi-model demo via `edgefirst-ara2` |
 | [`async_infer.rs`](examples/async_infer.rs) | Rust — Async inference benchmark: sync vs. submit/wait vs. overlap |

@@ -20,9 +20,10 @@ in Python they are four wheels sharing the `edgefirst.` namespace.
 | File | Description |
 |------|-------------|
 | `yolov8.rs` | Static image inference (Rust) |
-| `yolov8_live.rs` | Live camera inference (Rust + libcamera + wayland-client) |
+| `yolov8_live/` | Live camera inference (Rust + libcamera + wayland-client), a threaded pipeline |
 | `yolov8_live.py` | Live camera inference (Python + libcamera + pywayland) |
 | `yolov8.py` | Static image inference (Python) |
+| `yolov8_outputs.rs`, `yolov8_outputs.py` | Output identification shared by the YOLOv8 examples; copy it alongside them |
 | `telemetry.rs` | Telemetry report and sampling-cost measurement (Rust) |
 | `telemetry.py` | Telemetry report (Python) |
 
@@ -128,7 +129,6 @@ See [Availability by DVAPI version](../README.md#availability-by-dvapi-version) 
 
 Captures NV12 or YUYV frames from a camera via libcamera, runs YOLOv8
 inference on the ARA-2 NPU, and displays results in a Wayland window.
-This is a minimal serial (single-threaded) pipeline.
 
 Display uses the `zwp_linux_dmabuf_v1` Wayland protocol to submit the
 RGBA canvas DMA-BUF directly to the compositor -- no EGL or OpenGL.
@@ -139,10 +139,15 @@ RGBA canvas DMA-BUF directly to the compositor -- no EGL or OpenGL.
 libcamera (NV12 or YUYV DMA-BUF)
   -> edgefirst-image import (cached by buffer index)
   -> edgefirst-image convert (NV12|YUYV -> PlanarRGB letterbox)
-  -> ARA-2 NPU inference
-  -> edgefirst-decoder draw_onto (decode + composite -> RGBA canvas)
+  -> ARA-2 NPU inference (into a pooled output set)
+  -> edgefirst-decoder decode (in place on the output DMA-BUFs)
+  -> edgefirst-image draw (composite -> RGBA canvas)
   -> Wayland display (DMA-BUF -> wl_buffer -> compositor)
 ```
+
+The letterbox, inference and decode stages run on their own threads, so consecutive frames overlap: the GPU letterboxes the next frame into one input buffer (a *slot*) while the ARA-2 reads the other, and the decoder works on an earlier frame's outputs. The main thread captures, draws and presents. When the pipeline is busy the newest camera frame replaces the waiting one, and the status line counts the frames dropped. Each frame is drawn into one of two canvases, the one the compositor is not showing.
+
+Over a TCP proxy, which cannot pass file descriptors, the model's input and outputs are heap buffers, copied to and from the HAL images around each inference.
 
 ### Build
 
@@ -166,7 +171,7 @@ CXX_INC=$SYSROOT/usr/include/c++/14.3.0
 export BINDGEN_EXTRA_CLANG_ARGS="--target=aarch64-poky-linux --sysroot=$SYSROOT \
     -I$GCC_INC -I$CXX_INC -I$CXX_INC/aarch64-poky-linux -I$SYSROOT/usr/include"
 
-cargo build --release --target aarch64-unknown-linux-gnu --example yolov8_live
+cargo build --release --target aarch64-unknown-linux-gnu --features camera --example yolov8_live
 ```
 
 ### Run (FRDM i.MX 95 with on-board `os08a20` MIPI-CSI sensor)
@@ -202,9 +207,29 @@ Only the `nxp/neo` pipeline exposes NV12, YUYV, NV16, UYVY, RGB, etc.
 | `--iou` | 0.45 | NMS IoU threshold |
 | `--color-mode` | `class` | Mask coloring: `class`, `instance`, or `track` |
 | `--socket` | none: the proxy is found as `Session::connect()` does | ARA-2 proxy UNIX socket path |
+| `--nms` | `auto` | NMS policy: `auto` follows the model's `edgefirst.json`; `agnostic` also suppresses overlapping boxes of different classes, removing the double-labelled objects a model unsure between two classes produces; `aware` suppresses only boxes of the same class |
+| `--fullscreen` | off | Open a fullscreen window at the output's resolution; the camera frame is scaled to fill it, so capture at the display's aspect ratio to keep the picture undistorted |
+| `--class-colors` | HAL palette | Box colour of each class, in label order, as comma-separated hex `RRGGBB` values (up to 20) |
+| `--line-width` | 3 | Box outline width in display pixels |
+| `--slots` | 2 | Input buffers the letterbox and inference stages alternate between; 1 runs them back to back |
+| `--exposure US --gain N` | camera AGC | Turn the camera's automatic exposure off and hold this exposure time in microseconds and analogue gain; give both together |
+| `--auto-exposure` | | Leave exposure to the camera; cancels an earlier `--exposure` and `--gain` |
 
-On i.MX95 with the Neo ISP, only `1920x1080` and `3840x2160` are supported
-capture sizes; other values will be silently adjusted.
+On i.MX95 with the Neo ISP, only `1920x1080` and `3840x2160` are supported capture sizes; the example stops with an error naming the size the camera offered instead.
+
+### Exposure
+
+The camera's automatic exposure keeps adjusting the gain from frame to frame, which shows as a slight flicker. `--exposure` and `--gain` hold the sensor at fixed values instead. Mains lighting flickers at twice the mains frequency, so choose an exposure of whole flicker periods: 8333 or 16666 µs under 60 Hz lighting, 10000 µs under 50 Hz. Brightness follows exposure × gain, so set the gain for the room.
+
+At start-up the example prints the range of each exposure control the camera offers, and a `WARNING:` for any control it lacks or a gain outside its range. Each status line ends with the exposure and gain the frames report, and the second status line is checked against the requested values: a `WARNING:` says when the camera ran at other values, which means it ignored or clamped them. Some pipelines report the requested values rather than the sensor's, so a match is not proof.
+
+Some sensors also run an automatic exposure of their own, beneath libcamera, which libcamera leaves on. The Phytec AR0234 does: it fights `--exposure` and `--gain`, so the picture flickers while the frames still report steady values. Turn it off before starting the example:
+
+```bash
+v4l2-ctl -d /dev/cam-csi1-port0 -c auto_exposure=1,autogain_analogue=0
+```
+
+The setting stays in place across runs of the example; the driver restores its defaults at boot. Reading it back with `v4l2-ctl -d /dev/cam-csi1-port0 -C auto_exposure,autogain_analogue` should print `auto_exposure: 1 (Manual Mode)` and `autogain_analogue: 0`.
 
 ---
 
