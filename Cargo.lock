@@ -327,9 +327,9 @@ checksum = "37b2a672a2cb129a2e41c10b1224bb368f9f37a2b16b612598138befd7b37eb5"
 
 [[package]]
 name = "cc"
-version = "1.10.0"
+version = "1.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "86e055fa6e3e40ad6187ba25b6855eeb635d5271f8e0f0e1e9a5826b8d75bea0"
+checksum = "375989decec1a0fa424442bed520fa12ede43a48475ce8c7417d2c69b32b5f6b"
 dependencies = [
  "find-msvc-tools",
  "jobserver",
@@ -444,9 +444,9 @@ checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 
 [[package]]
 name = "crc32fast"
-version = "1.5.3"
+version = "1.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ba106e844045ddc02c20768ac4b0b7cb45f2cc2ecbd833ac9f5dacb183c2055"
+checksum = "5f97d3416d5337d15c4b0d78c8c91df922ca143f57ec20e2d1c188333047ef04"
 dependencies = [
  "cfg-if",
 ]
@@ -585,9 +585,9 @@ dependencies = [
 
 [[package]]
 name = "edgefirst-codec"
-version = "0.38.1"
+version = "0.39.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eba0f621be189f5c1a55b28c0e8a65ecc5f352c34d6c8ca585723b91701a6a6d"
+checksum = "34f8157aaa476eb70be3228ec1dcf2da7b7a9b0325d5a26ae1ebaa3e868b0255"
 dependencies = [
  "edgefirst-tensor",
  "edgefirst-v4l2",
@@ -601,12 +601,13 @@ dependencies = [
 
 [[package]]
 name = "edgefirst-decoder"
-version = "0.38.1"
+version = "0.39.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "02fc78fb794820da096c52ac1c7d3b4f9f6caaa989084481dea6f69d276c0237"
+checksum = "7551cca1fa524c0e26e539357832c582d8fd5cabc88757ba74e53f52acdde35c"
 dependencies = [
  "argminmax",
  "edgefirst-decoder-abi",
+ "edgefirst-kernels",
  "edgefirst-tensor",
  "half",
  "log",
@@ -622,15 +623,15 @@ dependencies = [
 
 [[package]]
 name = "edgefirst-decoder-abi"
-version = "0.38.1"
+version = "0.39.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df8eef296530fe1e3b0f756c0d0f24d104ead7b9c31bc91f76c6c036ea3f1d50"
+checksum = "f51df41a8c3853d50dae214a54e91d0403e1305a1bda50bd43d7880111111239"
 
 [[package]]
 name = "edgefirst-egl"
-version = "0.38.1"
+version = "0.39.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23a4763593e3cd083cfc3fa4e94dcb94f10d86a0bfa16cf1e1eed59b60fec786"
+checksum = "259184fa887cfe028684c7001d457900ca501d08e9c6b98d23d5943dfaad7aa1"
 dependencies = [
  "libc",
  "libloading 0.9.0",
@@ -661,18 +662,18 @@ dependencies = [
 
 [[package]]
 name = "edgefirst-gl"
-version = "0.38.1"
+version = "0.39.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9d8804909a2979dc490423bafaa29a06e2546a30ffd442400810b011c5f8f000"
+checksum = "9dab85e42b5f5ae4ff7cd22183059d7edd0ae8951c611dc81e0dfc3d4b0a2d3c"
 dependencies = [
  "gl_generator",
 ]
 
 [[package]]
 name = "edgefirst-image"
-version = "0.38.1"
+version = "0.39.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "45d9d412fa7a5aa93773caa095d2de34c8f1cbc1966fd4c59446c6493c58085b"
+checksum = "3be7c4b9d0ba2cc691d89b87c43267657f78d847bf24eb79cb41894a42e9528c"
 dependencies = [
  "dma-heap",
  "drm-fourcc",
@@ -681,6 +682,7 @@ dependencies = [
  "edgefirst-egl",
  "edgefirst-gbm",
  "edgefirst-gl",
+ "edgefirst-kernels",
  "edgefirst-tensor",
  "enum_dispatch",
  "fast_image_resize",
@@ -701,10 +703,20 @@ dependencies = [
 ]
 
 [[package]]
-name = "edgefirst-tensor"
-version = "0.38.1"
+name = "edgefirst-kernels"
+version = "0.39.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c25fa3afc59fa6c01e0f3e3d861687b38795f1c9911aef06d0aec79fde94cf37"
+checksum = "fb59bdec92b1310ce1402f701e12c47075af95f85b446fd01bf36bc8ff90d037"
+dependencies = [
+ "half",
+ "tracing",
+]
+
+[[package]]
+name = "edgefirst-tensor"
+version = "0.39.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf7abb5e3ad62cc85c0a2b32400ac6e6af4f18b9dffee30a3119f617a981c0ca"
 dependencies = [
  "dma-heap",
  "edgefirst-tensor-abi",
@@ -724,15 +736,15 @@ dependencies = [
 
 [[package]]
 name = "edgefirst-tensor-abi"
-version = "0.38.1"
+version = "0.39.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "26eb4243d32ea80d9bf1ae87d7643d29a976a1bfff7ad1c42d1ce122f8c94eac"
+checksum = "f10389fa0d084deb290e5aeba7a3a31810093bbc093849212b56852463b5a535"
 
 [[package]]
 name = "edgefirst-tensor-ffi"
-version = "0.38.1"
+version = "0.39.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "557d1cb15cc50477c825c36381be375fa1ed87b3188c5df290bcf49a6e26cb4f"
+checksum = "596e79bde5de02564ddb4689e435ac0aeb99a471b75f99e986f5327000064d81"
 dependencies = [
  "edgefirst-tensor-abi",
 ]
@@ -1048,9 +1060,9 @@ checksum = "a0370574b86f7eca156b9f298392b5e69a23f8c86f3f865add60bbc2e79467a6"
 
 [[package]]
 name = "js-sys"
-version = "0.3.106"
+version = "0.3.107"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7883d941dae510fb2d978fc3fe018c71c9e2892fd38854de3e8b92c2e5ad9cc5"
+checksum = "8dc09d2154098bbf4ef54eab6b117a3c24cbbffe94046b16ee6d6d4510584d3a"
 dependencies = [
  "cfg-if",
  "futures-util",
@@ -1168,9 +1180,9 @@ checksum = "4744e383959f0db86ede514b809b1c53251889093803c05267acc7d4e7030d70"
 
 [[package]]
 name = "log"
-version = "0.4.34"
+version = "0.4.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
+checksum = "5d15f86d12da44cd8d4ec3c73984537eb7f4cadcb9776a575a0a8a05ca11005c"
 
 [[package]]
 name = "loop9"
@@ -2260,12 +2272,11 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen"
-version = "0.2.129"
+version = "0.2.130"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9bb54f33acc68fd454578d9820b0bde1a1a3d17aa17bb7b6595806d02886d409"
+checksum = "a0181c14ddd6c7b8b0b0132a5f1ea2f32be0d893cd3ea97b6e3b28886b8a3d1c"
 dependencies = [
  "cfg-if",
- "once_cell",
  "rustversion",
  "wasm-bindgen-macro",
  "wasm-bindgen-shared",
@@ -2273,9 +2284,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro"
-version = "0.2.129"
+version = "0.2.130"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2e29d0c35b16e224a7eeb5cd2d25e3e1968fbd65604117b44d3b789d00ee8535"
+checksum = "6e931a02a39abdbf66966fc35902b5ed58344750a70885bed4ebb3d8eaf28ed9"
 dependencies = [
  "quote",
  "wasm-bindgen-macro-support",
@@ -2283,9 +2294,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro-support"
-version = "0.2.129"
+version = "0.2.130"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6f501a8bc3719dba86ef8ae4728879c08001bea749eb1333ac5b91e040e2a6b7"
+checksum = "2ca4b54280e455bd831e33a6b8e734baf432fe63fbc35c42ac14ce67a043a53a"
 dependencies = [
  "bumpalo",
  "proc-macro2",
@@ -2296,9 +2307,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-shared"
-version = "0.2.129"
+version = "0.2.130"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23f0c9c52aa7cd7d77769a4cfe2a9adb1b331f489a41d912ce14513d5ab995c6"
+checksum = "3b1f9c3798725016c6ee5f2f57869ec0831e8bbc0ab0310a86e787e97f41389e"
 dependencies = [
  "unicode-ident",
 ]
@@ -2362,9 +2373,9 @@ dependencies = [
 
 [[package]]
 name = "web-sys"
-version = "0.3.106"
+version = "0.3.107"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "88261b9deccee56594c11a3460c462c41f58d148598fe70ad77070126a68aba4"
+checksum = "d7d179596ff5ec0f6de4db64d54011bde6289cc49603d3a6e4ce3f329207ab88"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
@@ -2549,9 +2560,9 @@ checksum = "7a5a4b21e1a62b67a2970e6831bc091d7b87e119e7f9791aef9702e3bef04448"
 
 [[package]]
 name = "yuv"
-version = "0.8.19"
+version = "0.8.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a295923535c00a4e72a50a0a1130097f93160b39892dd4d2d006b1e2b90d6bf9"
+checksum = "3d109d1eacc7b034329873d2d848039b365c65ab7d751b19ee84e4921c62c607"
 dependencies = [
  "num-traits",
 ]
@@ -2578,13 +2589,14 @@ dependencies = [
 
 [[package]]
 name = "zip"
-version = "9.1.2"
+version = "9.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec2e3161de27091f18a831d9494e9c53378a34833af5c1dda35ad85849da18d6"
+checksum = "eaeb7f16d2605b49aef586996ded29e65642fab7259a3077e537351df6d80426"
 dependencies = [
  "crc32fast",
  "getrandom 0.4.3",
  "indexmap",
+ "libc",
  "memchr",
  "nix",
  "typed-path",

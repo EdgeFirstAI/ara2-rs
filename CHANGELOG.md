@@ -7,9 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (BREAKING)
+
+- **EdgeFirst HAL 0.39.** `edgefirst-tensor`, `edgefirst-image`, `edgefirst-codec` and `edgefirst-decoder` move from 0.38 to 0.39. `Model` exposes `edgefirst_tensor::Tensor` and `TensorMemory`, and the `decoder` feature exposes `edgefirst_decoder` types, so a crate using `ara2` must take the same HAL minor release. HAL 0.39 moves the decoder's compute kernels into the new `edgefirst-kernels` crate and runs NEON kernels for YOLO decode, NMS and CPU mask materialization on aarch64; `ara2` needs no code changes. On an i.MX 95 with DVAPI 3.0, the `yolov8` example's decode of a 1280×1280 detection model drops from 1.9 to 0.9 ms with the same detections.
+
 ### Changed
 
-- EdgeFirst HAL 0.38.1, and dependencies updated to their latest semver-compatible releases. PyO3 and numpy stay on 0.29 to keep Python 3.8 support. Python: the `hal` extra requires `edgefirst-image>=0.38.1`.
+- Dependencies updated to their latest semver-compatible releases. PyO3 and numpy stay on 0.29 to keep Python 3.8 support. Python: the `hal` extra requires `edgefirst-image>=0.39.0`.
 - The Rust `yolov8_live` example, now in `examples/yolov8_live/`, runs letterbox, inference and decode on their own threads so consecutive frames overlap, with `--slots` input buffers (default 2) and a pool of output sets the decoder reads in place. It draws each frame into one of four canvases the compositor has released and commits it at once, so the compositor shows the newest, lets the compositor scale the canvas to the window where it can, and prints status lines a log records whole when stderr is not a terminal, with `skip` counting frames left undrawn because no canvas was free. A camera that changes the requested capture size or format is now an error rather than a misregistered overlay, while other adjustments such as the stride are accepted, and frames are imported with the stream's colorimetry. On an i.MX95 FRDM with an os08a20 at 1080p, yolov8n detection and segmentation both run at the camera's 60 FPS, from 43 and 40 FPS before.
 
 ### Added
