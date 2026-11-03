@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-11-03
+
 ### Changed (BREAKING)
 
 - **EdgeFirst HAL 0.39.** `edgefirst-tensor`, `edgefirst-image`, `edgefirst-codec` and `edgefirst-decoder` move from 0.38 to 0.39. `Model` exposes `edgefirst_tensor::Tensor` and `TensorMemory`, and the `decoder` feature exposes `edgefirst_decoder` types, so a crate using `ara2` must take the same HAL minor release. HAL 0.39 moves the decoder's compute kernels into the new `edgefirst-kernels` crate and runs NEON kernels for YOLO decode, NMS and CPU mask materialization on aarch64; `ara2` needs no code changes. On an i.MX 95 with DVAPI 3.0, the `yolov8` example's decode of a 1280×1280 detection model drops from 1.9 to 0.9 ms with the same detections.
@@ -1058,7 +1060,8 @@ Non-qmode-9 DVMs now raise `Ara2Error("unsupported quantization mode: qmode=N ..
 - Requires `edgefirst-hal` for HAL integration
 - Requires `libaraclient.so` runtime library
 
-[Unreleased]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.24.0...HEAD
+[Unreleased]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.25.0...HEAD
+[0.25.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.24.0...v0.25.0
 [0.24.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.21.0...v0.22.0
