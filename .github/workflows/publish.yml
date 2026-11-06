@@ -50,7 +50,7 @@ concurrency:
 
 jobs:
   publish:
-    uses: EdgeFirstAI/.github/.github/workflows/publish-rust.yml@c7876194b9fe9f7f72daf0efadaf32d7dff1b257  # v2.3.1
+    uses: EdgeFirstAI/.github/.github/workflows/publish-rust.yml@f50099fdbb4fbcc3500112f3c9756669a097f8a4  # v4.0.0
     with:
       tag: ${{ inputs.tag }}
       build-workflow: release.yml
@@ -92,7 +92,7 @@ jobs:
       # carries a version other than the built one: a PyPI version is
       # immutable. artifact-version, not version: a release candidate whose
       # manifests still carry the base version built files with that version.
-      - uses: EdgeFirstAI/.github/.github/actions/stage-pypi@c7876194b9fe9f7f72daf0efadaf32d7dff1b257  # v2.3.1
+      - uses: EdgeFirstAI/.github/.github/actions/stage-pypi@f50099fdbb4fbcc3500112f3c9756669a097f8a4  # v4.0.0
         with:
           distribution: edgefirst-ara2
           version: ${{ needs.publish.outputs.artifact-version }}
