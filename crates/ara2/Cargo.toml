@@ -63,7 +63,7 @@ serde_json = "1.0"
 serde_yaml_ng = "0.10"
 wayland-client = { workspace = true, optional = true }
 wayland-protocols = { workspace = true, optional = true }
-zip = { version = "9.3", default-features = false }
+zip = { version = "9.5", default-features = false }
 
 [dev-dependencies]
 clap.workspace = true
