@@ -43,7 +43,7 @@ jobs:
   # release version a second time -- the CHANGELOG section publish.yml turns
   # into release notes, the full SBOM, and the .crate files crates.io receives.
   verify:
-    uses: EdgeFirstAI/.github/.github/workflows/release-rust.yml@c7876194b9fe9f7f72daf0efadaf32d7dff1b257  # v2.3.1
+    uses: EdgeFirstAI/.github/.github/workflows/release-rust.yml@f50099fdbb4fbcc3500112f3c9756669a097f8a4  # v4.0.0
     with:
       sbom: true
       # The dependency graph differs by target: the ARA-2 client links G2D and
@@ -61,7 +61,7 @@ jobs:
   # so there is no macOS or Windows target.
   wheels:
     needs: verify
-    uses: EdgeFirstAI/.github/.github/workflows/release-wheels.yml@c7876194b9fe9f7f72daf0efadaf32d7dff1b257  # v2.3.1
+    uses: EdgeFirstAI/.github/.github/workflows/release-wheels.yml@f50099fdbb4fbcc3500112f3c9756669a097f8a4  # v4.0.0
     permissions:
       contents: read
       # The shared job declares this unconditionally, for `payloads` to read
