@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-11-09
+
+### Changed (BREAKING)
+
+- **EdgeFirst HAL 0.40.** `edgefirst-tensor`, `edgefirst-image`, `edgefirst-codec` and `edgefirst-decoder` move from 0.39 to 0.40. `Model` exposes `edgefirst_tensor::Tensor` and `TensorMemory`, and the `decoder` feature exposes `edgefirst_decoder` types, so a crate using `ara2` must take the same HAL minor release. HAL 0.40 adds int8 TFLite operator plans to `edgefirst-kernels` and speeds up its NEON int8 softmax; `ara2` needs no code changes. On an i.MX 95 with DVAPI 3.0, the `yolov8` example gives the same detections and timings as with HAL 0.39 for yolov8n detection and segmentation.
+
+### Changed
+
+- Dependencies updated to their latest semver-compatible releases. PyO3 and numpy stay on 0.29, the release HAL 0.40 uses. `libcamera` stays on 0.7: libcamera-rs 0.8 does not build against the libcamera in NXP's i.MX 95 BSP, which reports version 0.7.1 but lacks the `Hue` control and `PipelineHandler` property of upstream 0.7.1. Python: the `hal` extra requires `edgefirst-image>=0.40.0`.
+
 ## [0.25.0] - 2026-11-03
 
 ### Changed (BREAKING)
@@ -1060,7 +1070,8 @@ Non-qmode-9 DVMs now raise `Ara2Error("unsupported quantization mode: qmode=N ..
 - Requires `edgefirst-hal` for HAL integration
 - Requires `libaraclient.so` runtime library
 
-[Unreleased]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.25.0...HEAD
+[Unreleased]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.26.0...HEAD
+[0.26.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.24.0...v0.25.0
 [0.24.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/EdgeFirstAI/ara2-rs/compare/v0.22.0...v0.23.0
