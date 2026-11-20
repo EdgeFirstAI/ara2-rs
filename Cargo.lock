@@ -119,7 +119,7 @@ dependencies = [
  "edgefirst-tensor",
  "libc",
  "libcamera",
- "libloading 0.9.0",
+ "libloading 0.9.1",
  "log",
  "ndarray",
  "serde",
@@ -147,7 +147,7 @@ dependencies = [
 name = "ara2-sys"
 version = "0.26.0"
 dependencies = [
- "libloading 0.9.0",
+ "libloading 0.9.1",
 ]
 
 [[package]]
@@ -601,7 +601,7 @@ dependencies = [
  "edgefirst-tensor",
  "edgefirst-v4l2",
  "kamadak-exif",
- "libloading 0.9.0",
+ "libloading 0.9.1",
  "log",
  "num-traits",
  "tracing",
@@ -643,7 +643,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "265cd60127cd9abfa288d0c4e014f224135db2dda75b402be8550e884e893216"
 dependencies = [
  "libc",
- "libloading 0.9.0",
+ "libloading 0.9.1",
 ]
 
 [[package]]
@@ -666,7 +666,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "64f48c0ca9e05f88975be36864b4f7b0d1b700236efc967e694849eea593afe3"
 dependencies = [
  "libc",
- "libloading 0.9.0",
+ "libloading 0.9.1",
 ]
 
 [[package]]
@@ -701,7 +701,7 @@ dependencies = [
  "jpeg-encoder",
  "kamadak-exif",
  "libc",
- "libloading 0.9.0",
+ "libloading 0.9.1",
  "log",
  "ndarray",
  "num-traits",
@@ -732,7 +732,7 @@ dependencies = [
  "edgefirst-tensor-ffi",
  "half",
  "libc",
- "libloading 0.9.0",
+ "libloading 0.9.1",
  "log",
  "ndarray",
  "nix",
@@ -896,7 +896,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3af00b9a0708836603f8459ade5aba68454c6b85c35a11c4eed760c3c593810"
 dependencies = [
  "four-char-code",
- "libloading 0.9.0",
+ "libloading 0.9.1",
  "log",
  "nix",
 ]
@@ -1154,9 +1154,9 @@ dependencies = [
 
 [[package]]
 name = "libloading"
-version = "0.9.0"
+version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "754ca22de805bb5744484a5b151a9e1a8e837d5dc232c2d7d8c2e3492edc8b60"
+checksum = "a1832accd5a4ca2795ace4d05d15c4039be15b62d3b950eff99746a990e3cc10"
 dependencies = [
  "cfg-if",
  "windows-link",
